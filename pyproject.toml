@@ -1,0 +1,21 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forge"
+version = "0.1.0"
+description = "FORGE (Flexible Optimizer for Rapid Generation and Exploration)"
+authors = [{name = "Myles Stapelberg"}]
+dependencies = [
+    "ase",
+    "numpy",
+    "torch",
+    "mace-torch",
+    "pytest"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["forge*"]

@@ -36,7 +36,7 @@ class DatabaseManager:
     def _initialize_tables(self) -> None:
         """Create database tables if they don't exist."""
         with self.conn.cursor() as cur:
-            # Structures table
+            # Structures table (keeps current schema)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS structures (
                     structure_id SERIAL PRIMARY KEY,
@@ -51,62 +51,31 @@ class DatabaseManager:
                     parent_structure_id INTEGER REFERENCES structures(structure_id),
                     source_type TEXT,
                     metadata JSONB,
+                    predicted_energy FLOAT,
+                    predicted_forces JSONB,
+                    predicted_stress JSONB,
+                    model_type TEXT,
+                    model_version TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
-            # Calculations table
+            # Calculations table (for ensemble predictions)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS calculations (
                     calculation_id SERIAL PRIMARY KEY,
                     structure_id INTEGER REFERENCES structures(structure_id),
                     model_type TEXT NOT NULL,
-                    model_path TEXT NOT NULL,
-                    model_generation INTEGER,
-                    predicted_energy FLOAT,
-                    predicted_forces JSONB,
-                    ensemble_variance FLOAT,
+                    model_version TEXT,
+                    ensemble_energies JSONB,
+                    ensemble_forces JSONB,
+                    energy_variance FLOAT,
+                    forces_variance JSONB,
                     metadata JSONB,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
         self.conn.commit()
-    
-    def add_structure(self, atoms: Atoms, source_type: str = 'original',
-                     parent_id: Optional[int] = None, metadata: Optional[Dict] = None) -> int:
-        """
-        Add structure to database.
-        
-        Args:
-            atoms: ASE Atoms object
-            source_type: Type of structure ('original', 'adversarial', 'md')
-            parent_id: ID of parent structure if derived
-            metadata: Additional structure metadata
-            
-        Returns:
-            int: Structure ID
-        """
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO structures (
-                    formula, composition, positions, cell, pbc,
-                    parent_structure_id, source_type, metadata
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING structure_id
-            """, (
-                atoms.get_chemical_formula(),
-                Json(self._get_composition_dict(atoms)),
-                Json(atoms.positions.tolist()),
-                Json(atoms.cell.tolist()),
-                atoms.pbc.tolist(),
-                parent_id,
-                source_type,
-                Json(metadata or {})
-            ))
-            structure_id = cur.fetchone()[0]
-        self.conn.commit()
-        return structure_id
     
     def _get_composition_dict(self, atoms: Atoms) -> Dict[str, float]:
         """Convert Atoms object to composition dictionary."""
@@ -119,66 +88,133 @@ class DatabaseManager:
             for symbol in unique_symbols
         }
     
-    def get_structure(self, structure_id: int) -> Atoms:
-        """
-        Retrieve structure from database.
-        
-        Args:
-            structure_id: Database ID of structure
+    # In database.py
+    def add_structure(self, structure, parent_id=None):
+        """Add structure to database with proper metadata handling"""
+        with self.conn.cursor() as cur:
+            # Required fields
+            formula = structure.get_chemical_formula()
+            symbols = structure.get_chemical_symbols()
+            composition = {sym: symbols.count(sym) for sym in set(symbols)}
             
-        Returns:
-            Atoms: ASE Atoms object
-        """
+            # Convert numpy arrays to lists
+            positions = structure.positions.tolist()
+            cell = structure.cell.tolist()
+            pbc = [bool(x) for x in structure.pbc]
+            
+            # Get metadata from structure.info
+            info = structure.info.copy() if hasattr(structure, 'info') else {}
+            
+            # Create metadata object
+            metadata = {
+                'source': info.get('source', 'unknown'),
+                'mp_id': info.get('mp_id'),
+                'formation_energy': info.get('formation_energy'),
+                'parent_id': parent_id,  # Track lineage in metadata
+                **info  # Keep any other metadata
+            }
+
+            cur.execute("""
+                INSERT INTO structures (
+                    formula,
+                    composition,
+                    positions,
+                    cell,
+                    pbc,
+                    parent_structure_id,
+                    source_type,
+                    metadata,
+                    vasp_energy,
+                    vasp_forces,
+                    vasp_stress,
+                    predicted_energy,
+                    predicted_forces,
+                    predicted_stress,
+                    model_type,
+                    model_version
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING structure_id
+            """, (
+                formula,
+                Json(composition),
+                Json(positions),
+                Json(cell),
+                pbc,
+                parent_id,
+                info.get('source', 'unknown'),
+                Json(metadata),
+                info.get('vasp_energy'),
+                Json(info.get('vasp_forces')),
+                Json(info.get('vasp_stress')),
+                info.get('predicted_energy'),
+                Json(info.get('predicted_forces')),
+                Json(info.get('predicted_stress')),
+                info.get('model_type'),
+                info.get('model_version')
+            ))
+            structure_id = cur.fetchone()[0]
+            self.conn.commit()
+            return structure_id
+
+    def get_structure(self, structure_id: int) -> Atoms:
+        """Retrieve structure from database."""
         with self.conn.cursor() as cur:
             cur.execute("""
-                SELECT positions, cell, pbc, formula
-                FROM structures
-                WHERE structure_id = %s
+                SELECT positions, cell, pbc, metadata, formula
+                FROM structures WHERE structure_id = %s
             """, (structure_id,))
+            row = cur.fetchone()
+            if not row:
+                raise ValueError(f"No structure found with id {structure_id}")
+                
+            positions, cell, pbc, metadata, formula = row
             
-            positions, cell, pbc, formula = cur.fetchone()
-            
-            return Atoms(
-                symbols=formula,
-                positions=np.array(positions),
-                cell=np.array(cell),
+            # Create new Atoms object
+            atoms = Atoms(
+                symbols=formula,  # Use formula to recreate symbols
+                positions=positions,
+                cell=cell,
                 pbc=pbc
             )
+            
+            # Restore metadata
+            atoms.info.update(metadata)
+            
+            return atoms
 
     def add_calculation(self, structure_id: int, calc_data: Dict) -> int:
-        """Add calculation results to database."""
+        """Add calculation results with proper numpy handling"""
         with self.conn.cursor() as cur:
+            # Convert numpy arrays to lists
+            forces = calc_data.get('forces', [])
+            if isinstance(forces, np.ndarray):
+                forces = forces.tolist()
+            
+            energies = calc_data.get('energies', [])
+            if isinstance(energies, np.ndarray):
+                energies = energies.tolist()
+
+            variance = calc_data.get('variance', [])
+            if isinstance(variance, np.ndarray):
+                variance = variance.tolist()
+
             cur.execute("""
                 INSERT INTO calculations (
-                    structure_id, model_type, model_path, model_generation,
-                    predicted_energy, predicted_forces, ensemble_variance,
-                    metadata
+                    structure_id, model_type, energies, forces, variance
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING calculation_id
             """, (
                 structure_id,
                 calc_data['model_type'],
-                calc_data.get('model_path', ''),
-                calc_data.get('model_generation', None),
-                calc_data.get('energy'),
-                Json(calc_data.get('forces', []).tolist() if 'forces' in calc_data else []),
-                calc_data.get('variance'),
-                Json({
-                    'runtime_seconds': calc_data.get('runtime_seconds'),
-                    'gpu_count': calc_data.get('gpu_count'),
-                    'gpu_memory_mb': calc_data.get('gpu_memory_mb'),
-                    'date_started': calc_data.get('date_started'),
-                    'date_completed': calc_data.get('date_completed'),
-                    'status': calc_data.get('status', 'completed'),
-                    'error': calc_data.get('error'),
-                    'model_version': calc_data.get('model_version'),
-                    'parameters': calc_data.get('parameters', {})
-                })
+                Json(energies),
+                Json(forces),
+                Json(variance)
             ))
             calc_id = cur.fetchone()[0]
-        self.conn.commit()
-        return calc_id
+            self.conn.commit()
+            return calc_id
 
     def get_calculations(self, structure_id: int, model_type: str = None,
                         status: str = None, order_by: str = None) -> List[Dict]:
@@ -216,36 +252,24 @@ class DatabaseManager:
         } for row in rows]
 
     def find_structures(self, elements: List[str] = None, 
-                    structure_type: str = None,
-                    min_lattice_parameter: float = None,
-                    max_lattice_parameter: float = None) -> List[int]:
+                   structure_type: str = None,
+                   min_lattice_parameter: float = None,
+                   max_lattice_parameter: float = None) -> List[int]:
         """Search for structures matching criteria."""
         query = "SELECT structure_id FROM structures WHERE 1=1"
         params = []
         
         if elements:
-            query += " AND composition ?| %s"
-            params.append(elements)
+            # Look for exact composition match
+            query += " AND composition = %s"
+            # Create composition dict with single element
+            comp = {elements[0]: 1.0}
+            params.append(Json(comp))
             
         if structure_type:
             query += " AND metadata->>'structure_type' = %s"
             params.append(structure_type)
             
-        if min_lattice_parameter or max_lattice_parameter:
-            # Approximate lattice parameter from cell volume
-            query += """ 
-                AND (
-                    SELECT POWER(ABS(cell->0->0 * (cell->1->1 * cell->2->2 - 
-                    cell->1->2 * cell->2->1)), 1.0/3.0)
-                )
-            """
-            if min_lattice_parameter:
-                query += " >= %s"
-                params.append(min_lattice_parameter)
-            if max_lattice_parameter:
-                query += " <= %s"
-                params.append(max_lattice_parameter)
-                
         with self.conn.cursor() as cur:
             cur.execute(query, params)
             return [row[0] for row in cur.fetchall()]

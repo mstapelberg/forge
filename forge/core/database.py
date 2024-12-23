@@ -7,6 +7,16 @@ import numpy as np
 import yaml
 from pathlib import Path
 
+def fix_numpy(obj):
+        """Recursively convert np.ndarray into lists so psycopg2 can handle them."""
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, dict):
+            return {k: fix_numpy(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [fix_numpy(x) for x in obj]
+        return obj
+
 class DatabaseManager:
     """PostgreSQL database manager for FORGE."""
     
@@ -45,9 +55,6 @@ class DatabaseManager:
                     positions JSONB NOT NULL,
                     cell JSONB NOT NULL,
                     pbc BOOLEAN[] NOT NULL,
-                    vasp_energy FLOAT,
-                    vasp_forces JSONB,
-                    vasp_stress JSONB,
                     parent_structure_id INTEGER REFERENCES structures(structure_id),
                     source_type TEXT,
                     metadata JSONB,
@@ -63,9 +70,10 @@ class DatabaseManager:
                     model_type TEXT NOT NULL,
                     model_path TEXT NOT NULL,
                     model_generation INTEGER,
-                    predicted_energy FLOAT,
-                    predicted_forces JSONB,
-                    ensemble_variance FLOAT,
+                    energy JSONB,
+                    forces JSONB,
+                    stress JSONB,
+                    ensemble_variance JSONB,
                     metadata JSONB,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -86,6 +94,15 @@ class DatabaseManager:
         Returns:
             int: Structure ID
         """
+        if metadata is None:
+            metadata = {}
+        
+        #merge the atoms.info with metadata
+        metadata.update(atoms.info)
+        # store the parent_id in metadata so it shows in the retrieved.info 
+        if parent_id is not None:
+            metadata['parent_id'] = parent_id
+
         with self.conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO structures (
@@ -102,7 +119,7 @@ class DatabaseManager:
                 atoms.pbc.tolist(),
                 parent_id,
                 source_type,
-                Json(metadata or {})
+                Json(metadata)
             ))
             structure_id = cur.fetchone()[0]
         self.conn.commit()
@@ -131,49 +148,57 @@ class DatabaseManager:
         """
         with self.conn.cursor() as cur:
             cur.execute("""
-                SELECT positions, cell, pbc, formula
+                SELECT positions, cell, pbc, formula, metadata
                 FROM structures
                 WHERE structure_id = %s
             """, (structure_id,))
             
-            positions, cell, pbc, formula = cur.fetchone()
+            positions, cell, pbc, formula, metadata = cur.fetchone()
             
-            return Atoms(
+            atoms = Atoms(
                 symbols=formula,
                 positions=np.array(positions),
                 cell=np.array(cell),
                 pbc=pbc
             )
 
+            if metadata:
+                atoms.info.update(metadata)
+            
+            return atoms
+
+
     def add_calculation(self, structure_id: int, calc_data: Dict) -> int:
         """Add calculation results to database."""
+        safe_data = fix_numpy(calc_data)
         with self.conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO calculations (
                     structure_id, model_type, model_path, model_generation,
-                    predicted_energy, predicted_forces, ensemble_variance,
+                    energy, forces, stress, ensemble_variance,
                     metadata
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING calculation_id
             """, (
                 structure_id,
-                calc_data['model_type'],
-                calc_data.get('model_path', ''),
-                calc_data.get('model_generation', None),
-                calc_data.get('energy'),
-                Json(calc_data.get('forces', []).tolist() if 'forces' in calc_data else []),
-                calc_data.get('variance'),
+                safe_data['model_type'],
+                safe_data.get('model_path', ''),
+                safe_data.get('model_generation', None),
+                Json(safe_data.get('energies', [])) if 'energies' in safe_data else Json([safe_data.get('energy')]),  # right
+                Json(safe_data.get('forces', []) if 'forces' in safe_data else []),
+                Json(safe_data.get('stress', []) if 'stress' in safe_data else []),
+                Json(safe_data.get('variance', [])),  # Wrap variance in Json()
                 Json({
-                    'runtime_seconds': calc_data.get('runtime_seconds'),
-                    'gpu_count': calc_data.get('gpu_count'),
-                    'gpu_memory_mb': calc_data.get('gpu_memory_mb'),
-                    'date_started': calc_data.get('date_started'),
-                    'date_completed': calc_data.get('date_completed'),
-                    'status': calc_data.get('status', 'completed'),
-                    'error': calc_data.get('error'),
-                    'model_version': calc_data.get('model_version'),
-                    'parameters': calc_data.get('parameters', {})
+                    'runtime_seconds': safe_data.get('runtime_seconds'),
+                    'gpu_count': safe_data.get('gpu_count'),
+                    'gpu_memory_mb': safe_data.get('gpu_memory_mb'),
+                    'date_started': safe_data.get('date_started'),
+                    'date_completed': safe_data.get('date_completed'),
+                    'status': safe_data.get('status', 'completed'),
+                    'error': safe_data.get('error'),
+                    'model_version': safe_data.get('model_version'),
+                    'parameters': safe_data.get('parameters', {})
                 })
             ))
             calc_id = cur.fetchone()[0]
@@ -184,8 +209,8 @@ class DatabaseManager:
                         status: str = None, order_by: str = None) -> List[Dict]:
         """Retrieve calculations for structure."""
         query = """
-            SELECT calculation_id, model_type, predicted_energy, 
-                predicted_forces, ensemble_variance, metadata
+            SELECT calculation_id, model_type, energy, 
+                forces, stress, ensemble_variance, metadata
             FROM calculations 
             WHERE structure_id = %s
         """
@@ -211,21 +236,24 @@ class DatabaseManager:
             'model_type': row[1],
             'energy': row[2],
             'forces': np.array(row[3]) if row[3] else None,
-            'variance': row[4],
-            **row[5]  # Unpack metadata
-        } for row in rows]
+            'stress': np.array(row[4]) if row[4] else None,
+            'variance': row[5],
+            **row[6]  # Unpack metadata
+        } for row in rows] 
 
     def find_structures(self, elements: List[str] = None, 
-                    structure_type: str = None,
-                    min_lattice_parameter: float = None,
-                    max_lattice_parameter: float = None) -> List[int]:
+                structure_type: str = None,
+                min_lattice_parameter: float = None,
+                max_lattice_parameter: float = None) -> List[int]:
         """Search for structures matching criteria."""
         query = "SELECT structure_id FROM structures WHERE 1=1"
         params = []
         
         if elements:
+            # Convert elements to array if it's not already
+            elements_array = '{' + ','.join(elements) + '}'
             query += " AND composition ?| %s"
-            params.append(elements)
+            params.append(elements_array)
             
         if structure_type:
             query += " AND metadata->>'structure_type' = %s"
@@ -245,7 +273,12 @@ class DatabaseManager:
             if max_lattice_parameter:
                 query += " <= %s"
                 params.append(max_lattice_parameter)
+        
+        print(f"Executing query: {query}")  # Debug
+        print(f"With params: {params}")  # Debug
                 
         with self.conn.cursor() as cur:
             cur.execute(query, params)
-            return [row[0] for row in cur.fetchall()]
+            results = [row[0] for row in cur.fetchall()]
+            print(f"Found {len(results)} matching structures")  # Debug
+            return results

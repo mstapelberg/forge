@@ -22,6 +22,15 @@ class TestDatabaseManager:
             }
         }
 
+    def _drop_tables(self, db_manager):
+        """Drop all tables in the database"""
+        with db_manager.conn.cursor() as cur:
+            cur.execute("""
+                DROP TABLE IF EXISTS calculations CASCADE;
+                DROP TABLE IF EXISTS structures CASCADE;
+            """)
+        db_manager.conn.commit()
+
     @pytest.fixture
     def db_manager(self, db_config):
         """Create temporary database for testing"""
@@ -31,6 +40,13 @@ class TestDatabaseManager:
                 yaml.dump(db_config, f)
             
             db = DatabaseManager(config_path=config_path)
+            
+            # Drop tables if they exist
+            self._drop_tables(db)
+            
+            # Reinitialize tables
+            db._initialize_tables()
+            
             yield db
             
     @pytest.fixture
@@ -135,16 +151,27 @@ class TestDatabaseManager:
 
     def test_structure_search(self, db_manager):
         """Test structure search functionality"""
+        print("Starting structure search test")  # Debug
         structures = [
             bulk('V', 'bcc', a=3.01),
             bulk('Cr', 'bcc', a=2.8),
             bulk('W', 'bcc', a=3.16)
         ]
+        
+        print("Adding structures to database")  # Debug
         for struct in structures:
-            db_manager.add_structure(struct)
+            struct.info['structure_type'] = 'bcc'
+            structure_id = db_manager.add_structure(struct)
+            print(f"Added structure with ID: {structure_id}")  # Debug
             
+        print("Searching for V structures")  # Debug
         v_structs = db_manager.find_structures(elements=['V'])
+        print(f"Found {len(v_structs)} V structures")  # Debug
         assert len(v_structs) == 1
         
+        print("Searching for BCC structures")  # Debug
         bcc_structs = db_manager.find_structures(structure_type='bcc')
+        print(f"Found {len(bcc_structs)} BCC structures")  # Debug
         assert len(bcc_structs) == 3
+
+        print("Test completed successfully")  # Debug

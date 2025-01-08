@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+#scratch work
+scratch/
+scratch_notebook.ipynb
+scratch_for_llm.txt
+
 # C extensions
 *.so
 

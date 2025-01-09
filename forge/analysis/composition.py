@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import numpy as np
 from ase import Atoms
 from sklearn.manifold import TSNE
@@ -49,7 +49,9 @@ class CompositionAnalyzer:
         plt.close()
         
     def suggest_new_compositions(self, compositions: List[Dict[str, float]],
-                               n_suggestions: int = 10) -> List[Dict[str, float]]:
+                               n_suggestions: int = 10,
+                               constraints: Optional[Dict[str, Tuple[float, float]]] = None
+                               ) -> List[Dict[str, float]]:
         """Suggest new compositions based on clustering analysis"""
         if self.kmeans is None:
             raise ValueError("Must run analyze_compositions first")
@@ -59,7 +61,10 @@ class CompositionAnalyzer:
         
         # Generate new compositions near cluster boundaries
         new_compositions = []
-        for _ in range(n_suggestions):
+        max_attempts = n_suggestions * 10  # Maximum attempts to find valid compositions
+        attempts = 0
+        
+        while len(new_compositions) < n_suggestions and attempts < max_attempts:
             # Select random pair of clusters
             c1, c2 = np.random.choice(len(centers), 2, replace=False)
             
@@ -69,6 +74,22 @@ class CompositionAnalyzer:
             
             # Convert to dictionary
             elements = sorted(set().union(*compositions))
-            new_compositions.append(dict(zip(elements, new_comp)))
+            comp_dict = dict(zip(elements, new_comp))
+            
+            # Check constraints if provided
+            if constraints:
+                valid = True
+                for element, (min_frac, max_frac) in constraints.items():
+                    if element in comp_dict:
+                        if not (min_frac <= comp_dict[element] <= max_frac):
+                            valid = False
+                            break
+                
+                if not valid:
+                    attempts += 1
+                    continue
+            
+            new_compositions.append(comp_dict)
+            attempts += 1
             
         return new_compositions

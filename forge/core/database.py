@@ -1,38 +1,93 @@
 # Core database interface (core/database.py)
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Tuple
 import psycopg2
 from psycopg2.extras import Json
 from ase import Atoms
 import numpy as np
 import yaml
 from pathlib import Path
+import os
+from ase.io import read
+from ase.calculators.singlepoint import SinglePointCalculator
+from pymatgen.analysis.structure_matcher import StructureMatcher
+from pymatgen.io.ase import AseAtomsAdaptor
+import hashlib
+
+def _compute_composition_hash(comp_dict: Dict, decimal: int = 4) -> str:
+    """
+    Create a hash of composition dictionary, rounding fractions to specified decimals.
+    """
+    # Sort elements and round their fractions
+    sorted_comp = sorted([
+        (elem, round(data['at_frac'], decimal))
+        for elem, data in comp_dict.items()
+    ])
+    
+    # Create a string representation and hash it
+    comp_str = '_'.join([f"{elem}{frac}" for elem, frac in sorted_comp])
+    return hashlib.md5(comp_str.encode('utf-8')).hexdigest()
 
 def fix_numpy(obj):
-        """Recursively convert np.ndarray into lists so psycopg2 can handle them."""
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, dict):
-            return {k: fix_numpy(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [fix_numpy(x) for x in obj]
+    """
+    Recursively convert numpy types to Python native types.
+    """
+    import numpy as np
+    
+    if isinstance(obj, dict):
+        return {key: fix_numpy(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [fix_numpy(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(fix_numpy(item) for item in obj)
+    elif isinstance(obj, np.ndarray):
+        return fix_numpy(obj.tolist())
+    elif isinstance(obj, (np.int_, np.intc, np.intp, np.int8, np.int16, 
+                        np.int32, np.int64, np.uint8, np.uint16, np.uint32, np.uint64)):
+        return int(obj)
+    elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (np.bool_)):
+        return bool(obj)
+    elif obj is None or isinstance(obj, (bool, int, float, str)):
         return obj
+    else:
+        try:
+            # Try to convert to a basic type if possible
+            return obj.item() if hasattr(obj, 'item') else obj
+        except:
+            return str(obj)  # Last resort: convert to string
 
 class DatabaseManager:
     """PostgreSQL database manager for FORGE."""
     
-    def __init__(self, config_path: Union[str, Path] = None):
+    def __init__(self, config_path: Union[str, Path] = None, config_dict: Dict = None):
         """
         Initialize database connection using configuration.
         
         Args:
             config_path: Path to database configuration YAML
+            config_dict: Dictionary containing database configuration
+            
+        Note: If both config_path and config_dict are provided, config_dict takes precedence
         """
-        self.config = self._load_config(config_path)
+        self.config = self._load_config(config_path, config_dict)
         self.conn = self._initialize_connection()
         self._initialize_tables()
     
-    def _load_config(self, config_path: Union[str, Path]) -> Dict:
-        """Load database configuration from YAML file."""
+    def _load_config(self, config_path: Union[str, Path] = None, config_dict: Dict = None) -> Dict:
+        """
+        Load database configuration from YAML file or dictionary.
+        
+        Args:
+            config_path: Path to database configuration YAML
+            config_dict: Dictionary containing database configuration
+            
+        Returns:
+            Dict: Database configuration
+        """
+        if config_dict is not None:
+            return config_dict
+        
         if config_path is None:
             config_path = Path(__file__).parent.parent / 'config' / 'database.yaml'
         
@@ -58,6 +113,7 @@ class DatabaseManager:
                     parent_structure_id INTEGER REFERENCES structures(structure_id),
                     source_type TEXT,
                     metadata JSONB,
+                    composition_hash TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -82,45 +138,65 @@ class DatabaseManager:
     
     def add_structure(self, atoms: Atoms, source_type: str = 'original',
                      parent_id: Optional[int] = None, metadata: Optional[Dict] = None) -> int:
-        """
-        Add structure to database.
-        
-        Args:
-            atoms: ASE Atoms object
-            source_type: Type of structure ('original', 'adversarial', 'md')
-            parent_id: ID of parent structure if derived
-            metadata: Additional structure metadata
-            
-        Returns:
-            int: Structure ID
-        """
+        """Add structure to database with thorough numpy fixing."""
         if metadata is None:
             metadata = {}
         
-        #merge the atoms.info with metadata
-        metadata.update(atoms.info)
-        # store the parent_id in metadata so it shows in the retrieved.info 
+        # Deep copy and fix the atoms.info dictionary
+        info_dict = dict(atoms.info)  # Make a copy
+        metadata.update(info_dict)
+        
+        # Fix parent_id if present
         if parent_id is not None:
-            metadata['parent_id'] = parent_id
-
+            metadata['parent_id'] = fix_numpy(parent_id)
+        
+        # Calculate composition and number of atoms
+        symbols = atoms.get_chemical_symbols()
+        total_atoms = len(symbols)
+        composition = {}
+        
+        for symbol in set(symbols):
+            count = symbols.count(symbol)
+            composition[symbol] = {
+                "at_frac": count / total_atoms,
+                "num_atoms": count
+            }
+        
+        # Compute composition hash
+        composition_hash = _compute_composition_hash(composition, decimal=4)
+        
+        # Fix all data before JSON serialization
+        safe_data = {
+            'formula': fix_numpy(atoms.get_chemical_formula()),
+            'composition': fix_numpy(composition),
+            'positions': fix_numpy(atoms.positions),
+            'cell': fix_numpy(atoms.cell.tolist()),
+            'pbc': fix_numpy(atoms.pbc.tolist()),
+            'metadata': fix_numpy(metadata)
+        }
+        
         with self.conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO structures (
                     formula, composition, positions, cell, pbc,
-                    parent_structure_id, source_type, metadata
+                    parent_structure_id, source_type, metadata, composition_hash
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING structure_id
-            """, (
-                atoms.get_chemical_formula(),
-                Json(self._get_composition_dict(atoms)),
-                Json(atoms.positions.tolist()),
-                Json(atoms.cell.tolist()),
-                atoms.pbc.tolist(),
-                parent_id,
-                source_type,
-                Json(metadata)
-            ))
+                """,
+                (
+                    safe_data['formula'],
+                    Json(safe_data['composition']),
+                    Json(safe_data['positions']),
+                    Json(safe_data['cell']),
+                    safe_data['pbc'],
+                    parent_id,
+                    source_type,
+                    Json(safe_data['metadata']) if safe_data['metadata'] else None,
+                    composition_hash
+                )
+            )
             structure_id = cur.fetchone()[0]
         self.conn.commit()
         return structure_id
@@ -242,25 +318,38 @@ class DatabaseManager:
         } for row in rows] 
 
     def find_structures(self, elements: List[str] = None, 
-                structure_type: str = None,
-                min_lattice_parameter: float = None,
-                max_lattice_parameter: float = None) -> List[int]:
+                    structure_type: str = None,
+                    min_lattice_parameter: float = None,
+                    max_lattice_parameter: float = None,
+                    composition_constraints: Dict[str, Tuple[float, float]] = None,
+                    debug: bool = False) -> List[int]:
         """Search for structures matching criteria."""
         query = "SELECT structure_id FROM structures WHERE 1=1"
         params = []
         
         if elements:
-            # Convert elements to array if it's not already
             elements_array = '{' + ','.join(elements) + '}'
             query += " AND composition ?| %s"
             params.append(elements_array)
-            
+            if debug:
+                print(f"[DEBUG] Elements filter applied: {elements_array}")
+
+        # Add composition fraction constraints
+        if composition_constraints:
+            for element, (min_frac, max_frac) in composition_constraints.items():
+                query += f" AND (composition->'{element}'->>'at_frac')::float >= %s"
+                query += f" AND (composition->'{element}'->>'at_frac')::float <= %s"
+                params.extend([min_frac, max_frac])
+                if debug:
+                    print(f"[DEBUG] Composition constraint applied for {element}: >= {min_frac}, <= {max_frac}")
+
         if structure_type:
             query += " AND metadata->>'structure_type' = %s"
             params.append(structure_type)
-            
+            if debug:
+                print(f"[DEBUG] Structure type filter applied: {structure_type}")
+
         if min_lattice_parameter or max_lattice_parameter:
-            # Approximate lattice parameter from cell volume
             query += """ 
                 AND (
                     SELECT POWER(ABS(cell->0->0 * (cell->1->1 * cell->2->2 - 
@@ -270,15 +359,277 @@ class DatabaseManager:
             if min_lattice_parameter:
                 query += " >= %s"
                 params.append(min_lattice_parameter)
+                if debug:
+                    print(f"[DEBUG] Minimum lattice parameter filter applied: {min_lattice_parameter}")
             if max_lattice_parameter:
                 query += " <= %s"
                 params.append(max_lattice_parameter)
-        
-        print(f"Executing query: {query}")  # Debug
-        print(f"With params: {params}")  # Debug
+                if debug:
+                    print(f"[DEBUG] Maximum lattice parameter filter applied: {max_lattice_parameter}")
+
+        if debug:
+            print(f"[DEBUG] Executing query: {query}")  # Debug
+            print(f"[DEBUG] With params: {params}")  # Debug
                 
         with self.conn.cursor() as cur:
             cur.execute(query, params)
             results = [row[0] for row in cur.fetchall()]
-            print(f"Found {len(results)} matching structures")  # Debug
+            if debug:
+                print(f"[DEBUG] Query returned {len(results)} matching structures")  # Debug
             return results
+
+    def find_structures_without_calculation(self, model_type: str = "vasp", status: str = "completed") -> List[int]:
+        """
+        Return a list of structure_ids that do NOT have a calculation
+        with the given model_type (and optionally status).
+        """
+        query = f"""
+            SELECT s.structure_id
+            FROM structures s
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM calculations c
+                WHERE c.structure_id = s.structure_id
+                  AND c.model_type = %s
+                  AND c.metadata->>'status' = %s
+            )
+        """
+        params = [model_type, status]
+
+        with self.conn.cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+        return [r[0] for r in rows]
+
+    def add_structures_from_xyz(
+        self,
+        xyz_file: str,
+        skip_duplicates: bool = True,
+        default_model_type: str = "vasp-static"
+    ) -> None:
+        """
+        Reads frames from a .xyz file, and optionally checks for duplicates
+        prior to adding. If skip_duplicates=True, it uses self.check_duplicate_structure.
+
+        Args:
+            xyz_file: Path to the .xyz file containing frames.
+            skip_duplicates: Whether to skip duplicates by position and composition hash.
+            default_model_type: The model_type to use if `atoms.calc` is a SinglePointCalculator.
+        """
+
+        if not os.path.isfile(xyz_file):
+            print(f"[WARN] XYZ file not found: {xyz_file}")
+            return
+
+        frames = read(xyz_file, index=":")
+        print(f"[INFO] Found {len(frames)} frames in {xyz_file}")
+
+        for i, atoms in enumerate(frames):
+            print(f"[INFO] Processing frame {i} from {xyz_file}...")
+
+            # If skipping duplicates, do a quick check
+            if skip_duplicates:
+                if self.check_duplicate_structure(atoms, 
+                                                  decimal=4, # composition rounding
+                                                  position_tol=1e-5):
+                    print("[INFO] Skipping duplicate structure.")
+                    continue
+
+            # Add the structure
+            struct_id = self.add_structure(atoms)
+            print(f"[INFO] Added structure, ID={struct_id}")
+
+            # If there's a SinglePointCalculator in atoms.calc, parse it
+            if atoms.calc and isinstance(atoms.calc, SinglePointCalculator):
+                calc_data = {}
+                if hasattr(atoms.calc, "results"):
+                    results = atoms.calc.results
+                    calc_data["energy"] = float(results.get("energy", np.nan))
+                    calc_data["forces"] = results.get("forces", None)
+                    calc_data["stress"] = results.get("stress", None)
+                calc_data["model_type"] = default_model_type
+                calc_data["status"] = "completed"
+                
+                # Insert calculation row
+                calc_id = self.add_calculation(struct_id, calc_data)
+                print(f"[INFO] Added calculation, ID={calc_id}")
+
+        print("[INFO] Finished adding frames from xyz file!")
+
+    def check_duplicate_structure(self, atoms: Atoms, 
+                             decimal: int = 4, position_tol: float = 1e-5) -> bool:
+        """
+        Check if 'atoms' is a duplicate of any structure in the DB by:
+        1) Checking if composition_hash already exists
+        2) Checking positions only for those structures that share the same composition_hash
+        """
+        # Compute composition dictionary
+        symbols = atoms.get_chemical_symbols()
+        total_atoms = len(symbols)
+        comp_dict = {}
+        for symbol in set(symbols):
+            count = symbols.count(symbol)
+            comp_dict[symbol] = {
+                "at_frac": count / total_atoms,
+                "num_atoms": count
+            }
+        
+        # Compute hash
+        composition_hash = _compute_composition_hash(comp_dict, decimal=decimal)
+        
+        # Find existing structures by composition_hash
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT structure_id, positions
+                FROM structures
+                WHERE composition_hash = %s
+            """, (composition_hash,))
+            potential_duplicates = cur.fetchall()
+        
+        if not potential_duplicates:
+            # No structures with the same composition hash, definitely not a duplicate
+            return False
+        
+        # Check positions only for these structures
+        # Round positions to 'position_tol' to see if they match
+        new_positions = np.round(atoms.positions, decimals=int(abs(np.log10(position_tol))))
+
+        for row in potential_duplicates:
+            db_struct_id = row[0]
+            db_positions = np.array(row[1])  # loaded from JSON
+            db_positions_rounded = np.round(db_positions, decimals=int(abs(np.log10(position_tol))))
+            
+            # Compare shape and values
+            if db_positions_rounded.shape == new_positions.shape and \
+               np.allclose(db_positions_rounded, new_positions, atol=position_tol):
+                # Found a match
+                return True
+
+        # No exact match found
+        return False
+
+    def remove_duplicate_structures(self,
+                                    decimal: int = 5,
+                                    position_tol: float = 1e-5) -> Dict[int, List[int]]:
+        """
+        Remove duplicate structures by hashing positions (rounded to `decimal` places)
+        and symbols. Keeps only the earliest structure_id in each hash group, removes
+        the rest. Optionally, you can do a final position check among those with the
+        same composition_hash if you like.
+
+        Args:
+            decimal: Number of decimal places to round positions for the hash.
+            position_tol: Tolerance for position comparison.
+
+        Returns:
+            A dict of {kept_structure_id: [duplicate_ids]}.
+        """
+        # Step 1: Gather all structure_ids
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT structure_id FROM structures ORDER BY structure_id ASC")
+            all_structure_ids = [row[0] for row in cur.fetchall()]
+        
+        # Step 2: Build a hash for each structure
+        hash_map = {}  # {hash_value: [structure_ids]}
+        for struct_id in all_structure_ids:
+            try:
+                atoms = self.get_structure(struct_id)
+            except Exception as e:
+                print(f"[WARN] Could not retrieve structure {struct_id}. Error: {e}")
+                continue
+
+            # Generate hash (position-based)
+            hval = self._get_structure_hash(atoms, decimal=decimal)
+            
+            if hval not in hash_map:
+                hash_map[hval] = [struct_id]
+            else:
+                hash_map[hval].append(struct_id)
+        
+        # Step 3: Identify duplicates in each hash group
+        duplicates_map = {}  # {kept_id: [removed_ids]}
+        for hval, ids in hash_map.items():
+            if len(ids) > 1:
+                # Keep the first ID in ascending order, remove others
+                kept_id = ids[0]
+                removed_ids = ids[1:]
+                duplicates_map[kept_id] = removed_ids
+
+        # Step 4: Remove duplicates from DB
+        if duplicates_map:
+            print("[INFO] Removing duplicate structures by hash...")
+            with self.conn.cursor() as cur:
+                for kept_id, duplicate_ids in duplicates_map.items():
+                    # You might do a final position check here if you want,
+                    # but if you're confident in the hash approach, skip it.
+
+                    # 4A) Remove calculations for duplicates
+                    cur.execute("""
+                        DELETE FROM calculations
+                        WHERE structure_id = ANY(%s)
+                        RETURNING calculation_id
+                    """, (duplicate_ids,))
+                    deleted_calcs = cur.fetchall()
+                    
+                    # 4B) Remove the duplicate structures
+                    cur.execute("""
+                        DELETE FROM structures
+                        WHERE structure_id = ANY(%s)
+                        RETURNING structure_id
+                    """, (duplicate_ids,))
+                    deleted_structs = cur.fetchall()
+                    
+                    print(f"[INFO] Kept {kept_id}, removed duplicates {duplicate_ids}")
+                    print(f"       Removed {len(deleted_calcs)} calculations and {len(deleted_structs)} structures")
+            
+            self.conn.commit()
+        else:
+            print("[INFO] No duplicates found by hash.")
+        
+        return duplicates_map
+
+    def get_duplicate_summary(self, duplicates_map: Dict[int, List[int]]) -> None:
+        """
+        Print a summary of duplicates removed by remove_duplicate_structures.
+
+        Args:
+            duplicates_map: dict of {kept_structure_id: [removed_structure_ids]}.
+        """
+        if not duplicates_map:
+            print("[INFO] No duplicates to summarize!")
+            return
+        
+        print("\n[INFO] Duplicate Structure Summary (Hash-Based):")
+        print("-----------------------------------------")
+        total_removed = sum(len(dups) for dups in duplicates_map.values())
+        print(f"Total duplicate structures removed: {total_removed}")
+        print(f"Number of unique structure groups: {len(duplicates_map)}")
+        
+        for kept_id, removed_ids in duplicates_map.items():
+            # Optionally retrieve info about the kept structure
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT formula, metadata
+                    FROM structures
+                    WHERE structure_id = %s
+                """, (kept_id,))
+                row = cur.fetchone()
+                if row:
+                    print(f"  Kept ID {kept_id}: Formula={row[0]}, Metadata={row[1]}")
+                else:
+                    print(f"  Kept ID {kept_id}: (not found in DB)")
+            print(f"    Removed duplicates: {removed_ids}")
+
+    def _get_structure_hash(self, atoms: Atoms, decimal: int = 5) -> str:
+        """
+        Compute a hash string for a structure by rounding each (x, y, z) to `decimal` places,
+        then concatenating the element and positions in a deterministic order.
+        This does NOT account for permutations, only the exact ordering of atoms as in `atoms`.
+        """
+        coords = []
+        for atom in atoms:
+            x, y, z = np.round(atom.position, decimals=decimal)
+            coords.append(f"{atom.symbol}:{x:.5f}:{y:.5f}:{z:.5f}")
+        full_string = "|".join(coords)
+        return hashlib.md5(full_string.encode("utf-8")).hexdigest()

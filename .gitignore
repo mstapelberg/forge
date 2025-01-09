@@ -5,7 +5,6 @@ __pycache__/
 
 #scratch work
 scratch/
-scratch_notebook.ipynb
 scratch_for_llm.txt
 
 # C extensions

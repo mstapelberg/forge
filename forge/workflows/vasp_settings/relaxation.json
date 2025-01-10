@@ -1,0 +1,26 @@
+{
+"incar": {
+"PREC": "Accurate",
+"ENCUT": 520,
+"EDIFF": 1e-6,
+"ISMEAR": 1,
+"SIGMA": 0.2,
+"NSW": 100,
+"IBRION": 2,
+"LWAVE": false,
+"LCHARG": true,
+"LREAL": false,
+"ALGO": "Normal"
+},
+"kpoints": {
+"base_kpts": [4, 4, 4],
+"gamma": true
+},
+"potcars": {
+"V": "V_pv",
+"Cr": "Cr_pv",
+"Ti": "Ti_pv",
+"W": "W_sv",
+"Zr": "Zr_sv"
+}
+}

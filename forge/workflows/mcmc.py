@@ -4,6 +4,10 @@ from copy import deepcopy
 import random
 from datetime import datetime
 
+
+# TODO: make the MCMC not change the composition of the atoms object, right now it does
+# so the composition just goes to W... 
+
 class MonteCarloAlloySampler:
     """
     Perform Monte Carlo (MC) swaps in a small BCC supercell for SRO refinement.

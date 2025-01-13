@@ -6,6 +6,8 @@ from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 from pathlib import Path
 import json
+from ase.build import bulk
+import random
 
 class CompositionAnalyzer:
     def __init__(self, n_components: int = 2, random_state: int = 42):
@@ -93,3 +95,64 @@ class CompositionAnalyzer:
             attempts += 1
             
         return new_compositions
+        
+    def create_random_alloy(self, 
+                          composition: Dict[str, float],
+                          crystal_type: str,
+                          dimensions: List[int],
+                          lattice_constant: float,
+                          balance_element: str) -> Atoms:
+        """
+        Create a random alloy with specified composition.
+        
+        Args:
+            composition: Dictionary of element symbols and their fractions
+            crystal_type: Crystal structure ('bcc', 'fcc', etc.)
+            dimensions: Supercell dimensions [nx, ny, nz]
+            lattice_constant: Lattice constant in Å
+            balance_element: Element to use as balance (usually majority element)
+            
+        Returns:
+            ASE Atoms object with randomized atomic positions
+        """
+        # Validate composition sums to 1 (within tolerance)
+        total = sum(composition.values())
+        if not np.isclose(total, 1.0, rtol=1e-3):
+            raise ValueError(f"Composition fractions must sum to 1.0 (got {total})")
+        
+        # Create base structure and supercell
+        base_atoms = bulk(balance_element, crystal_type, a=lattice_constant)
+        atoms = base_atoms * dimensions
+        total_sites = len(atoms)
+        
+        # Calculate number of atoms for each element
+        atom_counts = {}
+        remaining_sites = total_sites
+        
+        # Handle all elements except balance element
+        for element, fraction in composition.items():
+            if element != balance_element:
+                # Ceil the count for non-balance elements
+                count = int(np.ceil(fraction * total_sites))
+                atom_counts[element] = count
+                remaining_sites -= count
+        
+        # Assign remaining sites to balance element
+        atom_counts[balance_element] = remaining_sites
+        
+        # Verify we haven't created an impossible situation
+        if remaining_sites < 0:
+            raise ValueError("Composition resulted in negative sites for balance element")
+        
+        # Create list of atomic symbols
+        symbols = []
+        for element, count in atom_counts.items():
+            symbols.extend([element] * count)
+        
+        # Randomly shuffle the symbols
+        random.shuffle(symbols)
+        
+        # Assign shuffled symbols to atomic positions
+        atoms.symbols = symbols
+        
+        return atoms

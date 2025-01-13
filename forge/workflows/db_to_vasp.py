@@ -3,7 +3,7 @@ from pathlib import Path
 from ase.io import write
 from forge.core.database import DatabaseManager
 from forge.workflows.helpers import determine_kpoint_grid
-from forge.workflows.profiles import load_profile
+from forge.workflows.profiles import ProfileManager
 from datetime import datetime
 
 
@@ -25,13 +25,14 @@ def mark_job_pending(db_manager: DatabaseManager, structure_id: int, profile_nam
     metadata['jobs'] = jobs_meta
     db_manager.update_structure_metadata(structure_id, metadata)
 
-def write_incar(incar_dict, filepath):
+def _write_incar(incar_dict, filepath):
     """Write INCAR from a dictionary of tags."""
     with open(filepath, 'w') as f:
         for key, value in incar_dict.items():
             f.write(f"{key} = {value}\n")
 
-def write_potcar(symbols, potcar_map, potcar_dir, output_path):
+# TODO need to test this code and make sure it outputs workable POTCAR files
+def _write_potcar(symbols, potcar_map, potcar_dir, output_path):
     """
     Write or concatenate POTCAR files in a specific order.
     'symbols' is a sorted list of unique chemical symbols.
@@ -50,7 +51,7 @@ def write_potcar(symbols, potcar_map, potcar_dir, output_path):
             with open(potcar_path, 'rb') as pfile:
                 out_potcar.write(pfile.read())
 
-def write_kpoints(filepath, kpoints, gamma_centered):
+def _write_kpoints(filepath, kpoints, gamma_centered):
     """
     Write a basic KPOINTS file.
     kpoints: (kx, ky, kz) tuple
@@ -63,7 +64,8 @@ def write_kpoints(filepath, kpoints, gamma_centered):
         f.write(f"{kpoints[0]} {kpoints[1]} {kpoints[2]}\n")
         f.write("0 0 0\n")
 
-def create_slurm_script(hpc_profile, job_name, output_dir):
+# TODO need to test this code and make sure it outputs workable slurm scripts
+def _create_slurm_script(hpc_profile, job_name, output_dir):
     """
     Build the Slurm script from HPC profile JSON/dict structure.
     Example HPC profile structure:
@@ -119,38 +121,44 @@ def create_slurm_script(hpc_profile, job_name, output_dir):
 def prepare_vasp_job(
     db_manager: DatabaseManager,
     structure_id: int,
-    vasp_profile_path: str,
-    hpc_profile_path: str,
+    vasp_profile_name: str,
+    hpc_profile_name: str,
     output_dir: str = None,
     auto_kpoints: bool = False
 ):
     """
     Main function to create a VASP job folder from a structure in the DB,
-    using specified VASP profile (INCAR, POTCAR map, etc.) and HPC profile (Slurm).
+    using named profiles (VASP & HPC) loaded via ProfileManager.
     """
-    # 1. Check if already pending
-    hpc_profile_name = Path(hpc_profile_path).stem  # e.g. "Perlmutter-CPU"
-    if is_job_already_pending(db_manager, structure_id, hpc_profile_name):
-        print(f"Structure {structure_id} is already pending for {hpc_profile_name}. Skipping.")
-        return
-    # 2. Mark pending
-    mark_job_pending(db_manager, structure_id, hpc_profile_name)
-    # 3. Load profiles
-    vasp_profile = load_profile(vasp_profile_path)  # from JSON
-    hpc_profile = load_profile(hpc_profile_path)
-    # 4. Fetch Atoms from DB
+    # Get the forge package root directory
+    forge_root = Path(__file__).parent.parent.parent
+    
+    # Use absolute paths for profile directories
+    hpc_manager = ProfileManager(forge_root / "workflows" / "hpc_profiles")
+    vasp_manager = ProfileManager(forge_root / "workflows" / "vasp_settings")
+
+    # 2. Load the desired profiles
+    hpc_manager.load_profile(hpc_profile_name)
+    vasp_manager.load_profile(vasp_profile_name)
+
+    # 3. Retrieve them from memory
+    hpc_profile = hpc_manager.get_profile(hpc_profile_name)
+    vasp_profile = vasp_manager.get_profile(vasp_profile_name)
+
+    # 4. Fetch the structure
     atoms = db_manager.get_structure(structure_id)
-    # 5. Create job dir
+
     if output_dir is None:
         output_dir = f"job_{structure_id}"
     os.makedirs(output_dir, exist_ok=True)
-    # 6. Write POSCAR
+
+    # 5. Write POSCAR
     write(os.path.join(output_dir, "POSCAR"), atoms, format="vasp")
-    # 7. Write INCAR
-    incar_path = os.path.join(output_dir, "INCAR")
-    write_incar(vasp_profile["incar"], incar_path)
-    # 8. Determine KPOINTS
-    # Use auto_kpoints with your existing function
+
+    # 6. Write INCAR
+    _write_incar(vasp_profile["incar"], os.path.join(output_dir, "INCAR"))
+
+    # 7. Determine KPOINTS
     base_kpts = vasp_profile["kpoints"].get("base_kpts", [4,4,4])
     gamma_center = vasp_profile["kpoints"].get("gamma", True)
     kpts, gamma_flag = determine_kpoint_grid(
@@ -159,16 +167,17 @@ def prepare_vasp_job(
         base_kpts=tuple(base_kpts),
         gamma=gamma_center
     )
-    kpoints_path = os.path.join(output_dir, "KPOINTS")
-    write_kpoints(kpoints_path, kpts, gamma_flag)
-    # 9. Write POTCAR (need VASP_PP_PATH)
+    _write_kpoints(os.path.join(output_dir, "KPOINTS"), kpts, gamma_flag)
+
+    # 8. Write POTCAR
     potcar_map = vasp_profile["potcars"]
-    potcar_dir = os.environ.get("VASP_PP_PATH", "")  # or other fallback
+    potcar_dir = os.environ.get("VASP_PP_PATH", "/path/to/potcars")
     unique_species = sorted(set(atoms.get_chemical_symbols()))
-    potcar_path = os.path.join(output_dir, "POTCAR")
-    write_potcar(unique_species, potcar_map, potcar_dir, potcar_path)
-    # 10. Create Slurm script
-    slurm_script = create_slurm_script(hpc_profile, f"job_{structure_id}", output_dir)
+    _write_potcar(unique_species, potcar_map, potcar_dir, os.path.join(output_dir, "POTCAR"))
+
+    # 9. Create Slurm script using HPC profile
+    slurm_script = _create_slurm_script(hpc_profile, f"job_{structure_id}", output_dir)
     with open(os.path.join(output_dir, "submit.sh"), 'w') as f:
         f.write(slurm_script)
-    print(f"Created VASP job for structure {structure_id} in {output_dir} using {hpc_profile_name}")
+
+    print(f"[INFO] Created VASP job for structure {structure_id} in {output_dir} using HPC={hpc_profile_name}, VASP={vasp_profile_name}")

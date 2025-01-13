@@ -9,4 +9,5 @@ from .vasp_to_db import *
 
 __all__ = [
     'MDSimulator',
+    'ProfileManager',
 ]

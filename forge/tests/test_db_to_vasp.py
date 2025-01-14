@@ -1,15 +1,17 @@
-import pytest
-import tempfile
-from pathlib import Path
-import yaml
-import numpy as np
-from forge.workflows.db_to_vasp import prepare_vasp_job
-from forge.workflows.vasp_to_db import parse_vasp_output, add_vasp_results_to_db
-from forge.core.database import DatabaseManager
-from ase.build import bulk
-from ase import Atoms
 import os
 import shutil
+import tempfile
+from pathlib import Path
+
+import numpy as np
+import pytest
+import yaml
+from ase import Atoms
+from ase.build import bulk
+
+from forge.core.database import DatabaseManager
+from forge.workflows.db_to_vasp import prepare_vasp_job
+from forge.workflows.vasp_to_db import parse_vasp_output, add_vasp_results_to_db
 
 @pytest.fixture
 def test_structure():
@@ -25,14 +27,14 @@ def test_structure():
     np.random.seed(42)  # For reproducibility
     np.random.shuffle(symbols)
     supercell.symbols = symbols
-    
+
     # Add small random displacements
     rng = np.random.default_rng(42)
     displacements = rng.uniform(-0.02, 0.02, size=(len(supercell), 3))
     supercell.positions += displacements
-    
-    return supercell
 
+    return supercell
+    
 @pytest.fixture
 def db_config():
     """Create test database configuration."""

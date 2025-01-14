@@ -1,0 +1,55 @@
+script_content = f"""#!/bin/bash
+#SBATCH --job-name={job_name}
+#SBATCH --output={output_dir}/{job_name}.out
+#SBATCH --error={output_dir}/{job_name}.err
+#SBATCH --nodes={resources['nodes']}
+#SBATCH --ntasks-per-node={resources['tasks_per_node']}
+#SBATCH --time={resources['time']}
+#SBATCH --partition={resources['partition']}
+
+cd {output_dir}
+mpirun /home/myless/VASP/vasp.6.4.2/bin/vasp_std
+"""
+
+{
+"slurm_directives": {
+"job-name": "vasp-gpu",
+"nodes": 1,
+"time": "02:00:00",
+""
+},
+"module_load": "",
+"run_command": "mpirun /home/myless/VASP/vasp.6.4.2/bin/vasp_std",
+"tasks_per_node": 4 
+}
+
+
+{
+"slurm_directives": {
+"job-name": "vasp",
+"nodes": 1,
+"time": "02:00:00",
+"partition": "standard"
+},
+"module_load": "module load vasp-tpc/6.4.2-cpu",
+"run_command": "srun -n ${TOTAL_CORES} -c 4 vasp_std",
+"tasks_per_node": 64
+}
+
+ elif profile == 'Perlmutter-CPU':
+        script_content = f"""#!/bin/bash
+#SBATCH -J {job_name}
+#SBATCH --output={output_dir}/{job_name}.out
+#SBATCH --error={output_dir}/{job_name}.err
+#SBATCH --nodes={resources['nodes']}
+#SBATCH --time={resources['time']}
+#SBATCH --partition={resources['partition']}
+
+module load vasp-tpc/6.4.2-cpu
+
+export OMP_NUM_THREADS=2
+export OMP_PLACES=threads
+export OMP_PROC_BIND=spread
+
+srun -n {resources['nodes']*64} -c 4 vasp_std
+"""

@@ -4,6 +4,7 @@
 "ENCUT": 520,
 "EDIFF": 1e-6,
 "ISMEAR": 1,
+"ISIF" : 3,
 "SIGMA": 0.2,
 "NSW": 100,
 "IBRION": 2,

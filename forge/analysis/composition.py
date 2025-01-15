@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 from ase.build import bulk
 import random
+from scipy.spatial.distance import pdist, squareform
 
 
 class CompositionAnalyzer:
@@ -152,3 +153,168 @@ class CompositionAnalyzer:
         atoms.symbols = symbols
 
         return atoms
+
+    def find_diverse_compositions(self, embeddings: np.ndarray, compositions: List[Dict[str, float]], 
+                               n_select: int = 5, method: str = 'maximin',
+                               constraints: Optional[Dict[str, Tuple[float, float]]] = None) -> np.ndarray:
+        """
+        Find diverse compositions based on t-SNE embeddings, with optional composition constraints.
+
+        Args:
+            embeddings: Array of t-SNE embeddings
+            compositions: List of composition dictionaries corresponding to embeddings
+            n_select: Number of diverse points to select
+            method: Either 'maximin' or 'maxsum'
+            constraints: Dictionary mapping element symbols to (min, max) fraction tuples
+
+        Returns:
+            Indices of selected diverse points
+        """
+        if method not in ['maximin', 'maxsum']:
+            raise ValueError("Method must be either 'maximin' or 'maxsum'")
+
+        # Apply composition constraints if provided
+        valid_indices = np.arange(len(embeddings))
+        if constraints:
+            valid_mask = np.ones(len(embeddings), dtype=bool)
+            for element, (min_frac, max_frac) in constraints.items():
+                element_fractions = np.array([comp.get(element, 0.0) for comp in compositions])
+                valid_mask &= (element_fractions >= min_frac) & (element_fractions <= max_frac)
+            valid_indices = np.where(valid_mask)[0]
+            
+            if len(valid_indices) < n_select:
+                raise ValueError(f"Only {len(valid_indices)} compositions meet constraints, but {n_select} requested")
+            
+            # Filter embeddings to only valid ones
+            embeddings = embeddings[valid_indices]
+
+        # Calculate pairwise distances for valid embeddings
+        distances = squareform(pdist(embeddings))
+        
+        if method == 'maximin':
+            # Maximin approach: Maximize minimum distance between selected points
+            selected = []
+            
+            # Start with the two points that are furthest apart
+            initial_pair = np.unravel_index(np.argmax(distances), distances.shape)
+            selected.extend(initial_pair)
+            
+            # Iteratively add points that maximize the minimum distance to selected points
+            while len(selected) < n_select:
+                min_distances = np.min(distances[selected][:, ~np.isin(range(len(embeddings)), selected)], axis=0)
+                next_point = np.where(~np.isin(range(len(embeddings)), selected))[0][np.argmax(min_distances)]
+                selected.append(next_point)
+            
+            # Map back to original indices if constraints were applied
+            return valid_indices[np.array(selected)] if constraints else np.array(selected)
+        
+        else:  # maxsum approach
+            # Initialize with random point
+            selected = [np.random.randint(len(embeddings))]
+            
+            # Iteratively add points that maximize sum of distances to selected points
+            while len(selected) < n_select:
+                sum_distances = np.sum(distances[selected][:, ~np.isin(range(len(embeddings)), selected)], axis=0)
+                next_point = np.where(~np.isin(range(len(embeddings)), selected))[0][np.argmax(sum_distances)]
+                selected.append(next_point)
+            
+            # Map back to original indices if constraints were applied
+            return valid_indices[np.array(selected)] if constraints else np.array(selected)
+
+    def plot_with_diverse_points(self, embeddings: np.ndarray, clusters: np.ndarray, 
+                               new_embeddings: np.ndarray, new_compositions: List[Dict[str, float]], 
+                               n_diverse: int = 5, method: str = 'maximin',
+                               constraints: Optional[Dict[str, Tuple[float, float]]] = None) -> Tuple[np.ndarray, dict]:
+        """
+        Create an interactive plot highlighting diverse compositions.
+        
+        Args:
+            embeddings: Original t-SNE embeddings
+            clusters: Cluster assignments for original embeddings
+            new_embeddings: t-SNE embeddings for new compositions
+            new_compositions: List of new composition dictionaries
+            n_diverse: Number of diverse points to select
+            method: Either 'maximin' or 'maxsum'
+            constraints: Optional composition constraints
+        
+        Returns:
+            Tuple of (indices of diverse points, plotly figure dict)
+        """
+        import plotly.graph_objects as go
+        
+        # Find diverse points
+        diverse_indices = self.find_diverse_compositions(
+            new_embeddings, new_compositions, n_diverse, method, constraints
+        )
+        
+        # Calculate statistics for outlier detection
+        mean = np.mean(np.vstack([embeddings, new_embeddings]), axis=0)
+        std = np.std(np.vstack([embeddings, new_embeddings]), axis=0)
+        n_std = 2
+        
+        # Create masks
+        mask_original = np.all(np.abs(embeddings - mean) < n_std * std, axis=1)
+        mask_new = np.all(np.abs(new_embeddings - mean) < n_std * std, axis=1)
+        
+        # Create the figure
+        fig = go.Figure()
+        
+        # Plot original compositions
+        fig.add_trace(go.Scatter3d(
+            x=embeddings[mask_original, 0],
+            y=embeddings[mask_original, 1],
+            z=embeddings[mask_original, 2],
+            mode='markers',
+            marker=dict(
+                size=6,
+                color=clusters[mask_original],
+                colorscale='Viridis',
+                showscale=True,
+                colorbar=dict(title='Cluster')
+            ),
+            name='Existing'
+        ))
+        
+        # Plot new compositions (non-diverse)
+        non_diverse_mask = mask_new & ~np.isin(np.arange(len(new_embeddings)), diverse_indices)
+        fig.add_trace(go.Scatter3d(
+            x=new_embeddings[non_diverse_mask, 0],
+            y=new_embeddings[non_diverse_mask, 1],
+            z=new_embeddings[non_diverse_mask, 2],
+            mode='markers',
+            marker=dict(
+                size=8,
+                color='red',
+                symbol='diamond'
+            ),
+            name='Suggested'
+        ))
+        
+        # Plot diverse points
+        fig.add_trace(go.Scatter3d(
+            x=new_embeddings[diverse_indices, 0],
+            y=new_embeddings[diverse_indices, 1],
+            z=new_embeddings[diverse_indices, 2],
+            mode='markers',
+            marker=dict(
+                size=12,
+                color='black',
+                symbol='diamond'
+            ),
+            name=f'Most Diverse ({method})'
+        ))
+        
+        # Update layout
+        fig.update_layout(
+            title=f'Composition Space Analysis with {n_diverse} Most Diverse Points ({method})',
+            scene=dict(
+                xaxis_title='t-SNE 1',
+                yaxis_title='t-SNE 2',
+                zaxis_title='t-SNE 3'
+            ),
+            width=1000,
+            height=800,
+            showlegend=True
+        )
+        
+        return diverse_indices, fig

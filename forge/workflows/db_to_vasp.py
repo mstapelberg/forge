@@ -151,13 +151,18 @@ def _create_slurm_script(hpc_profile: dict, job_name: str, output_dir: str) -> s
             env_lines.append(f"export {var}={value}")
 
     # Build complete script
-    script_lines = sbatch_lines + env_lines + [
+    script_lines = sbatch_lines + [
         "",
         "# Module loading",
         module_load,
         "",
-        "# Job execution",
+        "# Environment setup"
     ]
+    script_lines.extend(env_lines)
+    script_lines.extend([
+        "",
+        "# Job execution",
+    ])
 
     # Calculate total cores
     node_str = slurm_directives.get("nodes", 1)
@@ -222,8 +227,44 @@ def prepare_vasp_job_from_ase(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Write POSCAR
-    write(os.path.join(output_dir, "POSCAR"), atoms, format="vasp")
+    # Sort atoms by chemical symbol
+    unique_species = sorted(set(atoms.get_chemical_symbols()))
+    sorted_indices = []
+    
+    if DEBUG:
+        print("\n[DEBUG] Original atom ordering:")
+        symbols = atoms.get_chemical_symbols()
+        elem_counts = {sym: symbols.count(sym) for sym in unique_species}
+        for elem, count in elem_counts.items():
+            print(f"  {elem}: {count} atoms")
+    
+    for symbol in unique_species:
+        indices = [i for i, s in enumerate(atoms.get_chemical_symbols()) if s == symbol]
+        sorted_indices.extend(indices)
+    
+    # Create a new sorted Atoms object
+    sorted_atoms = atoms[sorted_indices]
+    
+    if DEBUG:
+        print("\n[DEBUG] Sorted atom ordering:")
+        symbols = sorted_atoms.get_chemical_symbols()
+        elem_counts = {sym: symbols.count(sym) for sym in unique_species}
+        for elem, count in elem_counts.items():
+            print(f"  {elem}: {count} atoms")
+        print(f"\n[DEBUG] POTCAR will be concatenated in this order: {' + '.join(unique_species)}")
+        
+        # Verify sorting worked correctly
+        prev_symbol = None
+        is_sorted = True
+        for symbol in sorted_atoms.get_chemical_symbols():
+            if prev_symbol and symbol < prev_symbol:
+                is_sorted = False
+                break
+            prev_symbol = symbol
+        print(f"[DEBUG] Atoms are properly sorted: {is_sorted}")
+
+    # Write sorted POSCAR
+    write(os.path.join(output_dir, "POSCAR"), sorted_atoms, format="vasp")
 
     # Write INCAR
     _write_incar(vasp_profile["incar"], os.path.join(output_dir, "INCAR"))
@@ -232,7 +273,7 @@ def prepare_vasp_job_from_ase(
     base_kpts = vasp_profile["kpoints"].get("base_kpts", [4, 4, 4])
     gamma_center = vasp_profile["kpoints"].get("gamma", True)
     kpts, gamma_flag = determine_kpoint_grid(
-        atoms,
+        sorted_atoms,
         auto_kpoints=auto_kpoints,
         base_kpts=tuple(base_kpts),
         gamma=gamma_center,
@@ -244,7 +285,6 @@ def prepare_vasp_job_from_ase(
     potcar_dir = os.environ.get("VASP_PP_PATH")
     if potcar_dir is None:
         raise ValueError("VASP_PP_PATH environment variable is not set.")
-    unique_species = sorted(set(atoms.get_chemical_symbols()))
     _write_potcar(unique_species, potcar_map, potcar_dir, os.path.join(output_dir, "POTCAR"))
 
     # Create Slurm script

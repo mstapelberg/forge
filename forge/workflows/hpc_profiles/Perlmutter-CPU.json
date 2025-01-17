@@ -3,7 +3,6 @@
 "job-name": "vasp",
 "nodes": 1,
 "time": "08:00:00",
-"partition": "regular",
 "constraint": "cpu",
 "qos": "regular",
 "account": "m3957" 
@@ -14,7 +13,7 @@
 "OMP_PROC_BIND": "spread"
 },
 "module_load": "module load vasp-tpc/6.4.2-cpu",
-"run_command": "srun -n ${TOTAL_CORES} -c 4 vasp_std",
+"run_command": "srun -n ${TOTAL_CORES} -c 4 --cpu-bind=cores vasp_std \"vasp_out.log\" 2> \"vasp_err.log\"",
 "tasks_per_node": 64,
 "_comment": {
 "slurm_directives": "These are converted directly to #SBATCH lines",

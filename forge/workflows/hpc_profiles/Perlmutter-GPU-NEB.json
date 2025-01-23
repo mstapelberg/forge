@@ -1,0 +1,28 @@
+{
+"slurm_directives": {
+"job-name": "vasp-gpu",
+"nodes": 5,
+"time": "18:00:00",
+"constraint": "gpu",
+"qos": "regular",
+"account": "m224_g",
+"gpus": 20,
+"output": "%x-%j.out",
+"error": "%x-%j.err"
+},
+"environment": {
+"OMP_NUM_THREADS": "8",
+"OMP_PLACES": "cores",
+"OMP_PROC_BIND": "spread"
+},
+"module_load": "module load vasp-tpc/6.4.2-gpu",
+"run_command": "srun -N ${NODES} -n ${TOTAL_CORES} -c 32 --cpu-bind=cores --gpu-bind=none -G ${GPUS} vasp_std > \"vasp_out.log\" 2> \"vasp_err.log\"",
+"tasks_per_node": 4,
+"_comment": {
+"slurm_directives": "These are converted directly to #SBATCH lines",
+"environment": "These are converted to 'export VAR=VALUE' lines",
+"module_load": "Commands to load required modules",
+"run_command": "${TOTAL_CORES} is replaced with nodes * tasks_per_node, ${NODES} with number of nodes, ${GPUS} with total GPUs",
+"tasks_per_node": "Used to calculate total cores for the job"
+}
+}

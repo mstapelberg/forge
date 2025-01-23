@@ -1,0 +1,34 @@
+{
+"incar": {
+"PREC": "Accurate",
+"ENCUT": 520,
+"EDIFF": 1e-6,
+"EDIFFG": -0.04,
+"ISMEAR": 1,
+"ISIF" : 2,
+"SIGMA": 0.2,
+"NSW": 200,
+"NELM": 100,
+"NELMIN" : 5,
+"IBRION": 3,
+"LWAVE": ".FALSE.",
+"LCHARG": ".TRUE.",
+"LREAL": ".FALSE.",
+"ALGO": "Normal",
+"POTIM": 0,
+"IMAGES": 5,
+"SPRING": -8,
+"IOPT": 7
+},
+"kpoints": {
+"base_kpts": [4, 4, 4],
+"gamma": true
+},
+"potcars": {
+"V": "V_pv",
+"Cr": "Cr_pv",
+"Ti": "Ti_pv",
+"W": "W_sv",
+"Zr": "Zr_sv"
+}
+}

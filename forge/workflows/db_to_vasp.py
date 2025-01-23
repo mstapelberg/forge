@@ -1,18 +1,22 @@
 """Functions for preparing VASP calculations from structures."""
 
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 
 from ase.atoms import Atoms
-from ase.io import write
+from ase.io import read,write
+from ase.mep import DyNEB
 
 from forge.core.database import DatabaseManager
 from forge.workflows.helpers import determine_kpoint_grid
 from forge.workflows.profiles import ProfileManager
 
 
-def is_job_already_pending(db_manager: DatabaseManager, structure_id: int, profile_name: str) -> bool:
+def is_job_already_pending(
+    db_manager: DatabaseManager, structure_id: int, profile_name: str
+) -> bool:
     """Check metadata to see if a pending job for 'profile_name' is already marked."""
     metadata = db_manager.get_structure_metadata(structure_id)
     jobs_meta = metadata.get("jobs", {})
@@ -20,7 +24,9 @@ def is_job_already_pending(db_manager: DatabaseManager, structure_id: int, profi
     return info.get("status") == "pending"
 
 
-def mark_job_pending(db_manager: DatabaseManager, structure_id: int, profile_name: str) -> None:
+def mark_job_pending(
+    db_manager: DatabaseManager, structure_id: int, profile_name: str
+) -> None:
     """Mark a structure as having a pending job in the metadata for a given HPC profile."""
     metadata = db_manager.get_structure_metadata(structure_id)
     jobs_meta = metadata.get("jobs", {})
@@ -39,7 +45,9 @@ def _write_incar(incar_dict: dict, filepath: str) -> None:
             f.write(f"{key} = {value}\n")
 
 
-def _write_potcar(symbols: list, potcar_map: dict, potcar_dir: str, output_path: str) -> None:
+def _write_potcar(
+    symbols: list, potcar_map: dict, potcar_dir: str, output_path: str
+) -> None:
     """Write or concatenate POTCAR files in a specific order.
 
     Args:
@@ -55,7 +63,9 @@ def _write_potcar(symbols: list, potcar_map: dict, potcar_dir: str, output_path:
                 raise ValueError(f"No POTCAR mapping found for element {elem}")
             potcar_path = os.path.join(potcar_dir, pot_label, "POTCAR")
             if not os.path.exists(potcar_path):
-                raise FileNotFoundError(f"POTCAR not found for {pot_label} at {potcar_path}")
+                raise FileNotFoundError(
+                    f"POTCAR not found for {pot_label} at {potcar_path}"
+                )
             with open(potcar_path, "rb") as pfile:
                 out_potcar.write(pfile.read())
 
@@ -76,7 +86,9 @@ def _write_kpoints(filepath: str, kpoints: tuple, gamma_centered: bool) -> None:
         f.write("0 0 0\n")
 
 
-def _create_slurm_script(hpc_profile: dict, job_name: str, output_dir: str) -> str:
+def _create_slurm_script(
+    hpc_profile: dict, job_name: str, output_dir: str
+) -> str:
     """Build the Slurm script from HPC profile JSON/dict structure.
 
     Args:
@@ -143,10 +155,12 @@ def _create_slurm_script(hpc_profile: dict, job_name: str, output_dir: str) -> s
     # Add environment variables
     env_lines = []
     if environment:
-        env_lines.extend([
-            "",
-            "# Environment setup"
-        ])
+        env_lines.extend(
+            [
+                "",
+                "# Environment setup",
+            ]
+        )
         for var, value in environment.items():
             env_lines.append(f"export {var}={value}")
 
@@ -156,13 +170,15 @@ def _create_slurm_script(hpc_profile: dict, job_name: str, output_dir: str) -> s
         "# Module loading",
         module_load,
         "",
-        "# Environment setup"
+        "# Environment setup",
     ]
     script_lines.extend(env_lines)
-    script_lines.extend([
-        "",
-        "# Job execution",
-    ])
+    script_lines.extend(
+        [
+            "",
+            "# Job execution",
+        ]
+    )
 
     # Calculate total cores
     node_str = slurm_directives.get("nodes", 1)
@@ -175,7 +191,7 @@ def _create_slurm_script(hpc_profile: dict, job_name: str, output_dir: str) -> s
     # Insert run command
     if "${TOTAL_CORES}" in run_cmd:
         run_cmd = run_cmd.replace("${TOTAL_CORES}", str(total_cores))
-    script_lines.append(f"cd $SLURM_SUBMIT_DIR")
+    script_lines.append("cd $SLURM_SUBMIT_DIR")
     script_lines.append(run_cmd)
 
     return "\n".join(script_lines) + "\n"
@@ -201,7 +217,7 @@ def prepare_vasp_job_from_ase(
     """
     # Get the forge package root directory
     forge_root = Path(__file__).parent.parent.parent
-    
+
     # Debug: Print paths
     hpc_profile_dir = forge_root / "forge" / "workflows" / "hpc_profiles"
     vasp_profile_dir = forge_root / "forge" / "workflows" / "vasp_settings"
@@ -220,7 +236,7 @@ def prepare_vasp_job_from_ase(
     vasp_manager = ProfileManager(vasp_profile_dir)
 
     # Load and retrieve profiles
-    hpc_manager.load_profile(hpc_profile_name)
+    hpc_manager.load_profile(vasp_profile_name)
     vasp_manager.load_profile(vasp_profile_name)
     hpc_profile = hpc_manager.get_profile(hpc_profile_name)
     vasp_profile = vasp_manager.get_profile(vasp_profile_name)
@@ -230,29 +246,35 @@ def prepare_vasp_job_from_ase(
     # Sort atoms by chemical symbol
     unique_species = sorted(set(atoms.get_chemical_symbols()))
     sorted_indices = []
-    
+
     if DEBUG:
         print("\n[DEBUG] Original atom ordering:")
         symbols = atoms.get_chemical_symbols()
         elem_counts = {sym: symbols.count(sym) for sym in unique_species}
         for elem, count in elem_counts.items():
             print(f"  {elem}: {count} atoms")
-    
+
     for symbol in unique_species:
-        indices = [i for i, s in enumerate(atoms.get_chemical_symbols()) if s == symbol]
+        indices = [
+            i
+            for i, s in enumerate(atoms.get_chemical_symbols())
+            if s == symbol
+        ]
         sorted_indices.extend(indices)
-    
+
     # Create a new sorted Atoms object
     sorted_atoms = atoms[sorted_indices]
-    
+
     if DEBUG:
         print("\n[DEBUG] Sorted atom ordering:")
         symbols = sorted_atoms.get_chemical_symbols()
         elem_counts = {sym: symbols.count(sym) for sym in unique_species}
         for elem, count in elem_counts.items():
             print(f"  {elem}: {count} atoms")
-        print(f"\n[DEBUG] POTCAR will be concatenated in this order: {' + '.join(unique_species)}")
-        
+        print(
+            f"\n[DEBUG] POTCAR will be concatenated in this order: {' + '.join(unique_species)}"
+        )
+
         # Verify sorting worked correctly
         prev_symbol = None
         is_sorted = True
@@ -285,7 +307,9 @@ def prepare_vasp_job_from_ase(
     potcar_dir = os.environ.get("VASP_PP_PATH")
     if potcar_dir is None:
         raise ValueError("VASP_PP_PATH environment variable is not set.")
-    _write_potcar(unique_species, potcar_map, potcar_dir, os.path.join(output_dir, "POTCAR"))
+    _write_potcar(
+        unique_species, potcar_map, potcar_dir, os.path.join(output_dir, "POTCAR")
+    )
 
     # Create Slurm script
     job_name = Path(output_dir).name
@@ -293,7 +317,9 @@ def prepare_vasp_job_from_ase(
     with open(os.path.join(output_dir, "submit.sh"), "w") as f:
         f.write(slurm_script)
 
-    print(f"[INFO] Created VASP job in {output_dir} using HPC={hpc_profile_name}, VASP={vasp_profile_name}")
+    print(
+        f"[INFO] Created VASP job in {output_dir} using HPC={hpc_profile_name}, VASP={vasp_profile_name}"
+    )
 
 
 def prepare_vasp_job_from_db(
@@ -316,7 +342,9 @@ def prepare_vasp_job_from_db(
     """
     # Check if job is already pending
     if is_job_already_pending(db_manager, structure_id, hpc_profile_name):
-        print(f"[WARNING] Structure {structure_id} already has a pending job for {hpc_profile_name}")
+        print(
+            f"[WARNING] Structure {structure_id} already has a pending job for {hpc_profile_name}"
+        )
         return
 
     # Mark job as pending in database
@@ -339,6 +367,125 @@ def prepare_vasp_job_from_db(
     )
 
     print(f"[INFO] Created VASP job for structure {structure_id} in {output_dir}")
+
+
+def prepare_neb_vasp_job(
+    start_outcar: str,
+    end_outcar: str,
+    n_images: int,
+    vasp_profile_name: str,
+    hpc_profile_name: str = "Perlmutter-GPU-NEB",
+    output_dir: str = "neb_job",
+    DEBUG: bool = False,
+) -> None:
+    """Create a VASP NEB job folder from start and end OUTCAR files.
+
+    Args:
+        start_outcar: Path to starting structure OUTCAR
+        end_outcar: Path to ending structure OUTCAR
+        n_images: Number of intermediate images (total images will be n_images + 2)
+        vasp_profile_name: Name of VASP settings profile to use (e.g., "neb" or "neb-vtst")
+        hpc_profile_name: Name of HPC profile to use
+        output_dir: Directory to create NEB job files in
+        DEBUG: Whether to print debug information
+    """
+    # Read structures
+    start_atoms = read(start_outcar)
+    end_atoms = read(end_outcar)
+
+    # Validate structures
+    if len(start_atoms) != len(end_atoms):
+        raise ValueError("Start and end structures must have the same number of atoms")
+    if start_atoms.get_chemical_formula() != end_atoms.get_chemical_formula():
+        raise ValueError("Start and end structures must have the same composition")
+
+    # Create NEB images
+    images = [start_atoms.copy() for _ in range(n_images + 2)]  # +2 for start and end
+    images[-1] = end_atoms.copy()
+
+    # Interpolate
+    neb = DyNEB(images)
+    neb.interpolate(mic=True)
+
+    # Create main job directory
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Write interpolation trajectory for visualization
+    write(os.path.join(output_dir, "neb_path.xyz"), images)
+
+    # Setup image directories and files
+    for i in range(len(images)):
+        # Create image directory
+        image_dir = os.path.join(output_dir, f"{i:02d}")
+        os.makedirs(image_dir, exist_ok=True)
+
+        # Write POSCAR for each image
+        write(os.path.join(image_dir, "POSCAR"), images[i], format="vasp")
+
+        # Copy OUTCAR for endpoints
+        if i == 0:
+            shutil.copy2(start_outcar, os.path.join(image_dir, "OUTCAR"))
+        elif i == len(images) - 1:
+            shutil.copy2(end_outcar, os.path.join(image_dir, "OUTCAR"))
+
+    # Get the forge package root directory
+    forge_root = Path(__file__).parent.parent.parent
+
+    # Setup profile managers
+    hpc_profile_dir = forge_root / "forge" / "workflows" / "hpc_profiles"
+    vasp_profile_dir = forge_root / "forge" / "workflows" / "vasp_settings"
+
+    if DEBUG:
+        print(f"[DEBUG] Looking for HPC profile in: {hpc_profile_dir}")
+        print(f"[DEBUG] Looking for VASP profile in: {vasp_profile_dir}")
+
+    # Load and retrieve profiles
+    hpc_manager = ProfileManager(hpc_profile_dir)
+    vasp_manager = ProfileManager(vasp_profile_dir)
+
+    hpc_manager.load_profile(hpc_profile_name)
+    vasp_manager.load_profile(vasp_profile_name)
+    hpc_profile = hpc_manager.get_profile(hpc_profile_name)
+    vasp_profile = vasp_manager.get_profile(vasp_profile_name)
+
+    # Write shared input files in main directory
+    _write_incar(vasp_profile["incar"], os.path.join(output_dir, "INCAR"))
+
+    # Get unique species from first image (all should be same)
+    unique_species = sorted(set(images[0].get_chemical_symbols()))
+
+    # Write KPOINTS
+    base_kpts = vasp_profile["kpoints"].get("base_kpts", [4, 4, 4])
+    gamma_center = vasp_profile["kpoints"].get("gamma", True)
+    kpts, gamma_flag = determine_kpoint_grid(
+        images[0],
+        auto_kpoints=False,
+        base_kpts=tuple(base_kpts),
+        gamma=gamma_center,
+    )
+    _write_kpoints(os.path.join(output_dir, "KPOINTS"), kpts, gamma_flag)
+
+    # Write POTCAR
+    potcar_map = vasp_profile["potcars"]
+    potcar_dir = os.environ.get("VASP_PP_PATH")
+    if potcar_dir is None:
+        raise ValueError("VASP_PP_PATH environment variable is not set.")
+    _write_potcar(
+        unique_species, potcar_map, potcar_dir, os.path.join(output_dir, "POTCAR")
+    )
+
+    # Create Slurm script
+    job_name = Path(output_dir).name
+    slurm_script = _create_slurm_script(hpc_profile, job_name, output_dir)
+    with open(os.path.join(output_dir, "submit.sh"), "w") as f:
+        f.write(slurm_script)
+
+    print(
+        f"[INFO] Created NEB job in {output_dir} using HPC={hpc_profile_name}, VASP={vasp_profile_name}"
+    )
+    print(
+        f"[INFO] NEB path visualization saved to {os.path.join(output_dir, 'neb_path.xyz')}"
+    )
 
 
 # Alias for backward compatibility

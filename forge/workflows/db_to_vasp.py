@@ -87,51 +87,16 @@ def _write_kpoints(filepath: str, kpoints: tuple, gamma_centered: bool) -> None:
 
 
 def _create_slurm_script(
-    hpc_profile: dict, job_name: str, output_dir: str
+    hpc_profile: dict, 
+    output_dir: str,
+    job_name: str = None,
 ) -> str:
     """Build the Slurm script from HPC profile JSON/dict structure.
 
     Args:
         hpc_profile: HPC profile dictionary containing slurm settings
-        job_name: Name for the job
         output_dir: Directory for job output files
-
-    Example HPC profile structure:
-        {
-            "slurm_directives": {
-                "job-name": "vasp",
-                "nodes": 1,
-                "time": "01:00:00",
-                "partition": "standard"
-            },
-            "environment": {
-                "OMP_NUM_THREADS": "2",
-                "MKL_NUM_THREADS": "2"
-            },
-            "module_load": "module load vasp-tpc/6.4.2-cpu",
-            "run_command": "srun -n ${TOTAL_CORES} -c 4 vasp_std",
-            "tasks_per_node": 64
-        }
-
-    Example output script:
-        #!/bin/bash
-        #SBATCH --job-name=my_job
-        #SBATCH --output=my_job.out
-        #SBATCH --error=my_job.err
-        #SBATCH --nodes=1
-        #SBATCH --time=01:00:00
-        #SBATCH --partition=standard
-
-        # Environment setup
-        export OMP_NUM_THREADS=2
-        export MKL_NUM_THREADS=2
-
-        # Module loading
-        module load vasp-tpc/6.4.2-cpu
-
-        # Calculate total cores based on tasks_per_node and number of nodes
-        cd $SLURM_SUBMIT_DIR
-        srun -n 64 -c 4 vasp_std
+        job_name: Optional custom job name (defaults to profile's job-name)
     """
     slurm_directives = hpc_profile.get("slurm_directives", {})
     module_load = hpc_profile.get("module_load", "")
@@ -139,30 +104,32 @@ def _create_slurm_script(
     tasks_per_node = hpc_profile.get("tasks_per_node", 1)
     environment = hpc_profile.get("environment", {})
 
+    # Use provided job_name or fall back to profile default
+    if job_name is None:
+        job_name = slurm_directives.get("job-name", "vasp")
+
     # Build the #SBATCH lines
-    sbatch_lines = [
-        "#!/bin/bash",
+    sbatch_lines = ["#!/bin/bash"]
+    
+    # Handle special output/error file naming with job name substitution
+    output_file = slurm_directives.get("output", f"{job_name}.out")
+    error_file = slurm_directives.get("error", f"{job_name}.err")
+    
+    # Add job name and output/error files first
+    sbatch_lines.extend([
         f"#SBATCH --job-name={job_name}",
-        f"#SBATCH --output={job_name}.out",
-        f"#SBATCH --error={job_name}.err",
-    ]
+        f"#SBATCH --output={output_file}",
+        f"#SBATCH --error={error_file}",
+    ])
 
+    # Add other directives
     for key, val in slurm_directives.items():
-        if key == "job-name":
-            continue  # already handled above
-        sbatch_lines.append(f"#SBATCH --{key}={val}")
-
-    # Add environment variables
-    env_lines = []
-    if environment:
-        env_lines.extend(
-            [
-                "",
-                "# Environment setup",
-            ]
-        )
-        for var, value in environment.items():
-            env_lines.append(f"export {var}={value}")
+        if key in ["job-name", "output", "error"]:
+            continue  # already handled
+        if val is None:  # Handle flags without values (like --exclusive)
+            sbatch_lines.append(f"#SBATCH --{key}")
+        else:
+            sbatch_lines.append(f"#SBATCH --{key}={val}")
 
     # Build complete script
     script_lines = sbatch_lines + [
@@ -172,25 +139,32 @@ def _create_slurm_script(
         "",
         "# Environment setup",
     ]
-    script_lines.extend(env_lines)
-    script_lines.extend(
-        [
-            "",
-            "# Job execution",
-        ]
-    )
+    if environment:
+        for var, value in environment.items():
+            script_lines.append(f"export {var}={value}")
 
-    # Calculate total cores
+    script_lines.extend([
+        "",
+        "# Job execution",
+    ])
+
+    # Calculate total cores and handle variable substitution
     node_str = slurm_directives.get("nodes", 1)
     try:
         num_nodes = int(node_str)
     except ValueError:
         num_nodes = 1
     total_cores = num_nodes * tasks_per_node
-
-    # Insert run command
+    
+    # Replace variables in run command
     if "${TOTAL_CORES}" in run_cmd:
         run_cmd = run_cmd.replace("${TOTAL_CORES}", str(total_cores))
+    if "${NODES}" in run_cmd:
+        run_cmd = run_cmd.replace("${NODES}", str(num_nodes))
+    if "${GPUS}" in run_cmd:
+        gpus = slurm_directives.get("gpus", 0)
+        run_cmd = run_cmd.replace("${GPUS}", str(gpus))
+
     script_lines.append("cd $SLURM_SUBMIT_DIR")
     script_lines.append(run_cmd)
 
@@ -204,6 +178,7 @@ def prepare_vasp_job_from_ase(
     output_dir: str,
     auto_kpoints: bool = False,
     DEBUG: bool = False,
+    job_name: str = None,
 ) -> None:
     """Create a VASP job folder from an ASE Atoms object.
 
@@ -214,6 +189,7 @@ def prepare_vasp_job_from_ase(
         output_dir: Directory to create job files in
         auto_kpoints: Whether to automatically determine k-points
         DEBUG: Whether to print debug information
+        job_name: Optional custom job name (defaults to profile's job-name)
     """
     # Get the forge package root directory
     forge_root = Path(__file__).parent.parent.parent
@@ -312,8 +288,11 @@ def prepare_vasp_job_from_ase(
     )
 
     # Create Slurm script
-    job_name = Path(output_dir).name
-    slurm_script = _create_slurm_script(hpc_profile, job_name, output_dir)
+    slurm_script = _create_slurm_script(
+        hpc_profile, 
+        output_dir,
+        job_name=job_name
+    )
     with open(os.path.join(output_dir, "submit.sh"), "w") as f:
         f.write(slurm_script)
 
@@ -377,6 +356,7 @@ def prepare_neb_vasp_job(
     hpc_profile_name: str = "Perlmutter-GPU-NEB",
     output_dir: str = "neb_job",
     DEBUG: bool = False,
+    job_name: str = None,
 ) -> None:
     """Create a VASP NEB job folder from start and end OUTCAR files.
 
@@ -388,6 +368,7 @@ def prepare_neb_vasp_job(
         hpc_profile_name: Name of HPC profile to use
         output_dir: Directory to create NEB job files in
         DEBUG: Whether to print debug information
+        job_name: Optional custom job name (defaults to profile's job-name)
     """
     # Read structures
     start_atoms = read(start_outcar)
@@ -475,8 +456,11 @@ def prepare_neb_vasp_job(
     )
 
     # Create Slurm script
-    job_name = Path(output_dir).name
-    slurm_script = _create_slurm_script(hpc_profile, job_name, output_dir)
+    slurm_script = _create_slurm_script(
+        hpc_profile, 
+        output_dir,
+        job_name=job_name
+    )
     with open(os.path.join(output_dir, "submit.sh"), "w") as f:
         f.write(slurm_script)
 

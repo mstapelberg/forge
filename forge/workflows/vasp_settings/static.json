@@ -7,9 +7,9 @@
 "SIGMA": 0.2,
 "NSW": 0,
 "IBRION": -1,
-"LWAVE": false,
-"LCHARG": true,
-"LREAL": false,
+"LWAVE": ".FALSE.",
+"LCHARG": ".TRUE.",
+"LREAL": ".FALSE.",
 "ALGO": "Normal"
 },
 "kpoints": {

@@ -212,7 +212,7 @@ def prepare_vasp_job_from_ase(
     vasp_manager = ProfileManager(vasp_profile_dir)
 
     # Load and retrieve profiles
-    hpc_manager.load_profile(vasp_profile_name)
+    hpc_manager.load_profile(hpc_profile_name)
     vasp_manager.load_profile(vasp_profile_name)
     hpc_profile = hpc_manager.get_profile(hpc_profile_name)
     vasp_profile = vasp_manager.get_profile(vasp_profile_name)

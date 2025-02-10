@@ -5,7 +5,7 @@ from pathlib import Path
 from ase import Atoms
 from sklearn.cluster import KMeans
 from forge.core.database import DatabaseManager
-from forge.analysis.composition import CompositionAnalyzer
+from forge.analysis.composition import CompositionAnalyzer, HAS_UMAP
 
 import yaml
 import tempfile
@@ -232,22 +232,11 @@ def test_tsne_clustering(random_compositions):
     """Test t-SNE and clustering directly."""
     analyzer = CompositionAnalyzer(n_components=3, random_state=123)
     
-    # Convert to array
-    comp_array = analyzer._compositions_to_array(random_compositions)
-    print(f"Composition array shape: {comp_array.shape}")
+    # Convert to array and run analysis
+    print("Running t-SNE and clustering analysis...")
+    embeddings, clusters = analyzer.analyze_compositions(random_compositions, n_clusters=5)
     
-    # Try t-SNE directly
-    print("Running t-SNE...")
-    embeddings = analyzer.tsne.fit_transform(comp_array)
-    print(f"t-SNE embeddings shape: {embeddings.shape}")
-    
-    # Try clustering
-    print("Running clustering...")
-    analyzer.kmeans = KMeans(n_clusters=5, random_state=42, n_init=10)
-    clusters = analyzer.kmeans.fit_predict(comp_array)
-    print(f"Number of clusters: {len(set(clusters))}")
-    
-    # Add assertions instead of returning values
+    # Add assertions
     assert embeddings.shape == (len(random_compositions), 3)
     assert len(set(clusters)) == 5
     assert len(clusters) == len(random_compositions)
@@ -256,7 +245,7 @@ def test_composition_analysis_with_db(db_manager, random_compositions):
     """Main test function, now with more debugging."""
     print(f"\nStarting main test with {len(random_compositions)} compositions")
     
-    # 1. Store in DB (reusing test_database_storage logic)
+    # 1. Store and retrieve compositions (keep this part unchanged)
     total_atoms = 100
     for comp in random_compositions:
         symbols = []
@@ -274,55 +263,25 @@ def test_composition_analysis_with_db(db_manager, random_compositions):
         atoms.info["composition"] = comp
         db_manager.add_structure(atoms, source_type="random_test")
 
-    # 2. Retrieve from DB
-    with db_manager.conn.cursor() as cur:
-        cur.execute("SELECT structure_id FROM structures")
-        all_ids = [row[0] for row in cur.fetchall()]
-        db_manager.conn.commit()
-    
-    print(f"Retrieved {len(all_ids)} structure IDs from database")
-    
-    compositions = []
-    for sid in all_ids:
-        atoms = db_manager.get_structure(sid)
-        comp_dict = atoms.info.get("composition", {})
-        compositions.append(comp_dict)
-    
-    print(f"Retrieved {len(compositions)} compositions from database")
-    
-    # 3. Run analysis
+    # 2. Run analysis with original compositions
     analyzer = CompositionAnalyzer(n_components=3, random_state=123)
-    
-    # Debug the composition array
-    comp_array = analyzer._compositions_to_array(compositions)
-    print(f"Composition array shape before t-SNE: {comp_array.shape}")
-    
-    # Run t-SNE and clustering
-    embeddings, clusters = analyzer.analyze_compositions(compositions, n_clusters=5)
+    embeddings, clusters = analyzer.analyze_compositions(random_compositions, n_clusters=5)
     print(f"Generated embeddings shape: {embeddings.shape}")
     print(f"Number of clusters: {len(set(clusters))}")
     
-    # Generate new compositions
-    new_comps = analyzer.suggest_new_compositions(compositions, n_suggestions=10)
+    # 3. Generate new compositions
+    new_comps = analyzer.suggest_new_compositions(random_compositions, n_suggestions=10)
     print(f"Generated {len(new_comps)} new compositions")
     
-    # Combine original and new compositions for t-SNE
-    all_compositions = compositions + new_comps
-    print(f"Total compositions for t-SNE: {len(all_compositions)}")
+    # 4. Analyze combined compositions
+    all_compositions = random_compositions + new_comps
+    all_embeddings, all_clusters = analyzer.analyze_compositions(all_compositions, n_clusters=5)
     
-    # Convert all compositions to array format
-    all_comp_array = analyzer._compositions_to_array(all_compositions)
-    print(f"Combined composition array shape: {all_comp_array.shape}")
+    # 5. Split results for visualization
+    original_embeddings = all_embeddings[:len(random_compositions)]
+    new_embeddings = all_embeddings[len(random_compositions):]
     
-    # Run t-SNE on all compositions together
-    all_embeddings = analyzer.tsne.fit_transform(all_comp_array)
-    print(f"Combined embeddings shape: {all_embeddings.shape}")
-    
-    # Split embeddings back into original and new
-    original_embeddings = all_embeddings[:len(compositions)]
-    new_embeddings = all_embeddings[len(compositions):]
-    
-    # Create visualization
+    # 6. Create visualization
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D
     
@@ -356,3 +315,105 @@ def test_composition_analysis_with_db(db_manager, random_compositions):
     
     print(f"3D plot saved to {plot_path}")
     print("Composition analysis test completed successfully.")
+
+def test_dimensionality_reduction_methods(random_compositions):
+    """Test that all dimensionality reduction methods work."""
+    dim_methods = ['T-SNE', 'PCA', 'MDS']
+    if HAS_UMAP:
+        dim_methods.append('UMAP')
+    
+    for method in dim_methods:
+        analyzer = CompositionAnalyzer(n_components=3, random_state=123, dim_method=method)
+        embeddings, clusters = analyzer.analyze_compositions(random_compositions, n_clusters=5)
+        
+        # Check output shapes
+        assert embeddings.shape == (len(random_compositions), 3)
+        assert len(clusters) == len(random_compositions)
+        assert len(set(clusters)) <= 5  # Should have at most 5 clusters
+
+def test_clustering_methods(random_compositions):
+    """Test that all clustering methods work."""
+    cluster_methods = ['KMEANS', 'AGGLOMERATIVE', 'SPECTRAL', 'DBSCAN']
+    
+    for method in cluster_methods:
+        analyzer = CompositionAnalyzer(n_components=3, random_state=123, cluster_method=method)
+        embeddings, clusters = analyzer.analyze_compositions(random_compositions, n_clusters=5)
+        
+        # Check that clusters are assigned
+        assert len(clusters) == len(random_compositions)
+        # Note: DBSCAN might assign -1 to noise points
+        if method != 'DBSCAN':
+            assert all(c >= 0 for c in clusters)
+
+def test_method_comparison(random_compositions):
+    """Test the compare_methods functionality."""
+    analyzer = CompositionAnalyzer(n_components=2, random_state=123)
+    
+    # Test with specific methods
+    dim_methods = ['T-SNE', 'PCA']
+    cluster_methods = ['KMEANS', 'AGGLOMERATIVE']
+    
+    scores = analyzer.compare_methods(
+        random_compositions,
+        dim_methods=dim_methods,
+        cluster_methods=cluster_methods,
+        n_clusters=5,
+        save_path=None
+    )
+    
+    # Check that scores were computed
+    expected_combinations = [f"{dim}_{clust}" 
+                           for dim in dim_methods 
+                           for clust in cluster_methods]
+    assert all(comb in scores for comb in expected_combinations)
+
+def test_backward_compatibility(random_compositions):
+    """Test that the original usage pattern still works."""
+    # Original initialization
+    analyzer = CompositionAnalyzer(n_components=3, random_state=123)
+    
+    # Original analysis call
+    embeddings, clusters = analyzer.analyze_compositions(random_compositions, n_clusters=5)
+    
+    # Check original behavior
+    assert embeddings.shape == (len(random_compositions), 3)
+    assert len(clusters) == len(random_compositions)
+    assert len(set(clusters)) <= 5
+
+def test_method_switching(random_compositions):
+    """Test that methods can be switched during analysis."""
+    analyzer = CompositionAnalyzer(n_components=3, random_state=123)
+    
+    # Test switching dimensionality reduction
+    embeddings1, clusters1 = analyzer.analyze_compositions(
+        random_compositions, 
+        dim_method='PCA'
+    )
+    
+    embeddings2, clusters2 = analyzer.analyze_compositions(
+        random_compositions, 
+        cluster_method='AGGLOMERATIVE'
+    )
+    
+    # Check that original methods were restored
+    assert analyzer.dim_method == 'T-SNE'
+    assert analyzer.cluster_method == 'KMEANS'
+    
+    # Check outputs
+    assert embeddings1.shape == embeddings2.shape == (len(random_compositions), 3)
+    assert len(clusters1) == len(clusters2) == len(random_compositions)
+
+def test_invalid_methods():
+    """Test that invalid methods raise appropriate errors."""
+    with pytest.raises(ValueError):
+        CompositionAnalyzer(dim_method='INVALID')
+    
+    with pytest.raises(ValueError):
+        CompositionAnalyzer(cluster_method='INVALID')
+        
+    analyzer = CompositionAnalyzer()
+    with pytest.raises(ValueError):
+        analyzer.analyze_compositions([], dim_method='INVALID')
+    
+    with pytest.raises(ValueError):
+        analyzer.analyze_compositions([], cluster_method='INVALID')

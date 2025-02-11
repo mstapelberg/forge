@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt
 from copy import deepcopy
 from pathlib import Path
+from tqdm import tqdm
 
 from ase import Atoms
 
@@ -217,7 +218,10 @@ class MonteCarloAlloySampler:
             self.tracker.record_energy(0, self.current_energy)
             self.tracker.record_wc_params(0, self.atoms)
         
-        for step in range(self.steps):
+        # Create progress bar
+        pbar = tqdm(range(self.steps), desc="Running MC", unit="steps")
+        
+        for step in pbar:
             # 1. Randomly pick two different site indices
             site1 = self.rng.integers(0, n_atoms)
             site2 = self.rng.integers(0, n_atoms)
@@ -261,5 +265,9 @@ class MonteCarloAlloySampler:
                     self.tracker.record_energy(step + 1, self.current_energy)
                 if step % self.tracker.wc_freq == 0:
                     self.tracker.record_wc_params(step + 1, self.atoms)
+            
+            # Update progress bar with current energy
+            pbar.set_postfix({'energy': f"{self.current_energy:.3f} eV"})
         
+        pbar.close()
         return self.atoms

@@ -1,5 +1,4 @@
 """Monte Carlo simulation tools for alloy structures."""
-
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt
@@ -205,8 +204,12 @@ class MonteCarloAlloySampler:
         self.atoms.calc = self.calculator
         self.current_energy = self.atoms.get_potential_energy()
 
-    def run_mcmc(self) -> Atoms:
+    def run_mcmc(self, convergence_window: int = 1000, energy_threshold: float = 0.0002) -> Atoms:
         """Perform Metropolis-Hastings Monte Carlo swaps.
+
+        Args:
+            convergence_window: Number of steps to check for convergence
+            energy_threshold: Maximum energy change per atom (in eV) allowed for convergence
 
         Returns:
             Final atomic configuration
@@ -221,7 +224,14 @@ class MonteCarloAlloySampler:
         # Create progress bar
         pbar = tqdm(range(self.steps), desc="Running MC", unit="steps")
         
+        # Initialize energy history for convergence checking
+        energy_history = []
+        converged = False
+        
         for step in pbar:
+            if converged:
+                break
+            
             # 1. Randomly pick two different site indices
             site1 = self.rng.integers(0, n_atoms)
             site2 = self.rng.integers(0, n_atoms)
@@ -266,8 +276,30 @@ class MonteCarloAlloySampler:
                 if step % self.tracker.wc_freq == 0:
                     self.tracker.record_wc_params(step + 1, self.atoms)
             
-            # Update progress bar with current energy
-            pbar.set_postfix({'energy': f"{self.current_energy:.3f} eV"})
+            # Update energy history and check convergence
+            energy_history.append(self.current_energy)
+            if len(energy_history) > convergence_window:
+                energy_history.pop(0)  # Remove oldest energy
+                
+                if len(energy_history) == convergence_window:
+                    energy_range = max(energy_history) - min(energy_history)
+                    energy_range_per_atom = energy_range / n_atoms
+                    
+                    # Update progress bar with convergence info
+                    pbar.set_postfix({
+                        'energy': f"{self.current_energy:.3f} eV",
+                        'Δe/atom': f"{energy_range_per_atom:.6f} eV"
+                    })
+                    
+                    # Check for convergence
+                    if energy_range_per_atom < energy_threshold:
+                        print(f"\nConverged! Energy change per atom ({energy_range_per_atom:.6f} eV) "
+                              f"below threshold ({energy_threshold:.6f} eV) "
+                              f"over {convergence_window} steps")
+                        converged = True
+            else:
+                # Just update energy if we haven't filled the window yet
+                pbar.set_postfix({'energy': f"{self.current_energy:.3f} eV"})
         
         pbar.close()
         return self.atoms

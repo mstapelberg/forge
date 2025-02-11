@@ -42,6 +42,7 @@ atoms = analyzer.create_random_alloy(composition = composition,
                                          cubic=True)
 
 print(atoms)
+write(f'initial_{atoms.get_chemical_formula()}.xyz', atoms)
 
 model_path = '../potentials/gen_6_model_0_L0_isolated-2026-01-16_stagetwo.model'
 
@@ -61,8 +62,9 @@ mc_sampler = MonteCarloAlloySampler(
     calculator=calc,
     temperature=temperature,
     steps=total_swaps,
+    rng_seed=42
 )
 
-final_atoms = mc_sampler.run_mcmc()
+final_atoms = mc_sampler.run_mcmc(convergence_window=2500, energy_threshold=0.002)
 
 write(f'final_{final_atoms.get_chemical_formula()}.xyz', final_atoms)

@@ -1,0 +1,119 @@
+{
+  "composition": {
+    "V": 0.8,
+    "Cr": 0.2
+  },
+  "statistics": {
+    "nearest_neighbor": {
+      "V-Cr": {
+        "mean": 42.1114501953125,
+        "std": 0.0,
+        "min": 42.1114501953125,
+        "max": 42.1114501953125,
+        "count": 1
+      },
+      "V-V": {
+        "mean": 5.732706705729167,
+        "std": 6.227298990033286,
+        "min": 0.771240234375,
+        "max": 14.5147705078125,
+        "count": 3
+      }
+    },
+    "next_nearest_neighbor": {},
+    "overall": {
+      "nn_mean": 14.827392578125,
+      "nn_std": 16.650056242731473,
+      "nnn_mean": null,
+      "nnn_std": null,
+      "nn_count": 4,
+      "nnn_count": 0
+    }
+  },
+  "calculations": [
+    {
+      "vacancy_element": "V",
+      "target_element": "Cr",
+      "vacancy_index": "0",
+      "target_index": "127",
+      "barrier": 42.1114501953125,
+      "energies": [
+        -1163.6295166015625,
+        -1157.3072509765625,
+        -1155.6932373046875,
+        -10245902.0,
+        -1121.51806640625,
+        -1157.2252197265625,
+        -1163.7459716796875
+      ],
+      "converged": false,
+      "n_steps": 200,
+      "success": true,
+      "error": null,
+      "is_nearest_neighbor": true
+    },
+    {
+      "vacancy_element": "V",
+      "target_element": "V",
+      "vacancy_index": "0",
+      "target_index": "2",
+      "barrier": 1.912109375,
+      "energies": [
+        -1163.62939453125,
+        -1163.1370849609375,
+        -1162.0345458984375,
+        -1161.71728515625,
+        -1162.1112060546875,
+        -1163.2615966796875,
+        -1163.785888671875
+      ],
+      "converged": false,
+      "n_steps": 200,
+      "success": true,
+      "error": null,
+      "is_nearest_neighbor": true
+    },
+    {
+      "vacancy_element": "V",
+      "target_element": "V",
+      "vacancy_index": "1",
+      "target_index": "34",
+      "barrier": 0.771240234375,
+      "energies": [
+        -1163.590576171875,
+        -1163.5125732421875,
+        -1163.10205078125,
+        -1162.8193359375,
+        -1163.1690673828125,
+        -1163.6593017578125,
+        -1163.814208984375
+      ],
+      "converged": false,
+      "n_steps": 200,
+      "success": true,
+      "error": null,
+      "is_nearest_neighbor": true
+    },
+    {
+      "vacancy_element": "V",
+      "target_element": "V",
+      "vacancy_index": "1",
+      "target_index": "97",
+      "barrier": 14.5147705078125,
+      "energies": [
+        -1163.590576171875,
+        -1155.5609130859375,
+        -1266.9033203125,
+        -1149.0758056640625,
+        -1183.491943359375,
+        -1155.123291015625,
+        -1163.56103515625
+      ],
+      "converged": false,
+      "n_steps": 200,
+      "success": true,
+      "error": null,
+      "is_nearest_neighbor": true
+    }
+  ]
+}

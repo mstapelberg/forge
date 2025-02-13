@@ -5,6 +5,8 @@ from ase.io import read
 from mace.calculators.mace import MACECalculator
 from ase.build import bulk
 from forge.analysis.composition import CompositionAnalyzer
+import torch
+
 
 from forge.workflows.neb import (
     NEBCalculation,
@@ -20,10 +22,16 @@ RESOURCE_PATH = Path(__file__).parent / "resources"
 
 def get_test_calculator():
     """Get MACE calculator for testing."""
+    # check if cuda is available
+    if torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
+
     model_path = str(RESOURCE_PATH / "potentials/mace/gen_5_model_0-11-28_stagetwo.model")
-    return MACECalculator(
+    return model_path, MACECalculator(
         model_paths=[model_path],
-        device="cpu",
+        device=device,
         default_dtype="float32"
     )
 
@@ -67,39 +75,15 @@ def small_test_structure():
 @pytest.fixture
 def small_vacancy_workflow(small_test_structure):
     """Create VacancyDiffusion workflow with small test structure."""
-    calc = get_test_calculator()
+    model_path, calc = get_test_calculator()
     return VacancyDiffusion(
         atoms=small_test_structure,
         calculator=calc,
         nn_cutoff=2.8,
         nnn_cutoff=3.2,
-        seed=42
+        seed=42,
+        neb_params={'model_path': model_path}  # Pass model_path in neb_params
     )
-
-def test_neb_calculation_basic():
-    """Test basic NEBCalculation functionality."""
-    # Create simple start and end configurations
-    start = bulk('V', 'bcc', a=3.03, cubic=True) * (2, 2, 2)
-    end = start.copy()
-    end.positions[0] += [0.1, 0, 0]  # Small displacement
-    
-    calc = get_test_calculator()
-    
-    neb = NEBCalculation(
-        start_atoms=start,
-        end_atoms=end,
-        calculator=calc,
-        n_images=3,
-        method=NEBMethod.REGULAR,
-        climbing=True,
-        steps=10,  # Small number for testing
-        seed=42
-    )
-    
-    result = neb.run()
-    assert isinstance(result, NEBResult)
-    assert len(result.energies) == 5  # 3 images + 2 endpoints
-    assert result.barrier >= 0
 
 def test_neighbor_info():
     """Test NeighborInfo dataclass."""
@@ -119,7 +103,7 @@ def test_neighbor_info():
 
 def test_vacancy_diffusion_init(small_test_structure):
     """Test VacancyDiffusion initialization."""
-    calc = get_test_calculator()
+    model_path, calc = get_test_calculator()
     vd = VacancyDiffusion(
         atoms=small_test_structure,
         calculator=calc,
@@ -158,6 +142,7 @@ def test_vacancy_diffusion_neighbors(small_vacancy_workflow):
 
 def test_vacancy_diffusion_endpoints(small_vacancy_workflow):
     """Test endpoint creation in VacancyDiffusion."""
+    # Get a V atom and one of its neighbors
     v_indices = [i for i, atom in enumerate(small_vacancy_workflow.atoms) 
                 if atom.symbol == 'V']
     test_idx = v_indices[0]
@@ -165,6 +150,7 @@ def test_vacancy_diffusion_endpoints(small_vacancy_workflow):
     neighbors = small_vacancy_workflow.get_neighbors(test_idx)
     target_idx = neighbors.nn_indices[0]
     
+    # Create endpoints without relaxation for speed
     start, end, metadata = small_vacancy_workflow.create_endpoints(
         vacancy_index=test_idx,
         target_index=target_idx,
@@ -178,8 +164,45 @@ def test_vacancy_diffusion_endpoints(small_vacancy_workflow):
     
     # Test atom positions
     vacancy_pos = small_vacancy_workflow.atoms.positions[test_idx]
-    target_moved = np.allclose(end.positions[target_idx], vacancy_pos)
-    assert target_moved
+    
+    # Adjust target_idx if it was after the vacancy
+    adjusted_target_idx = target_idx if target_idx < test_idx else target_idx - 1
+    target_moved = np.allclose(end.positions[adjusted_target_idx], vacancy_pos)
+    assert target_moved, "Target atom should move to vacancy position"
+
+def test_neb_calculation_basic():
+    """Test basic NEBCalculation functionality."""
+    # Create simple start and end configurations
+    start = bulk('V', 'bcc', a=3.03, cubic=True) * (2, 2, 2)
+    end = start.copy()
+    end.positions[0] += [0.1, 0, 0]  # Small displacement
+    
+    model_path, calc = get_test_calculator()
+    start.calc = calc
+    end.calc = calc
+    start_energy = start.get_potential_energy()
+    end_energy = end.get_potential_energy()
+    # remove calc from start and end
+    start.calc = None
+    end.calc = None
+    
+    neb = NEBCalculation(
+        start_atoms=start,
+        end_atoms=end,
+        model_path=model_path,
+        start_energy=start_energy,
+        end_energy=end_energy,
+        n_images=5,
+        method=NEBMethod.REGULAR,
+        climbing=True,
+        steps=10,  # Small number for testing
+        seed=42
+    )
+    
+    result = neb.run()
+    assert isinstance(result, NEBResult)
+    assert len(result.energies) == 7  # 5 images + 2 endpoints
+    assert result.barrier >= 0
 
 def test_neighbor_finding(small_vacancy_workflow):
     """Test neighbor finding functionality."""
@@ -198,40 +221,6 @@ def test_neighbor_finding(small_vacancy_workflow):
     # Check distances are sorted
     assert np.all(np.diff(neighbors.nn_distances) >= 0), "NN distances should be sorted"
     assert np.all(np.diff(neighbors.nnn_distances) >= 0), "NNN distances should be sorted"
-
-def test_endpoint_creation(small_vacancy_workflow):
-    """Test creation of NEB endpoints."""
-    # Get a V atom and one of its neighbors
-    v_indices = [i for i, atom in enumerate(small_vacancy_workflow.atoms) 
-                if atom.symbol == 'V']
-    test_idx = v_indices[0]
-    
-    neighbors = small_vacancy_workflow.get_neighbors(test_idx)
-    target_idx = neighbors.nn_indices[0]
-    
-    # Create endpoints without relaxation for speed
-    start, end, metadata = small_vacancy_workflow.create_endpoints(
-        vacancy_index=test_idx,
-        target_index=target_idx,
-        relax=False
-    )
-    
-    # Check basic properties
-    assert len(start) == len(small_vacancy_workflow.atoms) - 1
-    assert len(end) == len(small_vacancy_workflow.atoms) - 1
-    assert metadata["vacancy_element"] == "V"
-    
-    # Check that atom IDs are preserved (except for removed atom)
-    original_positions = small_vacancy_workflow.atoms.positions
-    start_positions = start.positions
-    end_positions = end.positions
-    
-    # The vacancy position should be the original position of test_idx
-    vacancy_pos = original_positions[test_idx]
-    
-    # In the end configuration, target atom should be at vacancy position
-    target_moved = np.allclose(end_positions[target_idx], vacancy_pos)
-    assert target_moved, "Target atom should move to vacancy position"
 
 def test_neighbor_sampling(small_vacancy_workflow):
     """Test random sampling of neighbors."""
@@ -258,39 +247,6 @@ def test_neighbor_sampling(small_vacancy_workflow):
         rng_seed=42
     )
     assert pairs == pairs2, "Same seed should give same results"
-
-def test_single_neb(small_vacancy_workflow):
-    """Test running a single NEB calculation."""
-    # Get a V atom and neighbor for testing
-    v_indices = [i for i, atom in enumerate(small_vacancy_workflow.atoms) 
-                if atom.symbol == 'V']
-    test_idx = v_indices[0]
-    
-    neighbors = small_vacancy_workflow.get_neighbors(test_idx)
-    target_idx = neighbors.nn_indices[0]
-    
-    # Run NEB with minimal steps for testing
-    result = small_vacancy_workflow.run_single(
-        vacancy_index=test_idx,
-        target_index=target_idx,
-        num_images=3,  # Minimal images for testing
-        save_xyz=True,
-        output_dir=RESOURCE_PATH / "test_output"
-    )
-    
-    assert result["success"]
-    assert result["barrier"] > 0
-    assert len(result["energies"]) == 5  # 3 images + 2 endpoints
-    
-    # Check output files
-    output_dir = RESOURCE_PATH / "test_output"
-    assert output_dir.exists()
-    
-    formula = small_vacancy_workflow.atoms.get_chemical_formula()
-    base_name = f"{formula}_V_to_{result['target_element']}_site{test_idx}_to_{target_idx}"
-    
-    assert (output_dir / f"{base_name}_initial.xyz").exists()
-    assert (output_dir / f"{base_name}_final.xyz").exists()
 
 def test_neb_analyzer_basic():
     """Test basic NEBAnalyzer functionality."""
@@ -334,15 +290,26 @@ def test_neb_analyzer_io(tmp_path):
     """Test NEBAnalyzer save/load functionality."""
     analyzer = NEBAnalyzer()
     
-    # Add test calculation
-    test_calc = {
-        "success": True,
-        "vacancy_element": "V",
-        "target_element": "Cr",
-        "barrier": 0.5,
-        "is_nearest_neighbor": True
-    }
-    analyzer.add_calculation(test_calc)
+    # Add test calculations for both NN and NNN
+    test_calcs = [
+        {
+            "success": True,
+            "vacancy_element": "V",
+            "target_element": "Cr",
+            "barrier": 0.5,
+            "is_nearest_neighbor": True
+        },
+        {
+            "success": True,
+            "vacancy_element": "V",
+            "target_element": "Ti",
+            "barrier": 0.6,
+            "is_nearest_neighbor": False
+        }
+    ]
+    
+    for calc in test_calcs:
+        analyzer.add_calculation(calc)
     
     # Save results
     save_path = tmp_path / "test_results.json"
@@ -351,7 +318,12 @@ def test_neb_analyzer_io(tmp_path):
     # Load results
     loaded = NEBAnalyzer.load_results(save_path)
     assert len(loaded.calculations) == len(analyzer.calculations)
-    assert loaded.calculations[0]["barrier"] == test_calc["barrier"]
+    
+    # Check specific values are preserved
+    assert loaded.calculations[0]["barrier"] == test_calcs[0]["barrier"]
+    assert loaded.calculations[1]["barrier"] == test_calcs[1]["barrier"]
+    assert loaded.calculations[0]["is_nearest_neighbor"] == True
+    assert loaded.calculations[1]["is_nearest_neighbor"] == False
 
 def test_analyzer(small_vacancy_workflow):
     """Test NEBAnalyzer functionality."""

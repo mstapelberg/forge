@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from ase.neighborlist import NeighborList
 import json
 from collections import defaultdict
+import torch
+from mace.calculators.mace import MACECalculator
+from monty.json import MontyEncoder, MontyDecoder
 
 class NEBMethod(Enum):
     """NEB calculation method."""
@@ -36,13 +39,17 @@ class NEBCalculation:
         self,
         start_atoms: Atoms,
         end_atoms: Atoms,
-        calculator,
+        model_path: Union[str, List[str]],
+        start_energy: float,
+        end_energy: float,
         n_images: int = 7,
         method: NEBMethod = NEBMethod.DYNAMIC,
         climbing: bool = True,
         fmax: float = 0.01,
         steps: int = 200,
         seed: int = 42,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        use_cueq: bool = False,
     ):
         """
         Initialize NEB calculation.
@@ -50,24 +57,41 @@ class NEBCalculation:
         Args:
             start_atoms: Initial structure 
             end_atoms: Final structure
-            calculator: ASE calculator for energy/force evaluation
+            model_path: Path(s) to MACE model(s)
+            start_energy: Energy of start configuration
+            end_energy: Energy of end configuration
             n_images: Number of images for NEB
             method: NEB method to use
             climbing: Enable climbing image
             fmax: Maximum force for convergence
             steps: Maximum optimization steps
             seed: Random seed for reproducibility
+            device: Device to run calculations on
+            use_cueq: Whether to use CUEQ
         """
         self.start_atoms = start_atoms
         self.end_atoms = end_atoms
-        self.calculator = calculator
+        self.model_path = model_path if isinstance(model_path, list) else [model_path]
+        self.start_energy = start_energy
+        self.end_energy = end_energy
         self.n_images = n_images
         self.method = method
         self.climbing = climbing
         self.fmax = fmax
         self.steps = steps
         self.seed = seed
+        self.device = device
+        self.use_cueq = use_cueq
         np.random.seed(self.seed)  # Set seed for reproducibility
+
+    def _create_calculator(self) -> MACECalculator:
+        """Create a new MACE calculator instance."""
+        return MACECalculator(
+            model_paths=self.model_path,
+            device=self.device,
+            default_dtype="float32",
+            use_cueq=self.use_cueq
+        )
 
     def run(self) -> NEBResult:
         """
@@ -76,9 +100,9 @@ class NEBCalculation:
         Returns:
             NEBResult containing calculation results
         """
-        # Create images
+        # Create images (excluding endpoints which we already have energies for)
         images = [self.start_atoms]
-        images += [self.start_atoms.copy() for i in range(self.n_images)]
+        images += [self.start_atoms.copy() for _ in range(self.n_images)]
         images.append(self.end_atoms)
 
         # Set up NEB
@@ -87,17 +111,22 @@ class NEBCalculation:
         else:
             neb = NEB(images, climb=self.climbing)
 
-        # Interpolate and attach calculators
+        # Interpolate positions
         neb.interpolate()
+        
+        # Attach calculators only to intermediate images
         for image in images[1:-1]:
-            image.calc = self.calculator
+            image.calc = self._create_calculator()
 
         # Run optimization
         opt = FIRE(neb)
         opt.run(fmax=self.fmax, steps=self.steps)
 
-        # Get results
-        energies = [image.get_potential_energy() for image in images]
+        # Get energies for intermediate images
+        intermediate_energies = [image.get_potential_energy() for image in images[1:-1]]
+        
+        # Combine with endpoint energies
+        energies = [self.start_energy] + intermediate_energies + [self.end_energy]
         barrier = max(energies) - energies[0]
         
         return NEBResult(
@@ -177,15 +206,17 @@ class NEBAnalyzer:
                 "count": len(barriers)
             }
         
-        # Calculate overall statistics
-        all_nn = np.concatenate([np.array(b) for b in nn_barriers.values()])
-        all_nnn = np.concatenate([np.array(b) for b in nnn_barriers.values()])
+        # Calculate overall statistics, handling empty arrays
+        all_nn = np.concatenate([np.array(b) for b in nn_barriers.values()]) if nn_barriers else np.array([])
+        all_nnn = np.concatenate([np.array(b) for b in nnn_barriers.values()]) if nnn_barriers else np.array([])
         
         stats["overall"] = {
-            "nn_std": np.std(all_nn),
-            "nnn_std": np.std(all_nnn),
-            "nn_mean": np.mean(all_nn),
-            "nnn_mean": np.mean(all_nnn)
+            "nn_mean": float(np.mean(all_nn)) if len(all_nn) > 0 else None,
+            "nn_std": float(np.std(all_nn)) if len(all_nn) > 0 else None,
+            "nnn_mean": float(np.mean(all_nnn)) if len(all_nnn) > 0 else None,
+            "nnn_std": float(np.std(all_nnn)) if len(all_nnn) > 0 else None,
+            "nn_count": len(all_nn),
+            "nnn_count": len(all_nnn)
         }
         
         return stats
@@ -298,7 +329,7 @@ class NEBAnalyzer:
             
     def save_results(self, filepath: Path, composition: Optional[Dict[str, float]] = None):
         """
-        Save calculation results and statistics to JSON.
+        Save calculation results and statistics to JSON using Monty serialization.
         
         Args:
             filepath: Path to save the JSON file
@@ -313,12 +344,12 @@ class NEBAnalyzer:
         }
         
         with open(filepath, 'w') as f:
-            json.dump(output, f, indent=2)
+            json.dump(output, f, indent=2, cls=MontyEncoder)
     
     @classmethod
     def load_results(cls, filepath: Path) -> 'NEBAnalyzer':
         """
-        Load results from a JSON file.
+        Load results from a JSON file using Monty deserialization.
         
         Args:
             filepath: Path to the JSON file
@@ -329,7 +360,7 @@ class NEBAnalyzer:
         analyzer = cls()
         
         with open(filepath, 'r') as f:
-            data = json.load(f)
+            data = json.load(f, cls=MontyDecoder)
             
         for calc in data["calculations"]:
             analyzer.add_calculation(calc)
@@ -484,13 +515,13 @@ class VacancyDiffusion:
         
         # Get vacancy position
         vacancy_position = start_atoms.positions[vacancy_index].copy()
+
+        # Move target atom to vacancy position in end configuration
+        end_atoms.positions[target_index] = vacancy_position
         
         # Remove vacancy atom from both configurations
         start_atoms.pop(vacancy_index)
         end_atoms.pop(vacancy_index)
-        
-        # Move target atom to vacancy position in end configuration
-        end_atoms.positions[target_index] = vacancy_position
         
         # Relax if requested
         if relax:
@@ -578,25 +609,48 @@ class VacancyDiffusion:
         Returns:
             Dictionary containing calculation results and metadata
         """
+        # Initialize metadata outside try block
+        metadata = {
+            "vacancy_element": self.atoms[vacancy_index].symbol,
+            "target_element": self.atoms[target_index].symbol,
+            "vacancy_index": str(vacancy_index),
+            "target_index": str(target_index)
+        }
+        
+        # Initialize variables for xyz saving
+        base_name = None
+        neb_calc = None
+        
+        if save_xyz and output_dir:
+            formula = self.atoms.get_chemical_formula()
+            vac_elem = metadata['vacancy_element']
+            target_elem = metadata['target_element']
+            base_name = f"{formula}_{vac_elem}_to_{target_elem}_site{vacancy_index}_to_{target_index}"
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+        
         try:
             # Create and relax endpoints
-            start_atoms, end_atoms, metadata = self.create_endpoints(
+            start_atoms, end_atoms, endpoint_metadata = self.create_endpoints(
                 vacancy_index, target_index, **self.neb_params.get('relax_params', {})
             )
             
+            # Update metadata with any additional info from endpoints
+            metadata.update(endpoint_metadata)
+            
+            # Calculate endpoint energies and remove calculators
+            start_atoms.calc = self.calculator
+            end_atoms.calc = self.calculator
+            start_energy = start_atoms.get_potential_energy()
+            end_energy = end_atoms.get_potential_energy()
+            start_atoms.calc = None
+            end_atoms.calc = None
+            
             # Save initial configuration if requested
             if save_xyz and output_dir:
-                formula = self.atoms.get_chemical_formula()
-                vac_elem = metadata['vacancy_element']
-                target_elem = metadata['target_element']
-                base_name = f"{formula}_{vac_elem}_to_{target_elem}_site{vacancy_index}_to_{target_index}"
-                
-                output_dir = Path(output_dir)
-                output_dir.mkdir(parents=True, exist_ok=True)
-                
                 # Create initial NEB images for visualization
                 images = [start_atoms]
-                images += [start_atoms.copy() for _ in range(num_images)]  # 5 interpolated images by default
+                images += [start_atoms.copy() for _ in range(num_images)]
                 images.append(end_atoms)
                 if neb_method == "dyneb" and climb:
                     neb = DyNEB(images, climb=True)
@@ -610,14 +664,18 @@ class VacancyDiffusion:
                     raise ValueError(f"Invalid NEB method or climb option: {neb_method} {climb}")
                 
                 neb.interpolate(mic=True)
-                
                 write(output_dir / f"{base_name}_initial.xyz", images)
             
             # Run NEB with seed
             neb_calc = NEBCalculation(
                 start_atoms=start_atoms,
                 end_atoms=end_atoms,
-                calculator=self.calculator,
+                model_path=self.neb_params.get('model_path', []),
+                start_energy=start_energy,
+                end_energy=end_energy,
+                n_images=num_images,
+                method=NEBMethod.DYNAMIC if neb_method == "dyneb" else NEBMethod.REGULAR,
+                climbing=climb,
                 seed=self.seed,
                 **self.neb_params.get('neb_params', {})
             )
@@ -631,17 +689,14 @@ class VacancyDiffusion:
                 "converged": result.converged,
                 "n_steps": result.n_steps,
                 "success": True,
-                "error": None
+                "error": None,
+                "is_nearest_neighbor": True  # Add this flag for the analyzer
             }
             
-            # Save final configuration if requested
-            if save_xyz and output_dir:
-                write(output_dir / f"{base_name}_final.xyz", neb_calc.neb.images)
-                
             return output
             
         except Exception as e:
-            return {
+            output = {
                 **metadata,
                 "success": False,
                 "error": str(e),
@@ -650,6 +705,15 @@ class VacancyDiffusion:
                 "converged": False,
                 "n_steps": None
             }
+            return output
+            
+        finally:
+            # Save final configuration if requested, regardless of success/failure
+            if save_xyz and output_dir and neb_calc is not None and hasattr(neb_calc, 'neb'):
+                try:
+                    write(output_dir / f"{base_name}_final.xyz", neb_calc.neb.images)
+                except Exception as e:
+                    print(f"Warning: Could not save final xyz: {str(e)}")
 
     def run_multiple(
         self,

@@ -7,7 +7,7 @@ __pycache__/
 scratch/data
 scratch_for_llm.txt
 
-# tests 
+#test files
 forge/tests/test_mace_jobs/
 
 # C extensions

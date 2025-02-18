@@ -283,7 +283,14 @@ class DatabaseManager:
 
     def get_calculations(self, structure_id: int, model_type: str = None,
                         status: str = None, order_by: str = None) -> List[Dict]:
-        """Retrieve calculations for structure."""
+        """Retrieve calculations for structure.
+        
+        Args:
+            structure_id: ID of structure to get calculations for
+            model_type: Filter by model type. Can use '*' as wildcard (e.g. 'vasp*')
+            status: Filter by status in metadata
+            order_by: Sort by this metadata field
+        """
         query = """
             SELECT calculation_id, model_type, energy, 
                 forces, stress, ensemble_variance, metadata
@@ -293,8 +300,14 @@ class DatabaseManager:
         params = [structure_id]
         
         if model_type:
-            query += " AND model_type = %s"
-            params.append(model_type)
+            # Convert python-style wildcards to SQL LIKE pattern
+            if '*' in model_type:
+                like_pattern = model_type.replace('*', '%')
+                query += " AND model_type LIKE %s"
+                params.append(like_pattern)
+            else:
+                query += " AND model_type = %s"
+                params.append(model_type)
         
         if status:
             query += " AND metadata->>'status' = %s"
@@ -315,7 +328,7 @@ class DatabaseManager:
             'stress': np.array(row[4]) if row[4] else None,
             'variance': row[5],
             **row[6]  # Unpack metadata
-        } for row in rows] 
+        } for row in rows]
 
     def find_structures(self, elements: List[str] = None, 
                     structure_type: str = None,
@@ -377,24 +390,39 @@ class DatabaseManager:
             if debug:
                 print(f"[DEBUG] Query returned {len(results)} matching structures")  # Debug
             return results
-
-    def find_structures_without_calculation(self, model_type: str = "vasp", status: str = "completed") -> List[int]:
+    
+    def find_structures_without_calculation(self, model_type: Optional[str] = None, status: Optional[str] = None) -> List[int]:
         """
         Return a list of structure_ids that do NOT have a calculation
         with the given model_type (and optionally status).
+        If model_type and status are None, finds structures with no calculations at all.
         """
-        query = f"""
-            SELECT s.structure_id
-            FROM structures s
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM calculations c
-                WHERE c.structure_id = s.structure_id
-                  AND c.model_type = %s
-                  AND c.metadata->>'status' = %s
-            )
-        """
-        params = [model_type, status]
+        if model_type is None:
+            query = """
+                SELECT s.structure_id
+                FROM structures s
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM calculations c
+                    WHERE c.structure_id = s.structure_id
+                )
+            """
+            params = []
+        else:
+            # replace * with % for SQL LIKE pattern matching 
+            model_pattern = model_type.replace('*', '%')
+            query = """
+                SELECT s.structure_id
+                FROM structures s
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM calculations c
+                    WHERE c.structure_id = s.structure_id
+                    AND c.model_type LIKE %s
+                    AND (%s IS NULL OR c.metadata->>'status' = %s)
+                )
+            """
+            params = [model_pattern, status, status]
 
         with self.conn.cursor() as cur:
             cur.execute(query, params)

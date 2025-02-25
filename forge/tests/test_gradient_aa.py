@@ -15,11 +15,53 @@ from tqdm import tqdm
 from forge.core.adversarial_attack import AdversarialCalculator
 
 
+class Timer:
+    """Simple timer for performance debugging."""
+    
+    def __init__(self, debug=False):
+        """Initialize timer.
+        
+        Args:
+            debug: Whether to print debug messages
+        """
+        self.debug = debug
+        self.timers = {}
+        self.starts = {}
+        
+    def start(self, name):
+        """Start a named timer."""
+        self.starts[name] = time.time()
+        
+    def stop(self, name):
+        """Stop a named timer and record elapsed time."""
+        if name in self.starts:
+            elapsed = time.time() - self.starts[name]
+            if name not in self.timers:
+                self.timers[name] = []
+            self.timers[name].append(elapsed)
+            if self.debug:
+                print(f"[DEBUG] {name}: {elapsed:.4f} seconds")
+            return elapsed
+        return 0
+    
+    def summary(self):
+        """Print summary of all timers."""
+        print("\n===== Performance Summary =====")
+        for name, times in self.timers.items():
+            total = sum(times)
+            avg = total / len(times) if times else 0
+            print(f"{name}:")
+            print(f"  Total: {total:.4f} seconds")
+            print(f"  Count: {len(times)}")
+            print(f"  Average: {avg:.4f} seconds")
+        print("==============================\n")
+
+
 class GradientAdversarialOptimizer:
     """Optimizer that uses PyTorch autograd to maximize adversarial loss."""
     
     def __init__(self, model_paths, device='cuda', learning_rate=0.01, 
-                 temperature=0.86, include_probability=True):
+                 temperature=0.86, include_probability=True, debug=False):
         """Initialize optimizer with model paths.
         
         Args:
@@ -28,33 +70,49 @@ class GradientAdversarialOptimizer:
             learning_rate: Learning rate for gradient ascent
             temperature: Temperature for probability weighting (eV)
             include_probability: Whether to include probability term in loss
+            debug: Whether to print debug messages
         """
         self.model_paths = model_paths
         self.device = device
         self.learning_rate = learning_rate
         self.temperature = temperature
         self.include_probability = include_probability
+        self.debug = debug
+        self.timer = Timer(debug=debug)
+        self.dtype = torch.float32  # Explicitly set data type
         
         # Initialize ASE calculator for force calculations
+        self.timer.start("calculator_init")
         self.calculator = AdversarialCalculator(
             model_paths=model_paths,
             device=device
         )
+        self.timer.stop("calculator_init")
         
     def _calculate_force_variance(self, atoms):
         """Calculate force variance across ensemble models."""
+        self.timer.start("force_calculation")
         forces = self.calculator.calculate_forces(atoms)
+        self.timer.stop("force_calculation")
+        
+        self.timer.start("variance_calculation")
         atom_variances = self.calculator.calculate_normalized_force_variance(forces)
-        return float(np.mean(atom_variances)), atom_variances, forces
+        variance = float(np.mean(atom_variances))
+        self.timer.stop("variance_calculation")
+        
+        return variance, atom_variances, forces
     
     def _calculate_energy(self, atoms):
         """Calculate mean energy across ensemble models."""
+        self.timer.start("energy_calculation")
         energies = []
         for model in self.calculator.models:
             atoms.calc = model
             energy = atoms.get_potential_energy()
             energies.append(energy)
-        return float(np.mean(energies))
+        mean_energy = float(np.mean(energies))
+        self.timer.stop("energy_calculation")
+        return mean_energy
     
     def _calculate_probability(self, energy, temperature, normalization_constant=1.0):
         """Calculate Boltzmann probability for a structure."""
@@ -96,6 +154,9 @@ class GradientAdversarialOptimizer:
         current_atoms = atoms.copy()
         
         # Calculate initial values
+        if self.debug:
+            print(f"[DEBUG] Calculating initial values for {len(atoms)} atoms")
+            
         initial_variance, _, _ = self._calculate_force_variance(current_atoms)
         initial_energy = self._calculate_energy(current_atoms)
         initial_probability = self._calculate_probability(
@@ -132,11 +193,12 @@ class GradientAdversarialOptimizer:
         print(f"  Probability: {initial_probability:.6f}")
         print(f"  Loss: {initial_loss:.6f}")
         
-        # Initialize displacement tensor with gradient tracking
+        # Initialize displacement tensor with gradient tracking - explicitly set dtype
         displacement = torch.zeros(
             (len(atoms), 3), 
             requires_grad=True,
-            device="cpu"  # Keep on CPU to avoid ASE/MACE device issues
+            device="cpu",
+            dtype=self.dtype  # Explicitly set data type
         )
         
         # Create optimizer
@@ -144,22 +206,30 @@ class GradientAdversarialOptimizer:
         
         # Optimization loop
         for step in tqdm(range(n_iterations), desc="Optimizing structure"):
+            self.timer.start(f"step_{step}")
+            
             # Zero gradients
             optimizer.zero_grad()
             
             # Apply displacements to get new positions
-            new_positions = original_positions + displacement.detach().numpy()
+            new_positions = original_positions + displacement.detach().cpu().numpy()
             
             # Check minimum distance constraint
+            self.timer.start("distance_check")
             current_atoms.positions = new_positions
             distances = current_atoms.get_all_distances(mic=True)
             np.fill_diagonal(distances, np.inf)
-            if np.min(distances) < min_distance:
-                print(f"[WARNING] Minimum distance constraint violated: {np.min(distances):.3f} Å")
+            min_dist = np.min(distances)
+            self.timer.stop("distance_check")
+            
+            if min_dist < min_distance:
+                if self.debug:
+                    print(f"[DEBUG] Minimum distance constraint violated: {min_dist:.3f} Å")
                 # Scale back displacement to satisfy constraint
                 scale_factor = 0.9  # Scale back by 10%
                 with torch.no_grad():
                     displacement.data *= scale_factor
+                self.timer.stop(f"step_{step}")
                 continue
             
             # Calculate variance
@@ -167,9 +237,12 @@ class GradientAdversarialOptimizer:
             
             # Calculate energy and probability
             energy = self._calculate_energy(current_atoms)
+            
+            self.timer.start("probability_calculation")
             probability = self._calculate_probability(
                 energy, self.temperature, normalization_constant
             )
+            self.timer.stop("probability_calculation")
             
             # Calculate loss (negative because we're maximizing)
             if self.include_probability:
@@ -190,6 +263,7 @@ class GradientAdversarialOptimizer:
                 print(f"[INFO] Step {step}: New best loss: {loss:.6f}")
                 
             # Save current structure to trajectory
+            self.timer.start("save_trajectory")
             current_atoms.info['variance'] = variance
             current_atoms.info['energy'] = energy
             current_atoms.info['probability'] = probability
@@ -197,13 +271,18 @@ class GradientAdversarialOptimizer:
             current_atoms.info['step'] = step
             
             ase.io.write(output_file, current_atoms, append=True, write_results=False)
+            self.timer.stop("save_trajectory")
             
             # Compute gradient using numerical approximation
+            self.timer.start("gradient_calculation")
             # This replaces the need for autograd/Hessian calculations
             # by directly estimating the gradient of the loss function
             epsilon = 1e-4  # Small perturbation
             grad = np.zeros_like(original_positions)
             
+            if self.debug:
+                print(f"[DEBUG] Starting gradient calculation for {len(atoms)} atoms")
+                
             for i in range(len(atoms)):
                 for j in range(3):
                     # Forward difference
@@ -229,16 +308,26 @@ class GradientAdversarialOptimizer:
                     # Estimate gradient
                     grad[i, j] = (forward_loss - loss) / epsilon
             
-            # Convert gradient to torch tensor
-            grad_tensor = torch.tensor(grad, device="cpu")
+            self.timer.stop("gradient_calculation")
+            
+            # Convert gradient to torch tensor with matching dtype
+            grad_tensor = torch.tensor(grad, device="cpu", dtype=self.dtype)
             
             # Manually set the gradient
             displacement.grad = -grad_tensor  # Negative because optimizer minimizes
             
             # Step optimizer
+            self.timer.start("optimizer_step")
             optimizer.step()
+            self.timer.stop("optimizer_step")
             
-            print(f"Step {step}: Variance={variance:.6f}, Probability={probability:.6f}, Loss={loss:.6f}")
+            self.timer.stop(f"step_{step}")
+            
+            if self.debug:
+                print(f"[DEBUG] Step {step} completed in {self.timer.timers[f'step_{step}'][-1]:.4f} seconds")
+                print(f"[DEBUG] Current metrics - Variance: {variance:.6f}, Probability: {probability:.6f}, Loss: {loss:.6f}")
+            else:
+                print(f"Step {step}: Variance={variance:.6f}, Probability={probability:.6f}, Loss={loss:.6f}")
         
         # Create best atoms
         best_atoms = atoms.copy()
@@ -275,10 +364,15 @@ class GradientAdversarialOptimizer:
             energy_history, probability_history
         )
         
+        # Print performance summary
+        self.timer.summary()
+        
         return best_atoms, best_loss, loss_history
     
     def _create_plots(self, output_path, struct_name, losses, variances, energies, probabilities):
         """Create and save plots for optimization results."""
+        self.timer.start("create_plots")
+        
         # Plot loss history
         plt.figure(figsize=(10, 6))
         plt.plot(losses, marker='o', label='Loss')
@@ -345,12 +439,16 @@ class GradientAdversarialOptimizer:
         plt.tight_layout()
         plt.savefig(output_path / f"{struct_name}_combined_plot.png")
         plt.close()
+        
+        self.timer.stop("create_plots")
     
     def _save_results(self, output_path, struct_name, initial_atoms, best_atoms, 
                      initial_variance, best_variance, initial_energy, best_energy,
                      initial_probability, best_probability, initial_loss, best_loss,
                      loss_history, variance_history, energy_history, probability_history):
         """Save detailed results to JSON file."""
+        self.timer.start("save_results")
+        
         import json
         
         results = {
@@ -389,11 +487,17 @@ class GradientAdversarialOptimizer:
                 'energy_plot': f"{struct_name}_energy_plot.png",
                 'probability_plot': f"{struct_name}_probability_plot.png",
                 'combined_plot': f"{struct_name}_combined_plot.png"
+            },
+            'performance': {
+                'timers': {name: {'total': sum(times), 'average': sum(times)/len(times) if times else 0, 'count': len(times)}
+                          for name, times in self.timer.timers.items()}
             }
         }
         
         with open(output_path / f"{struct_name}_results.json", 'w') as f:
             json.dump(results, f, indent=2)
+            
+        self.timer.stop("save_results")
 
 
 def run_test(
@@ -405,7 +509,10 @@ def run_test(
     min_distance=1.5,
     include_probability=True,
     temperature=0.86,
-    device="cuda"
+    device="cuda",
+    debug=False,
+    profile_atom_indices=None,
+    batch_size=None
 ):
     """Run gradient-based adversarial attack test."""
     output_path = Path(output_dir)
@@ -415,13 +522,32 @@ def run_test(
     atoms_list = ase.io.read(xyz_file, ':')
     print(f"[INFO] Loaded {len(atoms_list)} structures from {xyz_file}")
     
+    if debug:
+        print(f"[DEBUG] Running with {len(model_paths)} models on device: {device}")
+        for i, path in enumerate(model_paths):
+            print(f"[DEBUG] Model {i+1}: {path}")
+    
+    # If profiling specific atoms, filter the list
+    if profile_atom_indices is not None:
+        indices = [int(idx) for idx in profile_atom_indices.split(',')]
+        if debug:
+            print(f"[DEBUG] Profiling only atoms at indices: {indices}")
+        for i, atoms in enumerate(atoms_list):
+            # Create a subset of atoms for profiling
+            subset = atoms[indices].copy()
+            subset.info = atoms.info.copy()
+            atoms_list[i] = subset
+            if debug:
+                print(f"[DEBUG] Reduced structure {i} from {len(atoms)} to {len(subset)} atoms")
+    
     # Initialize optimizer
     optimizer = GradientAdversarialOptimizer(
         model_paths=model_paths,
         device=device,
         learning_rate=learning_rate,
         temperature=temperature,
-        include_probability=include_probability
+        include_probability=include_probability,
+        debug=debug
     )
     
     # Process each structure
@@ -432,7 +558,7 @@ def run_test(
             atoms.info['structure_name'] = f"structure_{i}"
             
         struct_name = atoms.info['structure_name']
-        print(f"\n[INFO] Processing structure: {struct_name}")
+        print(f"\n[INFO] Processing structure: {struct_name} with {len(atoms)} atoms")
         
         # Create subdir for each structure
         struct_dir = output_path / struct_name
@@ -455,6 +581,7 @@ def run_test(
         # Add to results
         results.append({
             'structure_name': struct_name,
+            'n_atoms': len(atoms),
             'initial_loss': initial_loss,
             'best_loss': best_loss,
             'improvement_factor': improvement,
@@ -479,7 +606,10 @@ def run_test(
                 'min_distance': min_distance,
                 'include_probability': include_probability,
                 'temperature': temperature,
-                'device': device
+                'device': device,
+                'debug': debug,
+                'profile_atom_indices': profile_atom_indices,
+                'batch_size': batch_size
             },
             'results': results
         }, f, indent=2)
@@ -544,6 +674,21 @@ def main():
         default='cuda',
         help="Device to run on"
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug output with detailed timing information"
+    )
+    parser.add_argument(
+        "--profile_atoms",
+        type=str,
+        help="Comma-separated list of atom indices to profile (e.g., '0,1,2')"
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        help="Number of atoms to process in each batch (for large structures)"
+    )
     
     args = parser.parse_args()
     
@@ -556,7 +701,10 @@ def main():
         min_distance=args.min_distance,
         include_probability=not args.no_probability,
         temperature=args.temperature,
-        device=args.device
+        device=args.device,
+        debug=args.debug,
+        profile_atom_indices=args.profile_atoms,
+        batch_size=args.batch_size
     )
 
 

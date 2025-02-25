@@ -9,6 +9,7 @@ scratch_for_llm.txt
 
 #test files
 forge/tests/test_mace_jobs/
+forge/tests/test_output
 
 # C extensions
 *.so

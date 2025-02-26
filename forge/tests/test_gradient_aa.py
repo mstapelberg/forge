@@ -61,12 +61,13 @@ class Timer:
 class GradientAdversarialOptimizer:
     """Optimizer that uses PyTorch autograd to maximize adversarial loss."""
     
-    def __init__(self, model_paths, device='cuda', learning_rate=0.01, 
+    def __init__(self, model_paths, energy_list, device='cuda', learning_rate=0.01, 
                  temperature=0.86, include_probability=True, debug=False):
         """Initialize optimizer with model paths.
         
         Args:
             model_paths: List of paths to model files
+            energy_list: List of energies after running force variance calculations over entire dataset
             device: Device to run on ('cpu' or 'cuda')
             learning_rate: Learning rate for gradient ascent
             temperature: Temperature for probability weighting (eV)
@@ -76,6 +77,7 @@ class GradientAdversarialOptimizer:
         self.model_paths = model_paths
         self.device = device
         self.learning_rate = learning_rate
+        self.energy_list = energy_list
         self.temperature = temperature
         self.include_probability = include_probability
         self.debug = debug
@@ -114,6 +116,22 @@ class GradientAdversarialOptimizer:
         mean_energy = float(np.mean(energies))
         self.timer.stop("energy_calculation")
         return mean_energy
+    
+    def _calculate_normalization_constant(self, energy_list, temperature):
+        """Calculate 'normalization constant' using the shifted energies. 
+        Inputs: 
+            energy_list: List of energies
+            temperature: Temperature (K)
+        Outputs:
+            Q: Normalization constant
+            shifted_energies: Shifted energies
+        """
+        k_B = 8.617e-5  # eV/K
+        e_min = np.min(energy_list)
+        shifted_energies = energy_list - e_min
+        exp_terms = np.exp(-shifted_energies / (k_B * temperature))
+        Q = np.sum(exp_terms)
+        return Q, shifted_energies
     
     def _calculate_probability(self, energy, temperature, normalization_constant=1.0):
         """Calculate Boltzmann probability for a structure."""
@@ -160,8 +178,11 @@ class GradientAdversarialOptimizer:
             
         initial_variance, _, _ = self._calculate_force_variance(current_atoms)
         initial_energy = self._calculate_energy(current_atoms)
+        initial_Q, initial_shifted_energies = self._calculate_normalization_constant(
+            self.energy_list, self.temperature
+        )
         initial_probability = self._calculate_probability(
-            initial_energy, self.temperature, normalization_constant
+            initial_energy, self.temperature, initial_Q
         )
         
         # Calculate initial loss
@@ -241,7 +262,8 @@ class GradientAdversarialOptimizer:
             
             self.timer.start("probability_calculation")
             probability = self._calculate_probability(
-                energy, self.temperature, normalization_constant
+                energy, self.temperature, 
+                initial_Q
             )
             self.timer.stop("probability_calculation")
             
@@ -300,7 +322,7 @@ class GradientAdversarialOptimizer:
                     if self.include_probability:
                         forward_energy = self._calculate_energy(current_atoms)
                         forward_probability = self._calculate_probability(
-                            forward_energy, self.temperature, normalization_constant
+                            forward_energy, self.temperature, initial_Q
                         )
                         forward_loss = forward_probability * forward_variance
                     else:
@@ -336,7 +358,7 @@ class GradientAdversarialOptimizer:
         best_variance, _, _ = self._calculate_force_variance(best_atoms)
         best_energy = self._calculate_energy(best_atoms)
         best_probability = self._calculate_probability(
-            best_energy, self.temperature, normalization_constant
+            best_energy, self.temperature, initial_Q 
         )
         
         # Save best structure

@@ -1,0 +1,143 @@
+/home/myless/.mambaforge/envs/mace-11.7/lib/python3.11/site-packages/nequip/__init__.py:20: UserWarning: !! PyTorch version 1.13.1+cu117 found. Upstream issues in PyTorch versions 1.13.* and 2.* have been seen to cause unusual performance degredations on some CUDA systems that become worse over time; see https://github.com/mir-group/nequip/discussions/311. The best tested PyTorch version to use with CUDA devices is 1.11; while using other versions if you observe this problem, an unexpected lack of this problem, or other strange behavior, please post in the linked GitHub issue.
+  warnings.warn(
+/home/myless/.mambaforge/envs/mace-11.7/lib/python3.11/site-packages/torchvision/io/image.py:13: UserWarning: Failed to load image Python extension: '/home/myless/.mambaforge/envs/mace-11.7/lib/python3.11/site-packages/torchvision/image.so: undefined symbol: _ZN3c104cuda20CUDACachingAllocator9allocatorE'If you don't plan on using image functionality from `torchvision.io`, you can ignore this warning. Otherwise, there might be something wrong with your environment. Did you have `libjpeg` or `libpng` installed before building `torchvision` from source?
+  warn(
+/home/myless/.mambaforge/envs/mace-11.7/lib/python3.11/site-packages/torch/serialization.py:779: UserWarning: 'torch.load' received a zip file that looks like a TorchScript archive dispatching to 'torch.jit.load' (call 'torch.jit.load' directly to silence this warning)
+  warnings.warn("'torch.load' received a zip file that looks like a TorchScript archive"
+  0%|          | 0/5 [00:00<?, ?it/s]/home/myless/.mambaforge/envs/mace-11.7/lib/python3.11/site-packages/torch/nn/modules/module.py:1194: UserWarning: operator() sees varying value in profiling, ignoring and this should be handled by GUARD logic (Triggered internally at ../torch/csrc/jit/codegen/cuda/parser.cpp:3668.)
+  return forward_call(*input, **kwargs)
+ 20%|██        | 1/5 [00:02<00:10,  2.71s/it] 40%|████      | 2/5 [00:06<00:10,  3.55s/it]/home/myless/.mambaforge/envs/mace-11.7/lib/python3.11/site-packages/torch/nn/modules/module.py:1194: UserWarning: operator() profile_node %2643 : int[] = prim::profile_ivalue(%2641)
+ does not have profile information (Triggered internally at ../torch/csrc/jit/codegen/cuda/graph_fuser.cpp:105.)
+  return forward_call(*input, **kwargs)
+ 60%|██████    | 3/5 [00:30<00:25, 12.63s/it] 80%|████████  | 4/5 [00:30<00:07,  7.79s/it]100%|██████████| 5/5 [00:30<00:00,  5.02s/it]100%|██████████| 5/5 [00:30<00:00,  6.15s/it]
+  0%|          | 0/5 [00:00<?, ?it/s]
+Optimizing structure:   0%|          | 0/50 [00:00<?, ?it/s][A
+Optimizing structure:   2%|▏         | 1/50 [00:04<03:23,  4.16s/it][A
+Optimizing structure:   4%|▍         | 2/50 [00:26<11:40, 14.60s/it][A
+Optimizing structure:   6%|▌         | 3/50 [00:26<06:15,  7.99s/it][A
+Optimizing structure:   8%|▊         | 4/50 [00:26<03:44,  4.88s/it][A
+Optimizing structure:  10%|█         | 5/50 [00:26<02:26,  3.25s/it][A
+Optimizing structure:  12%|█▏        | 6/50 [00:26<01:36,  2.19s/it][A
+Optimizing structure:  14%|█▍        | 7/50 [00:26<01:04,  1.51s/it][A
+Optimizing structure:  16%|█▌        | 8/50 [00:27<00:44,  1.07s/it][A
+Optimizing structure:  18%|█▊        | 9/50 [00:27<00:31,  1.30it/s][A
+Optimizing structure:  20%|██        | 10/50 [00:27<00:22,  1.75it/s][A
+Optimizing structure:  22%|██▏       | 11/50 [00:27<00:16,  2.31it/s][A
+Optimizing structure:  24%|██▍       | 12/50 [00:27<00:12,  2.97it/s][A
+Optimizing structure:  26%|██▌       | 13/50 [00:27<00:10,  3.69it/s][A
+Optimizing structure:  28%|██▊       | 14/50 [00:27<00:08,  4.45it/s][A
+Optimizing structure:  30%|███       | 15/50 [00:27<00:06,  5.18it/s][A
+Optimizing structure:  32%|███▏      | 16/50 [00:27<00:05,  5.85it/s][A
+Optimizing structure:  34%|███▍      | 17/50 [00:28<00:05,  6.44it/s][A
+Optimizing structure:  36%|███▌      | 18/50 [00:28<00:04,  6.93it/s][A
+Optimizing structure:  38%|███▊      | 19/50 [00:28<00:04,  7.32it/s][A
+Optimizing structure:  40%|████      | 20/50 [00:28<00:03,  7.61it/s][A
+Optimizing structure:  42%|████▏     | 21/50 [00:28<00:03,  7.83it/s][A
+Optimizing structure:  44%|████▍     | 22/50 [00:28<00:03,  7.99it/s][A
+Optimizing structure:  46%|████▌     | 23/50 [00:28<00:03,  8.10it/s][A
+Optimizing structure:  48%|████▊     | 24/50 [00:28<00:03,  8.19it/s][AOptimizing structure:  48%|████▊     | 24/50 [00:29<00:31,  1.21s/it]
+ 20%|██        | 1/5 [00:30<02:03, 30.86s/it]
+Optimizing structure:   0%|          | 0/50 [00:00<?, ?it/s][A
+Optimizing structure:   2%|▏         | 1/50 [00:00<00:05,  8.40it/s][A
+Optimizing structure:   4%|▍         | 2/50 [00:00<00:05,  8.74it/s][A
+Optimizing structure:   6%|▌         | 3/50 [00:00<00:05,  8.60it/s][A
+Optimizing structure:   8%|▊         | 4/50 [00:00<00:05,  8.51it/s][A
+Optimizing structure:  10%|█         | 5/50 [00:00<00:05,  8.47it/s][A
+Optimizing structure:  12%|█▏        | 6/50 [00:00<00:05,  8.46it/s][A
+Optimizing structure:  14%|█▍        | 7/50 [00:00<00:05,  8.43it/s][A
+Optimizing structure:  16%|█▌        | 8/50 [00:00<00:05,  8.36it/s][A
+Optimizing structure:  18%|█▊        | 9/50 [00:01<00:04,  8.33it/s][A
+Optimizing structure:  20%|██        | 10/50 [00:01<00:04,  8.35it/s][A
+Optimizing structure:  22%|██▏       | 11/50 [00:01<00:04,  8.37it/s][A
+Optimizing structure:  24%|██▍       | 12/50 [00:01<00:04,  8.55it/s][A
+Optimizing structure:  26%|██▌       | 13/50 [00:01<00:04,  8.47it/s][A
+Optimizing structure:  28%|██▊       | 14/50 [00:01<00:04,  8.46it/s][A
+Optimizing structure:  30%|███       | 15/50 [00:01<00:04,  8.44it/s][A
+Optimizing structure:  32%|███▏      | 16/50 [00:01<00:03,  8.60it/s][A
+Optimizing structure:  34%|███▍      | 17/50 [00:02<00:03,  8.53it/s][A
+Optimizing structure:  36%|███▌      | 18/50 [00:02<00:03,  8.49it/s][A
+Optimizing structure:  38%|███▊      | 19/50 [00:02<00:03,  8.46it/s][A
+Optimizing structure:  40%|████      | 20/50 [00:02<00:03,  8.62it/s][A
+Optimizing structure:  42%|████▏     | 21/50 [00:02<00:03,  8.73it/s][A
+Optimizing structure:  44%|████▍     | 22/50 [00:02<00:03,  8.63it/s][A
+Optimizing structure:  46%|████▌     | 23/50 [00:02<00:03,  8.55it/s][A
+Optimizing structure:  48%|████▊     | 24/50 [00:02<00:03,  8.47it/s][AOptimizing structure:  48%|████▊     | 24/50 [00:02<00:03,  8.17it/s]
+ 40%|████      | 2/5 [00:33<00:43, 14.51s/it]
+Optimizing structure:   0%|          | 0/50 [00:00<?, ?it/s][A
+Optimizing structure:   2%|▏         | 1/50 [00:00<00:05,  8.33it/s][A
+Optimizing structure:   4%|▍         | 2/50 [00:00<00:05,  8.38it/s][A
+Optimizing structure:   6%|▌         | 3/50 [00:00<00:05,  8.41it/s][A
+Optimizing structure:   8%|▊         | 4/50 [00:00<00:05,  8.41it/s][A
+Optimizing structure:  10%|█         | 5/50 [00:00<00:05,  8.41it/s][A
+Optimizing structure:  12%|█▏        | 6/50 [00:00<00:05,  8.42it/s][A
+Optimizing structure:  14%|█▍        | 7/50 [00:00<00:05,  8.42it/s][A
+Optimizing structure:  16%|█▌        | 8/50 [00:00<00:04,  8.60it/s][A
+Optimizing structure:  18%|█▊        | 9/50 [00:01<00:04,  8.54it/s][A
+Optimizing structure:  20%|██        | 10/50 [00:01<00:04,  8.50it/s][A
+Optimizing structure:  22%|██▏       | 11/50 [00:01<00:04,  8.47it/s][A
+Optimizing structure:  24%|██▍       | 12/50 [00:01<00:04,  8.62it/s][A
+Optimizing structure:  26%|██▌       | 13/50 [00:01<00:04,  8.55it/s][A
+Optimizing structure:  28%|██▊       | 14/50 [00:01<00:04,  8.69it/s][A
+Optimizing structure:  30%|███       | 15/50 [00:01<00:04,  8.61it/s][A
+Optimizing structure:  32%|███▏      | 16/50 [00:01<00:03,  8.55it/s][A
+Optimizing structure:  34%|███▍      | 17/50 [00:01<00:03,  8.50it/s][A
+Optimizing structure:  36%|███▌      | 18/50 [00:02<00:03,  8.45it/s][A
+Optimizing structure:  38%|███▊      | 19/50 [00:02<00:03,  8.56it/s][A
+Optimizing structure:  40%|████      | 20/50 [00:02<00:03,  8.50it/s][A
+Optimizing structure:  42%|████▏     | 21/50 [00:02<00:03,  8.47it/s][A
+Optimizing structure:  44%|████▍     | 22/50 [00:02<00:03,  8.44it/s][A
+Optimizing structure:  46%|████▌     | 23/50 [00:02<00:03,  8.42it/s][A
+Optimizing structure:  48%|████▊     | 24/50 [00:02<00:03,  8.57it/s][AOptimizing structure:  48%|████▊     | 24/50 [00:02<00:03,  8.15it/s]
+ 60%|██████    | 3/5 [00:36<00:18,  9.28s/it]
+Optimizing structure:   0%|          | 0/50 [00:00<?, ?it/s][A
+Optimizing structure:   2%|▏         | 1/50 [00:00<00:05,  8.26it/s][A
+Optimizing structure:   4%|▍         | 2/50 [00:00<00:05,  8.34it/s][A
+Optimizing structure:   6%|▌         | 3/50 [00:00<00:05,  8.33it/s][A
+Optimizing structure:   8%|▊         | 4/50 [00:00<00:05,  8.36it/s][A
+Optimizing structure:  10%|█         | 5/50 [00:00<00:05,  8.36it/s][A
+Optimizing structure:  12%|█▏        | 6/50 [00:00<00:05,  8.37it/s][A
+Optimizing structure:  14%|█▍        | 7/50 [00:00<00:05,  8.37it/s][A
+Optimizing structure:  16%|█▌        | 8/50 [00:00<00:05,  8.36it/s][A
+Optimizing structure:  18%|█▊        | 9/50 [00:01<00:04,  8.36it/s][A
+Optimizing structure:  20%|██        | 10/50 [00:01<00:04,  8.37it/s][A
+Optimizing structure:  22%|██▏       | 11/50 [00:01<00:04,  8.37it/s][A
+Optimizing structure:  24%|██▍       | 12/50 [00:01<00:04,  8.38it/s][A
+Optimizing structure:  26%|██▌       | 13/50 [00:01<00:04,  8.37it/s][A
+Optimizing structure:  28%|██▊       | 14/50 [00:01<00:04,  8.36it/s][A
+Optimizing structure:  30%|███       | 15/50 [00:01<00:04,  8.37it/s][A
+Optimizing structure:  32%|███▏      | 16/50 [00:01<00:04,  8.36it/s][A
+Optimizing structure:  34%|███▍      | 17/50 [00:02<00:03,  8.36it/s][A
+Optimizing structure:  36%|███▌      | 18/50 [00:02<00:03,  8.35it/s][A
+Optimizing structure:  38%|███▊      | 19/50 [00:02<00:03,  8.36it/s][A
+Optimizing structure:  40%|████      | 20/50 [00:02<00:03,  8.36it/s][A
+Optimizing structure:  42%|████▏     | 21/50 [00:02<00:03,  8.35it/s][A
+Optimizing structure:  44%|████▍     | 22/50 [00:02<00:03,  8.36it/s][A
+Optimizing structure:  46%|████▌     | 23/50 [00:02<00:03,  8.36it/s][A
+Optimizing structure:  48%|████▊     | 24/50 [00:02<00:03,  8.36it/s][AOptimizing structure:  48%|████▊     | 24/50 [00:02<00:03,  8.02it/s]
+ 80%|████████  | 4/5 [00:40<00:06,  6.85s/it]
+Optimizing structure:   0%|          | 0/50 [00:00<?, ?it/s][A
+Optimizing structure:   2%|▏         | 1/50 [00:00<00:05,  8.34it/s][A
+Optimizing structure:   4%|▍         | 2/50 [00:00<00:05,  8.68it/s][A
+Optimizing structure:   6%|▌         | 3/50 [00:00<00:05,  8.56it/s][A
+Optimizing structure:   8%|▊         | 4/50 [00:00<00:05,  8.71it/s][A
+Optimizing structure:  10%|█         | 5/50 [00:00<00:05,  8.59it/s][A
+Optimizing structure:  12%|█▏        | 6/50 [00:00<00:05,  8.70it/s][A
+Optimizing structure:  14%|█▍        | 7/50 [00:00<00:04,  8.79it/s][A
+Optimizing structure:  16%|█▌        | 8/50 [00:00<00:04,  8.84it/s][A
+Optimizing structure:  18%|█▊        | 9/50 [00:01<00:04,  8.88it/s][A
+Optimizing structure:  20%|██        | 10/50 [00:01<00:04,  8.91it/s][A
+Optimizing structure:  22%|██▏       | 11/50 [00:01<00:04,  8.75it/s][A
+Optimizing structure:  24%|██▍       | 12/50 [00:01<00:04,  8.64it/s][A
+Optimizing structure:  26%|██▌       | 13/50 [00:01<00:04,  8.57it/s][A
+Optimizing structure:  28%|██▊       | 14/50 [00:01<00:04,  8.69it/s][A
+Optimizing structure:  30%|███       | 15/50 [00:01<00:04,  8.59it/s][A
+Optimizing structure:  32%|███▏      | 16/50 [00:01<00:03,  8.52it/s][A
+Optimizing structure:  34%|███▍      | 17/50 [00:01<00:03,  8.66it/s][A
+Optimizing structure:  36%|███▌      | 18/50 [00:02<00:03,  8.57it/s][A
+Optimizing structure:  38%|███▊      | 19/50 [00:02<00:03,  8.48it/s][A
+Optimizing structure:  40%|████      | 20/50 [00:02<00:03,  8.62it/s][A
+Optimizing structure:  42%|████▏     | 21/50 [00:02<00:03,  8.55it/s][A
+Optimizing structure:  44%|████▍     | 22/50 [00:02<00:03,  8.66it/s][A
+Optimizing structure:  46%|████▌     | 23/50 [00:02<00:03,  8.73it/s][A
+Optimizing structure:  48%|████▊     | 24/50 [00:02<00:03,  8.57it/s][AOptimizing structure:  48%|████▊     | 24/50 [00:02<00:03,  8.31it/s]
+100%|██████████| 5/5 [00:43<00:00,  5.46s/it]100%|██████████| 5/5 [00:43<00:00,  8.62s/it]

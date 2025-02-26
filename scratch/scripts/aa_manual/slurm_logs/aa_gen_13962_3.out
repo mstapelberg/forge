@@ -1,0 +1,568 @@
+Running committee mace with 6 models
+Loading structures...
+Calculating force variances...
+
+Variance Summary:
+Mean variance: 0.286840
+Max variance: 0.287112
+Min variance: 0.286259
+
+Selected 5 structures for adversarial attacks:
+neb_28_structure_4492_step_0: 0.287112
+neb_structure_4920_step_0: 0.287066
+neb_26_structure_5390_step_0: 0.286956
+neb_2_structure_7272_step_0: 0.286807
+neb_18_structure_5082_step_0: 0.286259
+Running committee mace with 6 models
+
+Running adversarial attacks...
+
+Optimizing structure: neb_28_structure_4492_step_0
+Initial variance: 0.287112
+
+Step 0: Accepted move
+New variance: 0.011617
+Acceptance rate: 100.00%
+
+Step 1: Accepted move
+New variance: 0.005601
+Acceptance rate: 100.00%
+
+Step 2: Accepted move
+New variance: 0.002844
+Acceptance rate: 100.00%
+
+Step 3: Accepted move
+New variance: 0.005573
+Acceptance rate: 100.00%
+
+Step 4: Accepted move
+New variance: 0.002030
+Acceptance rate: 100.00%
+
+Step 5: Accepted move
+New variance: 0.001857
+Acceptance rate: 100.00%
+
+Step 6: Accepted move
+New variance: 0.001771
+Acceptance rate: 100.00%
+
+Step 7: Accepted move
+New variance: 0.001901
+Acceptance rate: 100.00%
+
+Step 8: Accepted move
+New variance: 0.001425
+Acceptance rate: 100.00%
+
+Step 9: Accepted move
+New variance: 0.001418
+Acceptance rate: 100.00%
+
+Step 10: Accepted move
+New variance: 0.001335
+Acceptance rate: 100.00%
+
+Step 11: Accepted move
+New variance: 0.001460
+Acceptance rate: 100.00%
+
+Step 12: Accepted move
+New variance: 0.001448
+Acceptance rate: 100.00%
+
+Step 13: Accepted move
+New variance: 0.001595
+Acceptance rate: 100.00%
+
+Step 14: Accepted move
+New variance: 0.001122
+Acceptance rate: 100.00%
+
+Step 15: Accepted move
+New variance: 0.002340
+Acceptance rate: 100.00%
+
+Step 16: Accepted move
+New variance: 0.001458
+Acceptance rate: 100.00%
+
+Step 17: Accepted move
+New variance: 0.001047
+Acceptance rate: 100.00%
+
+Step 18: Accepted move
+New variance: 0.001087
+Acceptance rate: 100.00%
+
+Step 19: Accepted move
+New variance: 0.001034
+Acceptance rate: 100.00%
+
+Step 20: Accepted move
+New variance: 0.001114
+Acceptance rate: 100.00%
+
+Step 21: Accepted move
+New variance: 0.001075
+Acceptance rate: 100.00%
+
+Step 22: Accepted move
+New variance: 0.000994
+Acceptance rate: 100.00%
+
+Step 23: Accepted move
+New variance: 0.000940
+Acceptance rate: 100.00%
+
+Step 24: Accepted move
+New variance: 0.000889
+Acceptance rate: 100.00%
+
+Stopping: No improvement for 25 steps
+
+Optimization complete:
+Best variance: 0.287112
+Accepted moves: 25/25 (100.00%)
+Trajectory saved to: ../../data/zr-w-v-ti-cr/gen_4_2024-11-13/aa_results/batch_3/neb_28_structure_4492_step_0_adversarial.xyz
+
+Optimizing structure: neb_structure_4920_step_0
+Initial variance: 0.287066
+
+Step 0: Accepted move
+New variance: 0.007849
+Acceptance rate: 100.00%
+
+Step 1: Accepted move
+New variance: 0.007291
+Acceptance rate: 100.00%
+
+Step 2: Accepted move
+New variance: 0.002986
+Acceptance rate: 100.00%
+
+Step 3: Accepted move
+New variance: 0.001988
+Acceptance rate: 100.00%
+
+Step 4: Accepted move
+New variance: 0.002407
+Acceptance rate: 100.00%
+
+Step 5: Accepted move
+New variance: 0.001371
+Acceptance rate: 100.00%
+
+Step 6: Accepted move
+New variance: 0.001824
+Acceptance rate: 100.00%
+
+Step 7: Accepted move
+New variance: 0.001586
+Acceptance rate: 100.00%
+
+Step 8: Accepted move
+New variance: 0.001281
+Acceptance rate: 100.00%
+
+Step 9: Accepted move
+New variance: 0.001359
+Acceptance rate: 100.00%
+
+Step 10: Accepted move
+New variance: 0.001288
+Acceptance rate: 100.00%
+
+Step 11: Accepted move
+New variance: 0.001233
+Acceptance rate: 100.00%
+
+Step 12: Accepted move
+New variance: 0.001014
+Acceptance rate: 100.00%
+
+Step 13: Accepted move
+New variance: 0.001119
+Acceptance rate: 100.00%
+
+Step 14: Accepted move
+New variance: 0.001082
+Acceptance rate: 100.00%
+
+Step 15: Accepted move
+New variance: 0.001017
+Acceptance rate: 100.00%
+
+Step 16: Accepted move
+New variance: 0.001122
+Acceptance rate: 100.00%
+
+Step 17: Accepted move
+New variance: 0.001207
+Acceptance rate: 100.00%
+
+Step 18: Accepted move
+New variance: 0.001280
+Acceptance rate: 100.00%
+
+Step 19: Accepted move
+New variance: 0.001323
+Acceptance rate: 100.00%
+
+Step 20: Accepted move
+New variance: 0.001083
+Acceptance rate: 100.00%
+
+Step 21: Accepted move
+New variance: 0.001161
+Acceptance rate: 100.00%
+
+Step 22: Accepted move
+New variance: 0.001191
+Acceptance rate: 100.00%
+
+Step 23: Accepted move
+New variance: 0.001250
+Acceptance rate: 100.00%
+
+Step 24: Accepted move
+New variance: 0.001422
+Acceptance rate: 100.00%
+
+Stopping: No improvement for 25 steps
+
+Optimization complete:
+Best variance: 0.287065
+Accepted moves: 25/25 (100.00%)
+Trajectory saved to: ../../data/zr-w-v-ti-cr/gen_4_2024-11-13/aa_results/batch_3/neb_structure_4920_step_0_adversarial.xyz
+
+Optimizing structure: neb_26_structure_5390_step_0
+Initial variance: 0.286956
+
+Step 0: Accepted move
+New variance: 0.006873
+Acceptance rate: 100.00%
+
+Step 1: Accepted move
+New variance: 0.004173
+Acceptance rate: 100.00%
+
+Step 2: Accepted move
+New variance: 0.003765
+Acceptance rate: 100.00%
+
+Step 3: Accepted move
+New variance: 0.003013
+Acceptance rate: 100.00%
+
+Step 4: Accepted move
+New variance: 0.004269
+Acceptance rate: 100.00%
+
+Step 5: Accepted move
+New variance: 0.006736
+Acceptance rate: 100.00%
+
+Step 6: Accepted move
+New variance: 0.001455
+Acceptance rate: 100.00%
+
+Step 7: Accepted move
+New variance: 0.001482
+Acceptance rate: 100.00%
+
+Step 8: Accepted move
+New variance: 0.002167
+Acceptance rate: 100.00%
+
+Step 9: Accepted move
+New variance: 0.003133
+Acceptance rate: 100.00%
+
+Step 10: Accepted move
+New variance: 0.001334
+Acceptance rate: 100.00%
+
+Step 11: Accepted move
+New variance: 0.001130
+Acceptance rate: 100.00%
+
+Step 12: Accepted move
+New variance: 0.001312
+Acceptance rate: 100.00%
+
+Step 13: Accepted move
+New variance: 0.001233
+Acceptance rate: 100.00%
+
+Step 14: Accepted move
+New variance: 0.001511
+Acceptance rate: 100.00%
+
+Step 15: Accepted move
+New variance: 0.001170
+Acceptance rate: 100.00%
+
+Step 16: Accepted move
+New variance: 0.001547
+Acceptance rate: 100.00%
+
+Step 17: Accepted move
+New variance: 0.001641
+Acceptance rate: 100.00%
+
+Step 18: Accepted move
+New variance: 0.001607
+Acceptance rate: 100.00%
+
+Step 19: Accepted move
+New variance: 0.001358
+Acceptance rate: 100.00%
+
+Step 20: Accepted move
+New variance: 0.001546
+Acceptance rate: 100.00%
+
+Step 21: Accepted move
+New variance: 0.001582
+Acceptance rate: 100.00%
+
+Step 22: Accepted move
+New variance: 0.001617
+Acceptance rate: 100.00%
+
+Step 23: Accepted move
+New variance: 0.001431
+Acceptance rate: 100.00%
+
+Step 24: Accepted move
+New variance: 0.001441
+Acceptance rate: 100.00%
+
+Stopping: No improvement for 25 steps
+
+Optimization complete:
+Best variance: 0.286955
+Accepted moves: 25/25 (100.00%)
+Trajectory saved to: ../../data/zr-w-v-ti-cr/gen_4_2024-11-13/aa_results/batch_3/neb_26_structure_5390_step_0_adversarial.xyz
+
+Optimizing structure: neb_2_structure_7272_step_0
+Initial variance: 0.286807
+
+Step 0: Accepted move
+New variance: 0.003774
+Acceptance rate: 100.00%
+
+Step 1: Accepted move
+New variance: 0.002217
+Acceptance rate: 100.00%
+
+Step 2: Accepted move
+New variance: 0.002312
+Acceptance rate: 100.00%
+
+Step 3: Accepted move
+New variance: 0.001361
+Acceptance rate: 100.00%
+
+Step 4: Accepted move
+New variance: 0.001174
+Acceptance rate: 100.00%
+
+Step 5: Accepted move
+New variance: 0.001036
+Acceptance rate: 100.00%
+
+Step 6: Accepted move
+New variance: 0.000898
+Acceptance rate: 100.00%
+
+Step 7: Accepted move
+New variance: 0.000709
+Acceptance rate: 100.00%
+
+Step 8: Accepted move
+New variance: 0.000944
+Acceptance rate: 100.00%
+
+Step 9: Accepted move
+New variance: 0.000798
+Acceptance rate: 100.00%
+
+Step 10: Accepted move
+New variance: 0.001256
+Acceptance rate: 100.00%
+
+Step 11: Accepted move
+New variance: 0.000615
+Acceptance rate: 100.00%
+
+Step 12: Accepted move
+New variance: 0.000881
+Acceptance rate: 100.00%
+
+Step 13: Accepted move
+New variance: 0.000746
+Acceptance rate: 100.00%
+
+Step 14: Accepted move
+New variance: 0.000965
+Acceptance rate: 100.00%
+
+Step 15: Accepted move
+New variance: 0.000876
+Acceptance rate: 100.00%
+
+Step 16: Accepted move
+New variance: 0.001205
+Acceptance rate: 100.00%
+
+Step 17: Accepted move
+New variance: 0.001049
+Acceptance rate: 100.00%
+
+Step 18: Accepted move
+New variance: 0.000824
+Acceptance rate: 100.00%
+
+Step 19: Accepted move
+New variance: 0.000803
+Acceptance rate: 100.00%
+
+Step 20: Accepted move
+New variance: 0.000989
+Acceptance rate: 100.00%
+
+Step 21: Accepted move
+New variance: 0.000921
+Acceptance rate: 100.00%
+
+Step 22: Accepted move
+New variance: 0.000972
+Acceptance rate: 100.00%
+
+Step 23: Accepted move
+New variance: 0.000949
+Acceptance rate: 100.00%
+
+Step 24: Accepted move
+New variance: 0.001336
+Acceptance rate: 100.00%
+
+Stopping: No improvement for 25 steps
+
+Optimization complete:
+Best variance: 0.286807
+Accepted moves: 25/25 (100.00%)
+Trajectory saved to: ../../data/zr-w-v-ti-cr/gen_4_2024-11-13/aa_results/batch_3/neb_2_structure_7272_step_0_adversarial.xyz
+
+Optimizing structure: neb_18_structure_5082_step_0
+Initial variance: 0.286259
+
+Step 0: Accepted move
+New variance: 0.008585
+Acceptance rate: 100.00%
+
+Step 1: Accepted move
+New variance: 0.003607
+Acceptance rate: 100.00%
+
+Step 2: Accepted move
+New variance: 0.002055
+Acceptance rate: 100.00%
+
+Step 3: Accepted move
+New variance: 0.001988
+Acceptance rate: 100.00%
+
+Step 4: Accepted move
+New variance: 0.001815
+Acceptance rate: 100.00%
+
+Step 5: Accepted move
+New variance: 0.002069
+Acceptance rate: 100.00%
+
+Step 6: Accepted move
+New variance: 0.001776
+Acceptance rate: 100.00%
+
+Step 7: Accepted move
+New variance: 0.001285
+Acceptance rate: 100.00%
+
+Step 8: Accepted move
+New variance: 0.001267
+Acceptance rate: 100.00%
+
+Step 9: Accepted move
+New variance: 0.000964
+Acceptance rate: 100.00%
+
+Step 10: Accepted move
+New variance: 0.001147
+Acceptance rate: 100.00%
+
+Step 11: Accepted move
+New variance: 0.001514
+Acceptance rate: 100.00%
+
+Step 12: Accepted move
+New variance: 0.001142
+Acceptance rate: 100.00%
+
+Step 13: Accepted move
+New variance: 0.001072
+Acceptance rate: 100.00%
+
+Step 14: Accepted move
+New variance: 0.001597
+Acceptance rate: 100.00%
+
+Step 15: Accepted move
+New variance: 0.001753
+Acceptance rate: 100.00%
+
+Step 16: Accepted move
+New variance: 0.001201
+Acceptance rate: 100.00%
+
+Step 17: Accepted move
+New variance: 0.001354
+Acceptance rate: 100.00%
+
+Step 18: Accepted move
+New variance: 0.001711
+Acceptance rate: 100.00%
+
+Step 19: Accepted move
+New variance: 0.001510
+Acceptance rate: 100.00%
+
+Step 20: Accepted move
+New variance: 0.001223
+Acceptance rate: 100.00%
+
+Step 21: Accepted move
+New variance: 0.001357
+Acceptance rate: 100.00%
+
+Step 22: Accepted move
+New variance: 0.001311
+Acceptance rate: 100.00%
+
+Step 23: Accepted move
+New variance: 0.001143
+Acceptance rate: 100.00%
+
+Step 24: Accepted move
+New variance: 0.001320
+Acceptance rate: 100.00%
+
+Stopping: No improvement for 25 steps
+
+Optimization complete:
+Best variance: 0.286258
+Accepted moves: 25/25 (100.00%)
+Trajectory saved to: ../../data/zr-w-v-ti-cr/gen_4_2024-11-13/aa_results/batch_3/neb_18_structure_5082_step_0_adversarial.xyz

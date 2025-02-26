@@ -1,0 +1,6 @@
+database:
+  dbname: 'test_database'
+  user: 'myless'
+  password: 'vcrtiwzr'
+  host: 'database-vcrtiwzr.cfg4i4qmuc4m.us-east-1.rds.amazonaws.com'
+  port: 5432

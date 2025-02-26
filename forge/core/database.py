@@ -60,19 +60,26 @@ def fix_numpy(obj):
 class DatabaseManager:
     """PostgreSQL database manager for FORGE."""
     
-    def __init__(self, config_path: Union[str, Path] = None, config_dict: Dict = None):
+    def __init__(self, config_path: Union[str, Path] = None, config_dict: Dict = None, dry_run: bool = False):
         """
         Initialize database connection using configuration.
         
         Args:
             config_path: Path to database configuration YAML
             config_dict: Dictionary containing database configuration
+            dry_run: If True, simulate database operations without actually writing
             
         Note: If both config_path and config_dict are provided, config_dict takes precedence
         """
-        self.config = self._load_config(config_path, config_dict)
-        self.conn = self._initialize_connection()
-        self._initialize_tables()
+        self.dry_run = dry_run
+        if not dry_run:
+            self.config = self._load_config(config_path, config_dict)
+            self.conn = self._initialize_connection()
+            self._initialize_tables()
+        else:
+            self.conn = None
+            self.cursor = None
+            self._fake_id_counter = 1  # For generating fake IDs in dry run mode
     
     def _load_config(self, config_path: Union[str, Path] = None, config_dict: Dict = None) -> Dict:
         """
@@ -139,6 +146,13 @@ class DatabaseManager:
     def add_structure(self, atoms: Atoms, source_type: str = 'original',
                      parent_id: Optional[int] = None, metadata: Optional[Dict] = None) -> int:
         """Add structure to database with thorough numpy fixing."""
+        if self.dry_run:
+            # Simulate adding structure and return fake ID
+            fake_id = self._fake_id_counter
+            self._fake_id_counter += 1
+            print(f"[DRY RUN] Would add structure to database with ID: {fake_id}")
+            return fake_id
+            
         if metadata is None:
             metadata = {}
         
@@ -222,6 +236,14 @@ class DatabaseManager:
         Returns:
             Atoms: ASE Atoms object
         """
+        if self.dry_run:
+            # Return a dummy structure in dry run mode
+            from ase.build import bulk
+            atoms = bulk('Ti', 'bcc', a=3.3)
+            atoms.info['structure_id'] = structure_id
+            atoms.info['structure_name'] = f'test_struct_{structure_id}'
+            return atoms
+        
         with self.conn.cursor() as cur:
             cur.execute("""
                 SELECT positions, cell, pbc, formula, metadata
@@ -242,7 +264,6 @@ class DatabaseManager:
                 atoms.info.update(metadata)
             
             return atoms
-
 
     def add_calculation(self, structure_id: int, calc_data: Dict) -> int:
         """Add calculation results to database."""
@@ -661,3 +682,48 @@ class DatabaseManager:
             coords.append(f"{atom.symbol}:{x:.5f}:{y:.5f}:{z:.5f}")
         full_string = "|".join(coords)
         return hashlib.md5(full_string.encode("utf-8")).hexdigest()
+
+    def get_structure_metadata(self, structure_id: int) -> Dict:
+        """Get structure metadata from the database.
+        
+        Args:
+            structure_id: Structure ID
+            
+        Returns:
+            dict: Structure metadata
+        """
+        if self.dry_run:
+            # Return dummy metadata in dry run mode
+            return {
+                'structure_id': structure_id,
+                'config_type': 'test',
+                'creation_time': '2024-03-19T00:00:00'
+            }
+            
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT metadata
+                FROM structures
+                WHERE structure_id = %s
+            """, (structure_id,))
+            metadata = cur.fetchone()[0]
+            return metadata
+
+    def update_structure_metadata(self, structure_id: int, metadata: Dict) -> None:
+        """Update structure metadata in the database.
+        
+        Args:
+            structure_id: Structure ID
+            metadata: New metadata dictionary
+        """
+        if self.dry_run:
+            print(f"[DRY RUN] Would update metadata for structure {structure_id}")
+            return
+            
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                UPDATE structures
+                SET metadata = %s
+                WHERE structure_id = %s
+            """, (Json(metadata), structure_id))
+        self.conn.commit()

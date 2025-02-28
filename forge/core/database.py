@@ -41,10 +41,10 @@ def fix_numpy(obj):
         return tuple(fix_numpy(item) for item in obj)
     elif isinstance(obj, np.ndarray):
         return fix_numpy(obj.tolist())
-    elif isinstance(obj, (np.int_, np.intc, np.intp, np.int8, np.int16, 
+    elif isinstance(obj, (np.intc, np.intp, np.int8, np.int16, 
                         np.int32, np.int64, np.uint8, np.uint16, np.uint32, np.uint64)):
         return int(obj)
-    elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+    elif isinstance(obj, (np.float16, np.float32, np.float64)):
         return float(obj)
     elif isinstance(obj, (np.bool_)):
         return bool(obj)
@@ -153,17 +153,21 @@ class DatabaseManager:
             print(f"[DRY RUN] Would add structure to database with ID: {fake_id}")
             return fake_id
             
+        if parent_id is not None:
+            parent_id = int(parent_id)
+
         if metadata is None:
             metadata = {}
+        else:
+            metadata = fix_numpy(metadata.copy())
+        
+        if 'structure_id' in atoms.info:
+            metadata['parent_id'] = fix_numpy(atoms.info['structure_id'])
         
         # Deep copy and fix the atoms.info dictionary
         info_dict = dict(atoms.info)  # Make a copy
-        metadata.update(info_dict)
-        
-        # Fix parent_id if present
-        if parent_id is not None:
-            metadata['parent_id'] = fix_numpy(parent_id)
-        
+        metadata.update(info_dict)  # Include ALL atoms.info in metadata
+
         # Calculate composition and number of atoms
         symbols = atoms.get_chemical_symbols()
         total_atoms = len(symbols)
@@ -351,6 +355,7 @@ class DatabaseManager:
             **row[6]  # Unpack metadata
         } for row in rows]
 
+    
     def find_structures(self, elements: List[str] = None, 
                     structure_type: str = None,
                     min_lattice_parameter: float = None,
@@ -727,3 +732,76 @@ class DatabaseManager:
                 WHERE structure_id = %s
             """, (Json(metadata), structure_id))
         self.conn.commit()
+
+    def get_atoms_with_calculation(self, structure_id: int, model_type: Optional[str] = None) -> Atoms:
+        """
+        Get an Atoms object with calculation results attached.
+        
+        Args:
+            structure_id: ID of structure to retrieve
+            model_type: Type of calculation to attach (e.g., 'vasp-static', 'mace')
+                       If None, attaches the first available calculation
+        
+        Returns:
+            Atoms object with calculation results
+        """
+        # Get structure
+        atoms = self.get_structure(structure_id)
+        
+        # Get calculations
+        calcs = self.get_calculations(structure_id, model_type=model_type)
+        
+        if calcs:
+            # Use the first matching calculation
+            calc_data = calcs[0]
+            
+            # Store energy and stress in atoms.info
+            if calc_data.get('energy') is not None:
+                atoms.info['energy'] = float(calc_data['energy'][0])
+            
+            if calc_data.get('stress') is not None:
+                atoms.info['stress'] = np.array(calc_data['stress'])
+            
+            # Store forces in atoms.arrays
+            if calc_data.get('forces') is not None:
+                forces = np.array(calc_data['forces'])
+                if forces.shape == (len(atoms), 3):  # Verify correct shape
+                    atoms.arrays['forces'] = forces
+            
+            # Add calculation metadata to atoms.info
+            atoms.info['calculation_id'] = calc_data.get('id')
+            atoms.info['model_type'] = calc_data.get('model_type')
+
+            # check if atoms.info has forces
+            if 'forces' in atoms.info:
+                # remove forces from atoms.info
+                atoms.info.pop('forces')
+
+        return atoms
+        
+    def get_atoms_with_calculations(self, structure_ids: Union[int, List[int]], model_type: Optional[str] = None) -> List[Atoms]:
+        """
+        Get multiple Atoms objects with calculation results attached.
+        
+        Args:
+            structure_ids: Single ID or list of structure IDs to retrieve
+            model_type: Type of calculation to attach (e.g., 'vasp-static', 'mace')
+                       If None, attaches the first available calculation for each structure
+        
+        Returns:
+            List of Atoms objects with calculation results
+        """
+        # Handle single ID case
+        if isinstance(structure_ids, int):
+            structure_ids = [structure_ids]
+            
+        atoms_list = []
+        for struct_id in structure_ids:
+            try:
+                atoms = self.get_atoms_with_calculation(struct_id, model_type=model_type)
+                atoms.info['structure_id'] = struct_id
+                atoms_list.append(atoms)
+            except Exception as e:
+                print(f"[WARNING] Failed to retrieve structure {struct_id} with calculation: {e}")
+                
+        return atoms_list

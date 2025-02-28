@@ -166,4 +166,75 @@ def calculate_variance(xyz_file: str, output_dir: str, model_paths: list[str], d
         device: Device to run on (cpu/cuda)
     """
     from .aa_driver import calculate_model_variance
-    return calculate_model_variance(xyz_file, output_dir, model_paths, device) 
+    return calculate_model_variance(xyz_file, output_dir, model_paths, device)
+
+@register_workflow_command("create-vasp-jobs-from-aa")
+def create_vasp_jobs_from_aa(
+    input_dir: str, 
+    output_dir: str = None, 
+    vasp_profile: str = "static", 
+    hpc_profile: str = "default",
+    structures_per_traj: int = 5
+):
+    """Create VASP jobs for structures optimized with adversarial attack.
+    
+    Args:
+        input_dir: Directory containing AA optimization results
+        output_dir: Directory to create VASP jobs in (defaults to input_dir/vasp_jobs)
+        vasp_profile: VASP settings profile to use
+        hpc_profile: HPC profile to use
+        structures_per_traj: Number of structures to select per trajectory
+    """
+    from .run_aa import create_vasp_jobs_from_aa_results
+    return create_vasp_jobs_from_aa_results(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        vasp_profile=vasp_profile,
+        hpc_profile=hpc_profile,
+        structures_per_traj=structures_per_traj
+    )
+
+@register_workflow_command("test-aa-database-workflow")
+def test_aa_database_workflow(
+    elements: List[str] = None,
+    structure_type: str = None,
+    num_structures: int = 2,
+    output_dir: str = "aa_test_workflow",
+    model_dir: str = None
+):
+    """Test the full AA database workflow from structure selection to VASP job creation.
+    
+    Args:
+        elements: List of elements to filter by
+        structure_type: Structure type to filter by
+        num_structures: Number of structures to process
+        output_dir: Directory to save workflow results
+        model_dir: Directory containing MACE model files
+    """
+    import sys
+    import os
+    from pathlib import Path
+    
+    # We need to pass through command line arguments
+    # Build argument list for db_test_workflow_main
+    sys.argv = [sys.argv[0]]
+    if elements:
+        sys.argv.extend(["--elements"] + elements)
+    if structure_type:
+        sys.argv.extend(["--structure_type", structure_type])
+    sys.argv.extend(["--num_structures", str(num_structures)])
+    sys.argv.extend(["--output_dir", output_dir])
+    if model_dir:
+        sys.argv.extend(["--model_dir", model_dir])
+    else:
+        # Try to find model dir in the package
+        model_dir = os.path.join(os.path.dirname(__file__), "../../tests/resources/potentials/mace")
+        if os.path.exists(model_dir):
+            sys.argv.extend(["--model_dir", model_dir])
+        else:
+            raise ValueError("No model_dir provided and couldn't find default models. Please specify model_dir.")
+    
+    # Import torch here to check for CUDA
+    import torch
+    from .run_aa import db_test_workflow_main
+    return db_test_workflow_main() 

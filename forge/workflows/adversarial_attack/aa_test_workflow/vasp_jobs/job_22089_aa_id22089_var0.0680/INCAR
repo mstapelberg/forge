@@ -1,0 +1,11 @@
+PREC = Accurate
+ENCUT = 520
+EDIFF = 1e-06
+ISMEAR = 1
+SIGMA = 0.2
+NSW = 0
+IBRION = -1
+LWAVE = .FALSE.
+LCHARG = .TRUE.
+LREAL = .FALSE.
+ALGO = Normal

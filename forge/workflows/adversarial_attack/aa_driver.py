@@ -15,6 +15,11 @@ from ase import Atoms
 from forge.core.database import DatabaseManager
 from forge.core.adversarial_attack import AdversarialCalculator, DisplacementGenerator, AdversarialOptimizer
 from forge.workflows.db_to_vasp import prepare_vasp_job_from_ase
+from forge.workflows.adversarial_attack.slurm_templates import (
+    get_variance_calculation_script,
+    get_gradient_aa_script,
+    get_monte_carlo_aa_script
+)
 
 
 def select_structures_from_db(
@@ -60,46 +65,21 @@ def select_structures_from_db(
     if not structure_ids:
         raise ValueError("No structures selected. Check selection criteria.")
 
-    for struct_id in structure_ids:
-        try:
-            atoms = db_manager.get_structure(struct_id)
-            # Get VASP calculations, prioritizing 'vasp-static'
-            calculations = db_manager.get_calculations(struct_id, model_type='vasp-static')
-            if not calculations:
-                calculations = db_manager.get_calculations(struct_id, model_type='vasp*')
-
-            if not calculations:
-                if debug:
-                    print(f"[DEBUG] Skipping structure {struct_id}: No VASP calculations found.")
-                continue
-
-            # Use the first calculation (either 'vasp-static' or the first 'vasp*')
-            calc_data = calculations[0]
-            energy = calc_data['energy']
-            forces = calc_data['forces']
-
-            if energy is None:
-                if debug:
-                    print(f"[DEBUG] Skipping structure {struct_id}: Energy is None.")
-                continue
-
-            # Add ground truth energy and forces to atoms.info
-            atoms.info['energy'] = float(energy)  # Ensure float
-            if isinstance(forces, list):  # Assuming JSONB is represented as a list
-                atoms.arrays['forces'] = np.array(forces)
-            else:
-                atoms.arrays['forces'] = forces
-            selected_atoms_list.append(atoms)
-            energies.append(float(energy))
-
-            if debug:
-                print(f"[DEBUG] Selected structure {struct_id} with energy {energy}.")
-
-        except Exception as e:
-            print(f"[WARNING] Error retrieving structure or calculation for ID {struct_id}: {e}")
-            if debug:
-                raise
-
+    # Use the new method to get atoms with calculations directly
+    selected_atoms_list = db_manager.get_atoms_with_calculations(structure_ids, model_type='vasp-static')
+    
+    # Filter out any structures without energy values and collect energies
+    filtered_atoms_list = []
+    for atoms in selected_atoms_list:
+        if 'energy' in atoms.info and atoms.info['energy'] is not None:
+            filtered_atoms_list.append(atoms)
+            energies.append(float(atoms.info['energy']))
+        elif debug:
+            struct_id = atoms.info.get('structure_id', 'unknown')
+            print(f"[DEBUG] Skipping structure {struct_id}: Energy is None.")
+    
+    selected_atoms_list = filtered_atoms_list
+    
     if debug:
         print(f"[DEBUG] Selected {len(selected_atoms_list)} structures with energies.")
 
@@ -176,38 +156,21 @@ def prepare_variance_calculation_jobs(
 
     # --- Generate SLURM array job script ---
     slurm_script_path = variance_calculation_dir / "variance_calculation_array.slurm"
-    slurm_content = f"""#!/bin/bash
-#SBATCH --job-name=var_calc_array
-#SBATCH --output=var_calc_array_%A_%a.out
-#SBATCH --error=var_calc_array_%A_%a.err
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
-#SBATCH --nodes=1
-#SBATCH --gres=gpu:1
-#SBATCH --time=24:00:00
-#SBATCH --array=0-{n_batches - 1}
-
-source /home/myless/.mambaforge/etc/profile.d/conda.sh
-conda activate mace-cueq
-
-BATCH_ID=$SLURM_ARRAY_TASK_ID
-BATCH_DIR="./batch_${{BATCH_ID}}"
-XYZ_FILE="${{BATCH_DIR}}/batch_${{BATCH_ID}}.xyz"
-OUTPUT_DIR="../variance_results"
-
-cd "$BATCH_DIR"
-export OMP_NUM_THREADS=8
-
-MODEL_PATHS="{model_paths_str}"
-
-forge calculate-variance \\
-    "$XYZ_FILE" \\
-    "$OUTPUT_DIR" \\
-    --model_paths $MODEL_PATHS \\
-    --device {device}
-
-echo "[INFO] Batch ${{BATCH_ID}} completed."
-"""
+    
+    # Get the SLURM script from the template
+    slurm_content = get_variance_calculation_script(
+        output_dir=str(variance_calculation_dir.relative_to(variance_calculation_dir.parent)),
+        ensemble_path="models",
+        structure_file="${BATCH_DIR}/batch_${BATCH_ID}.xyz",
+        n_models=len(copied_model_paths),
+        array_range=f"0-{n_batches - 1}",
+        compute_forces=True,
+        time="24:00:00",
+        mem="32G",
+        cpus_per_task=8,
+        gpus_per_task=1,
+    )
+    
     with open(slurm_script_path, "w") as f:
         f.write(slurm_content)
     print(f"[INFO] Created SLURM array script: {slurm_script_path}")
@@ -279,6 +242,9 @@ def prepare_gradient_aa_optimization(
 ) -> None:
     """
     Prepares and launches gradient-based adversarial attack optimization jobs.
+    
+    This function has been enhanced to better leverage the database for structure tracking.
+    It extracts structure IDs from variance results and retrieves structures directly from the database.
     """
     print("[INFO] Starting gradient-based adversarial attack optimization preparation...")
     
@@ -289,6 +255,13 @@ def prepare_gradient_aa_optimization(
         
     aa_output_dir = input_path.parent / "gradient_aa_optimization"
     aa_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create slurm logs directory
+    slurm_logs_dir = aa_output_dir / "slurm_logs"
+    slurm_logs_dir.mkdir(exist_ok=True)
+    
+    # Initialize database manager
+    db_manager = DatabaseManager()
     
     # Copy models to aa_output_dir
     models_dir = aa_output_dir / "models"
@@ -305,20 +278,37 @@ def prepare_gradient_aa_optimization(
             dest_path = models_dir / item
             shutil.copy2(model_path, dest_path)
             copied_model_paths.append(f"models/{item}")
-    model_paths_str = ' '.join(copied_model_paths)
     
     # Combine and sort variance results
     print("[INFO] Combining variance results...")
-    sorted_results = combine_variance_results(input_path)
+    sorted_results = combine_variance_results(input_path, debug=debug)
     print(f"[INFO] Found {len(sorted_results)} structures with variance results")
     
     # Select top N structures
     selected_structures = sorted_results[:n_structures]
     print(f"[INFO] Selected top {len(selected_structures)} structures")
     
+    # Extract structure IDs from the selected structures
+    structure_ids = []
+    for struct_name, variance, _ in selected_structures:
+        # Extract structure ID from name if possible (format: struct_id_XXX)
+        if struct_name.startswith("struct_id_"):
+            try:
+                structure_id = int(struct_name.split("_")[-1])
+                structure_ids.append((structure_id, variance))
+            except ValueError:
+                if debug:
+                    print(f"[DEBUG] Could not extract structure ID from name: {struct_name}")
+                continue
+    
+    if not structure_ids:
+        raise ValueError("No valid structure IDs found in variance results.")
+    
+    print(f"[INFO] Extracted {len(structure_ids)} structure IDs from variance results")
+    
     # Create batches
-    structures_per_batch = n_structures // n_batches
-    remaining_structures = n_structures % n_batches
+    structures_per_batch = len(structure_ids) // n_batches
+    remaining_structures = len(structure_ids) % n_batches
     
     start_index = 0
     for batch_id in range(n_batches):
@@ -328,83 +318,65 @@ def prepare_gradient_aa_optimization(
         end_index = start_index + structures_per_batch
         if batch_id < remaining_structures:
             end_index += 1
-
-        # TODO need to figure out the problem in compare_variance_results with xyz_path not being unique
-        # TODO need to figure out how to get the atoms object from the xyz_path or save the atoms objects to a file/just grab them from the database
-        # I'm leaning towards grabbing them from the database, and instead referring to their structure_id in the compare_variance_results function
         
-        batch_structures = selected_structures[start_index:end_index]
+        batch_struct_ids = structure_ids[start_index:end_index]
         start_index = end_index
+        
+        # Get structures with calculations directly from database
+        ids_only = [sid for sid, _ in batch_struct_ids]
+        batch_atoms_list = db_manager.get_atoms_with_calculations(ids_only, model_type='vasp-static')
+        
+        # Add variance information to atoms objects
+        for i, atoms in enumerate(batch_atoms_list):
+            structure_id, variance = batch_struct_ids[i]
+            atoms.info['structure_id'] = structure_id
+            atoms.info['structure_name'] = f"struct_id_{structure_id}"
+            atoms.info['initial_variance'] = variance
         
         # Create batch XYZ file
         batch_xyz = batch_dir / f"batch_{batch_id}.xyz"
-        batch_atoms_list = []
-        
-        for struct_name, variance, xyz_path in batch_structures:
-            atoms = ase.io.read(xyz_path)
-            atoms.info['structure_name'] = struct_name
-            atoms.info['initial_variance'] = variance
-            batch_atoms_list.append(atoms)
-            
         ase.io.write(batch_xyz, batch_atoms_list)
         print(f"[INFO] Batch {batch_id}: Wrote {len(batch_atoms_list)} structures to {batch_xyz}")
         
-        # Save batch metadata
+        # Save batch metadata with structure IDs
         batch_meta = {
-            'structures': [
-                {
-                    'name': name,
-                    'variance': var,
-                    'xyz_path': str(xyz_path.relative_to(input_path.parent))
-                }
-                for name, var, xyz_path in batch_structures
-            ]
+            'structures': []
         }
+        
+        for i, atoms in enumerate(batch_atoms_list):
+            structure_id = atoms.info['structure_id']
+            structure_meta = {
+                'name': f"struct_id_{structure_id}",
+                'variance': atoms.info['initial_variance'],
+                'structure_id': structure_id
+            }
+            batch_meta['structures'].append(structure_meta)
+            
         with open(batch_dir / 'batch_metadata.json', 'w') as f:
             json.dump(batch_meta, f, indent=2)
     
     # Generate SLURM array job script
     slurm_script_path = aa_output_dir / "gradient_aa_optimization_array.slurm"
-    slurm_content = f"""#!/bin/bash
-#SBATCH --job-name=grad_aa_opt
-#SBATCH --output=grad_aa_opt_%A_%a.out
-#SBATCH --error=grad_aa_opt_%A_%a.err
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
-#SBATCH --nodes=1
-#SBATCH --gres=gpu:1
-#SBATCH --time=24:00:00
-#SBATCH --array=0-{n_batches - 1}
-
-source /home/myless/.mambaforge/etc/profile.d/conda.sh
-conda activate mace-cueq
-
-BATCH_ID=$SLURM_ARRAY_TASK_ID
-BATCH_DIR="batch_${{BATCH_ID}}"
-XYZ_FILE="${{BATCH_DIR}}/batch_${{BATCH_ID}}.xyz"
-OUTPUT_DIR="${{BATCH_DIR}}/aa_results"
-
-cd "$BATCH_DIR"
-mkdir -p "$OUTPUT_DIR"
-export OMP_NUM_THREADS=8
-
-MODEL_PATHS="{model_paths_str}"
-
-python -m forge.workflows.adversarial_attack.run_aa \\
-    --gradient \\
-    "$XYZ_FILE" \\
-    "$OUTPUT_DIR" \\
-    --model_paths $MODEL_PATHS \\
-    --learning_rate {learning_rate} \\
-    --n_iterations {n_iterations} \\
-    --min_distance {min_distance} \\
-    {'--include_probability' if include_probability else ''} \\
-    --temperature {temperature} \\
-    --device {device} \\
-    {'--use_autograd' if use_autograd else ''}
-
-echo "[INFO] Batch ${{BATCH_ID}} completed."
-"""
+    
+    # Get the SLURM script from the template
+    slurm_content = get_gradient_aa_script(
+        output_dir=".",
+        ensemble_path="models",
+        structure_file="${BATCH_DIR}/batch_${BATCH_ID}.xyz",
+        n_steps=n_iterations,
+        step_size=learning_rate,
+        array_range=f"0-{n_batches - 1}",
+        time="24:00:00",
+        mem="32G",
+        cpus_per_task=8,
+        gpus_per_task=1,
+        use_probability_weighting=include_probability,
+        temperature=temperature,
+        force_only=True,
+        save_trajectory=True,
+        save_forces=True
+    )
+    
     with open(slurm_script_path, 'w') as f:
         f.write(slurm_content)
     print(f"[INFO] Created SLURM array script: {slurm_script_path}")
@@ -507,44 +479,24 @@ def prepare_aa_optimization(
     
     # Generate SLURM array job script
     slurm_script_path = aa_output_dir / "aa_optimization_array.slurm"
-    slurm_content = f"""#!/bin/bash
-#SBATCH --job-name=aa_opt_array
-#SBATCH --output=aa_opt_array_%A_%a.out
-#SBATCH --error=aa_opt_array_%A_%a.err
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
-#SBATCH --nodes=1
-#SBATCH --gres=gpu:1
-#SBATCH --time=24:00:00
-#SBATCH --array=0-{n_batches - 1}
-
-source /home/myless/.mambaforge/etc/profile.d/conda.sh
-conda activate mace-cueq
-
-BATCH_ID=$SLURM_ARRAY_TASK_ID
-BATCH_DIR="batch_${{BATCH_ID}}"
-XYZ_FILE="${{BATCH_DIR}}/batch_${{BATCH_ID}}.xyz"
-OUTPUT_DIR="${{BATCH_DIR}}/aa_results"
-
-cd "$BATCH_DIR"
-mkdir -p "$OUTPUT_DIR"
-export OMP_NUM_THREADS=8
-
-MODEL_PATHS="{model_paths_str}"
-
-python -m forge.workflows.adversarial_attack.run_aa \\
-    "$XYZ_FILE" \\
-    "$OUTPUT_DIR" \\
-    --model_paths $MODEL_PATHS \\
-    --temperature {temperature} \\
-    --max_steps {max_steps} \\
-    --patience {patience} \\
-    --min_distance {min_distance} \\
-    --mode {mode} \\
-    --device {device}
-
-echo "[INFO] Batch ${{BATCH_ID}} completed."
-"""
+    
+    # Get the SLURM script from the template
+    slurm_content = get_monte_carlo_aa_script(
+        output_dir=".",
+        ensemble_path="models",
+        structure_file="${BATCH_DIR}/batch_${BATCH_ID}.xyz",
+        n_steps=max_steps,
+        max_displacement=0.1,
+        array_range=f"0-{n_batches - 1}",
+        time="24:00:00",
+        mem="32G",
+        cpus_per_task=8,
+        gpus_per_task=1,
+        temperature=temperature,
+        force_only=True,
+        save_trajectory=True
+    )
+    
     with open(slurm_script_path, 'w') as f:
         f.write(slurm_content)
     print(f"[INFO] Created SLURM array script: {slurm_script_path}")
@@ -745,9 +697,9 @@ def generate_workflow_readme(output_dir: Path, rel_path: str, model_dir: str, el
     # Handle case where elements is None
     elements_str = ' '.join(elements) if elements else ''
     
-    readme_content = f"""# Adversarial Attack Workflow
+    readme_content = f"""# Gradient-Based Adversarial Attack Workflow
 
-This directory contains an adversarial attack (AA) workflow. Follow these steps to run the workflow:
+This directory contains a gradient-based adversarial attack (AA) workflow. Follow these steps to run the workflow:
 
 ## Step 1: Calculate Force Variances
 
@@ -763,27 +715,27 @@ sbatch variance_calculations/variance_calculation_array.slurm
 
 This will create variance results in the `variance_results` directory.
 
-## Step 2: Run Adversarial Attack Optimization
+## Step 2: Run Gradient-Based Adversarial Attack Optimization
 
-After the variance calculations complete, run the AA optimization on the highest-variance structures:
+After the variance calculations complete, run the gradient-based AA optimization on the highest-variance structures:
 
 ```bash
 # From the workflow root directory
-forge run-aa-jobs \\
+forge run-gradient-aa-jobs \\
     --input_directory variance_results \\
     --model_dir {model_dir} \\
     --n_structures {n_structs} \\
     --n_batches {n_batches} \\
-    --temperature 1200 \\
-    --max_steps 50 \\
-    --patience 25 \\
+    --learning_rate 0.01 \\
+    --n_iterations 100 \\
+    --min_distance 1.5 \\
     --device cuda
 
-# Submit the AA optimization SLURM array job
-sbatch aa_optimization/aa_optimization_array.slurm
+# Submit the gradient-based AA optimization SLURM array job
+sbatch gradient_aa_optimization/gradient_aa_optimization_array.slurm
 ```
 
-This will create AA optimization results in `aa_optimization/batch_*/aa_results/`.
+This will create AA optimization results in `gradient_aa_optimization/batch_*/aa_results/`.
 
 ## Step 3: Create VASP Jobs
 
@@ -791,7 +743,7 @@ Finally, create VASP jobs for the optimized structures:
 
 ```bash
 forge create-aa-vasp-jobs \\
-    --input_directory aa_optimization \\
+    --input_directory gradient_aa_optimization \\
     --output_directory vasp_jobs \\
     --vasp_profile static \\
     --hpc_profile {hpc_profile} \\
@@ -804,7 +756,7 @@ This will create VASP job directories in `vasp_jobs/` that can be submitted to t
 
 - `variance_calculations/`: Initial variance calculation jobs
 - `variance_results/`: Results from variance calculations
-- `aa_optimization/`: Adversarial attack optimization jobs and results
+- `gradient_aa_optimization/`: Gradient-based adversarial attack optimization jobs and results
 - `models/`: Copied MACE model files
 - `vasp_jobs/`: Generated VASP job directories
 
@@ -818,6 +770,25 @@ forge create-aa-jobs \\
     {f'--elements {elements_str}' if elements_str else ''} \\
     --n_batches {n_batches} \\
     {extra_args}
+```
+
+## Legacy Monte Carlo Approach
+
+If you need to use the legacy Monte Carlo approach instead of gradient-based optimization, run:
+
+```bash
+# From the workflow root directory
+forge run-aa-jobs \\
+    --input_directory variance_results \\
+    --model_dir {model_dir} \\
+    --n_structures {n_structs} \\
+    --n_batches {n_batches} \\
+    --temperature 1200 \\
+    --max_steps 50 \\
+    --device cuda
+
+# Submit the Monte Carlo AA optimization SLURM array job
+sbatch aa_optimization/aa_optimization_array.slurm
 ```
 
 For more information about the workflow, see the forge documentation.

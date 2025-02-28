@@ -60,7 +60,7 @@ class GradientAdversarialOptimizer:
     """Optimizer that uses PyTorch autograd to maximize adversarial loss."""
 
     def __init__(self, model_paths, device='cuda', learning_rate=0.01,
-                 temperature=0.86, include_probability=True, debug=False):
+                 temperature=0.86, include_probability=True, debug=False, energy_list=None):
         """Initialize optimizer with model paths.
 
         Args:
@@ -70,7 +70,9 @@ class GradientAdversarialOptimizer:
             temperature: Temperature for probability weighting (eV)
             include_probability: Whether to include probability term in loss
             debug: Whether to print debug messages
+            energy_list: List of energies for normalization constant calculation
         """
+        self.energy_list = energy_list
         self.model_paths = model_paths
         self.device = device
         self.learning_rate = learning_rate
@@ -132,9 +134,14 @@ class GradientAdversarialOptimizer:
     def _calculate_probability(self, energy, temperature, normalization_constant=1.0):
         """Calculate Boltzmann probability for a structure."""
         k_B = 8.617e-5 #eV/K
-        return np.exp(-energy / (k_B*temperature)) / normalization_constant
+        probability = np.exp(-energy / (k_B*temperature)) / normalization_constant
+        # I want to check if probability is nan or inf
+        if np.isnan(probability) or np.isinf(probability):
+            print(f"[WARNING] Probability is nan or inf for energy {energy} and temperature {temperature}. Setting probability to 1.0 and running in deterministic mode.")
+            return 1.0
+        return probability
 
-    def optimize(self, atoms, energy_list, n_iterations=60, min_distance=1.5, output_dir='.'):
+    def optimize(self, atoms, n_iterations=60, min_distance=1.5, output_dir='.'):
         """Run gradient-based adversarial attack optimization.
 
         Args:
@@ -150,9 +157,19 @@ class GradientAdversarialOptimizer:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Calculate normalization constant (approximated as 1.0 if working with single structure)
+        # Calculate normalization constant (approximated as 1.0 if no energy list is provided)
         # In a full dataset scenario, this would be calculated across all structures
-        normalization_constant, shifted_energies = self._calculate_normalization_constant(energy_list, self.temperature)
+        if self.energy_list is not None and len(self.energy_list) > 0:
+            normalization_constant, shifted_energies = self._calculate_normalization_constant(
+                self.energy_list, self.temperature)
+            if self.debug:
+                print(f"[DEBUG] Normalization constant: {normalization_constant:.6f}")
+                print(f"[DEBUG] Shifted energies: {shifted_energies}")
+        else:
+            if self.include_probability and self.debug:
+                print("[DEBUG] No energy list provided, using default normalization constant of 1.0")
+            normalization_constant = 1.0
+            shifted_energies = None
 
         # Prepare output trajectory file
         struct_name = atoms.info.get('structure_name', 'structure')

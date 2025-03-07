@@ -8,6 +8,11 @@ A HPC workflow management and materials analysis toolkit built with Python, ASE,
 - Composition analysis (short-range order, clustering, etc.)
 
 # Installation
+
+## Step 1: Install PyTorch and mace‑torch Manually
+
+Forge does **not** include PyTorch or mace‑torch in its dependency list. Please install them manually based on your system's requirements. Additionally, you will need a CUDA-enabled GPU to run FORGE (and preferably slurm for spawning multiple jobs at once).
+
 ```bash
 ### Setting up forge conda/mamba environment
 conda create -n forge python=3.11
@@ -26,7 +31,11 @@ pip3 install wandb
 ## Installing MACE 
 git clone https://github.com/ACEsuit/mace.git
 pip install ./mace[wandb] # ./mace without wandb
+```
 
+## Step 2: Install Forge and dependencies
+All of the needed dependencies are specified in the `pyproject.toml` file and can be installed with `pip install -e .` from the repository root.
+```bash
 ## Basic installation of Forge
 git clone https://github.com/mstapelberg/forge.git
 cd forge
@@ -59,10 +68,10 @@ Describe usage of HPC JSON templates.
 3. **Generate VASP jobs**: ...
 
 ## Configuration
-Points about \`config/database.yaml\`, environment variables, etc.
+The central tenant of FORGE is using AWS relational databases. Configuration of your database is done in `config/database.yaml`. This allows you to just call DatabaseManager() without passing in a config file.
 
 ## Contributing
-Guidelines for dev environment setup, testing, linting, etc.
+We use ruff for linting and black for formatting. Contact myless@mit.edu if you'd like to contribute or drop an issue/discussion.
 
 ## License
-[MIT License](./LICENSE) or whichever is relevant
+[MIT License](./LICENSE)

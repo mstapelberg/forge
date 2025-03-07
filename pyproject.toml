@@ -6,19 +6,46 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "forge"
 version = "0.1.0"
-description = "FORGE (Flexible Optimizer for Rapid Generation and Exploration)"
-authors = [{name = "Myles Stapelberg"}]
+description = "FORGE (Flexible Optimizer for Rapid Generation and Exploration) - A package for adversarial attacks, HPC workflows, and materials analysis"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Myles Stapelberg", email = "myless@mit.edu" }
+]
+homepage = "https://github.com/mstapelberg/forge"
+keywords = ["materials", "adversarial", "hpc", "database", "analysis"]
+
+# Python requirement (adjust as needed)
+requires-python = ">=3.11"
+
+# Core runtime dependencies
 dependencies = [
-    "ase",
-    "numpy",
-    "torch",
-    "mace-torch",
-    "pytest"
+    "numpy>=1.21",
+    "matplotlib",
+    "ase>=3.22",
+    "scipy",
+    "scikit-learn",
+    "pyyaml",
+    "psycopg2",
+    "pymatgen",
+    "monty",
+    "plotly",
+    "tqdm"
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["forge*"]
+# Optional dependencies (e.g. for testing) can be specified in optional-dependencies
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-cov",
+    "umap-learn",
+    "wandb"
+]
+
+[project.urls]
+"Source Code" = "https://github.com/mstapelberg/forge"
+"Documentation" = "https://github.com/mstapelberg/forge/docs"
+"Tracker" = "https://github.com/mstapelberg/forge/issues"
 
 
 [tool.ruff]

@@ -8,11 +8,11 @@ name = "forge"
 version = "0.1.0"
 description = "FORGE (Flexible Optimizer for Rapid Generation and Exploration) - A package for adversarial attacks, HPC workflows, and materials analysis"
 readme = "README.md"
-license = "MIT"
+license = {file = "LICENSE"}
 authors = [
     { name = "Myles Stapelberg", email = "myless@mit.edu" }
 ]
-homepage = "https://github.com/mstapelberg/forge"
+# homepage = "https://github.com/mstapelberg/forge"
 keywords = ["materials", "adversarial", "hpc", "database", "analysis"]
 
 # Python requirement (adjust as needed)
@@ -26,12 +26,15 @@ dependencies = [
     "scipy",
     "scikit-learn",
     "pyyaml",
-    "psycopg2",
+    "psycopg2-binary",
     "pymatgen",
     "monty",
     "plotly",
     "tqdm"
 ]
+
+[tool.setuptools]
+packages = ["forge"]
 
 # Optional dependencies (e.g. for testing) can be specified in optional-dependencies
 [project.optional-dependencies]

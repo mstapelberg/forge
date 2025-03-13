@@ -383,10 +383,9 @@ class VacancyDiffusion:
     def __init__(
         self,
         atoms: Atoms,
-        calculator,
+        model_path: List[str],
         nn_cutoff: float = 2.8,
         nnn_cutoff: float = 3.2,
-        neb_params: Optional[Dict] = None,
         seed: int = 42,
     ):
         """
@@ -394,17 +393,15 @@ class VacancyDiffusion:
         
         Args:
             atoms: Relaxed perfect structure to study
-            calculator: ASE calculator
+            model_path: Path(s) to MACE model(s)
             nn_cutoff: Cutoff radius for nearest neighbors
             nnn_cutoff: Cutoff radius for next-nearest neighbors
-            neb_params: Parameters for NEBCalculation
             seed: Random seed for reproducibility
         """
         self.atoms = atoms.copy()
-        self.calculator = calculator
+        self.model_path = model_path
         self.nn_cutoff = nn_cutoff
         self.nnn_cutoff = nnn_cutoff
-        self.neb_params = neb_params or {}
         self.seed = seed
         self.analyzer = NEBAnalyzer()
         
@@ -488,19 +485,17 @@ class VacancyDiffusion:
         self,
         vacancy_index: int,
         target_index: int,
-        relax: bool = True,
-        fmax: float = 0.01,
-        steps: int = 100
+        relax_fmax: float = 0.01,
+        relax_steps: int = 100
     ) -> Tuple[Atoms, Atoms, Dict[str, str]]:
         """
-        Create and optionally relax start and end configurations.
+        Create and relax start and end configurations.
         
         Args:
             vacancy_index: Index of atom to remove (create vacancy)
             target_index: Index of atom to move to vacancy site
-            relax: Whether to relax the structures
-            fmax: Force tolerance for relaxation
-            steps: Maximum relaxation steps
+            relax_fmax: Force tolerance for endpoint relaxation
+            relax_steps: Maximum steps for endpoint relaxation
             
         Returns:
             Tuple of (start_atoms, end_atoms, metadata)
@@ -523,12 +518,14 @@ class VacancyDiffusion:
         start_atoms.pop(vacancy_index)
         end_atoms.pop(vacancy_index)
         
-        # Relax if requested
-        if relax:
-            for atoms in (start_atoms, end_atoms):
-                atoms.calc = self.calculator
-                opt = FIRE(atoms)
-                opt.run(fmax=fmax, steps=steps)
+        # Relax configurations
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        use_cueq = device == "cuda"
+        
+        for atoms in (start_atoms, end_atoms):
+            atoms.calc = MACECalculator(model_paths=[self.model_path], device=device, default_dtype="float32", use_cueq=use_cueq)
+            opt = FIRE(atoms)
+            opt.run(fmax=relax_fmax, steps=relax_steps)
         
         metadata = {
             "vacancy_element": vacancy_element,
@@ -545,7 +542,7 @@ class VacancyDiffusion:
         n_nearest: int,
         n_next_nearest: int,
         rng_seed: Optional[int] = None
-    ) -> List[Tuple[int, int]]:
+    ) -> List[Dict[str, Union[int, List[int]]]]:
         """
         Sample neighbor pairs for NEB calculations.
         
@@ -556,33 +553,39 @@ class VacancyDiffusion:
             rng_seed: Random seed for reproducibility
             
         Returns:
-            List of (vacancy_index, target_index) pairs
+            List of dictionaries with keys:
+                - 'vacancy_index': Index of the vacancy site
+                - 'nn': List of sampled nearest neighbor indices
+                - 'nnn': List of sampled next-nearest neighbor indices
         """
         # Use class seed if no specific seed provided
         seed_to_use = rng_seed if rng_seed is not None else self.seed
         rng = np.random.default_rng(seed_to_use)
-        pairs = []
+        results = []
         
         for vac_idx in vacancy_indices:
             neighbors = self.get_neighbors(vac_idx)
             
             # Sample from NN
             if len(neighbors.nn_indices) >= n_nearest:
-                nn_samples = rng.choice(neighbors.nn_indices, size=n_nearest, replace=False)
+                nn_samples = rng.choice(neighbors.nn_indices, size=n_nearest, replace=False).tolist()
             else:
-                nn_samples = neighbors.nn_indices
+                nn_samples = neighbors.nn_indices.tolist()
                 
             # Sample from NNN
             if len(neighbors.nnn_indices) >= n_next_nearest:
-                nnn_samples = rng.choice(neighbors.nnn_indices, size=n_next_nearest, replace=False)
+                nnn_samples = rng.choice(neighbors.nnn_indices, size=n_next_nearest, replace=False).tolist()
             else:
-                nnn_samples = neighbors.nnn_indices
+                nnn_samples = neighbors.nnn_indices.tolist()
+            
+            # Create structured result
+            results.append({
+                'vacancy_index': vac_idx,
+                'nn': nn_samples,
+                'nnn': nnn_samples
+            })
                 
-            # Add all pairs
-            for target in np.concatenate([nn_samples, nnn_samples]):
-                pairs.append((vac_idx, target))
-                
-        return pairs
+        return results
 
     def run_single(
         self,
@@ -591,6 +594,10 @@ class VacancyDiffusion:
         num_images: int = 5,
         neb_method: str = "dyneb",
         climb: bool = True,
+        relax_fmax: float = 0.01,
+        relax_steps: int = 100,
+        neb_fmax: float = 0.01,
+        neb_steps: int = 200,
         save_xyz: bool = False,
         output_dir: Optional[Path] = None
     ) -> Dict:
@@ -603,6 +610,10 @@ class VacancyDiffusion:
             num_images: Number of interpolated images for NEB
             neb_method: Method to use for NEB calculation (dyneb or neb)
             climb: Whether to use climbing image for NEB (default: True)
+            relax_fmax: Force tolerance for endpoint relaxation before NEB
+            relax_steps: Maximum steps for endpoint relaxation before NEB
+            neb_fmax: Force tolerance for NEB calculation
+            neb_steps: Maximum steps for NEB calculation
             save_xyz: Save initial and final xyz files
             output_dir: Directory to save xyz files
             
@@ -632,15 +643,20 @@ class VacancyDiffusion:
         try:
             # Create and relax endpoints
             start_atoms, end_atoms, endpoint_metadata = self.create_endpoints(
-                vacancy_index, target_index, **self.neb_params.get('relax_params', {})
+                vacancy_index, target_index, 
+                relax_fmax=relax_fmax, 
+                relax_steps=relax_steps
             )
             
             # Update metadata with any additional info from endpoints
             metadata.update(endpoint_metadata)
             
             # Calculate endpoint energies and remove calculators
-            start_atoms.calc = self.calculator
-            end_atoms.calc = self.calculator
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            use_cueq = device == "cuda"
+
+            start_atoms.calc = MACECalculator(model_paths=[self.model_path], device=device, default_dtype="float32", use_cueq=use_cueq)
+            end_atoms.calc = MACECalculator(model_paths=[self.model_path], device=device, default_dtype="float32", use_cueq=use_cueq)
             start_energy = start_atoms.get_potential_energy()
             end_energy = end_atoms.get_potential_energy()
             start_atoms.calc = None
@@ -670,14 +686,15 @@ class VacancyDiffusion:
             neb_calc = NEBCalculation(
                 start_atoms=start_atoms,
                 end_atoms=end_atoms,
-                model_path=self.neb_params.get('model_path', []),
+                model_path=self.model_path,
                 start_energy=start_energy,
                 end_energy=end_energy,
                 n_images=num_images,
                 method=NEBMethod.DYNAMIC if neb_method == "dyneb" else NEBMethod.REGULAR,
                 climbing=climb,
                 seed=self.seed,
-                **self.neb_params.get('neb_params', {})
+                fmax=neb_fmax,
+                steps=neb_steps
             )
             result = neb_calc.run()
             
@@ -723,6 +740,10 @@ class VacancyDiffusion:
         num_images: int = 5,
         neb_method: str = "dyneb",
         climb: bool = True,
+        relax_fmax: float = 0.01,
+        relax_steps: int = 100,
+        neb_fmax: float = 0.01,
+        neb_steps: int = 200,
         save_xyz: bool = False,
         output_dir: Optional[Path] = None,
         rng_seed: Optional[int] = None
@@ -737,6 +758,10 @@ class VacancyDiffusion:
             num_images: Number of interpolated images for NEB
             neb_method: Method to use for NEB calculation (dyneb or neb)
             climb: Whether to use climbing image for NEB (default: True)
+            relax_fmax: Force tolerance for endpoint relaxation before NEB
+            relax_steps: Maximum steps for endpoint relaxation before NEB
+            neb_fmax: Force tolerance for NEB calculation
+            neb_steps: Maximum steps for NEB calculation
             save_xyz: Save xyz files for each calculation
             output_dir: Directory to save xyz files
             rng_seed: Random seed for neighbor sampling
@@ -747,41 +772,85 @@ class VacancyDiffusion:
         # Use class seed if no specific seed provided
         seed_to_use = rng_seed if rng_seed is not None else self.seed
         
-        # Generate vacancy-target pairs
-        pairs = self.sample_neighbors(
+        # Generate vacancy-target pairs with structured format
+        neighbor_samples = self.sample_neighbors(
             vacancy_indices=vacancy_indices,
             n_nearest=n_nearest,
             n_next_nearest=n_next_nearest,
             rng_seed=seed_to_use
         )
         
-        total_calcs = len(pairs)
+        # Count total calculations
+        total_calcs = sum(len(sample['nn']) + len(sample['nnn']) for sample in neighbor_samples)
         results = []
         progress_step = max(1, total_calcs // 10)  # Report every 10%
         
         print(f"Starting {total_calcs} NEB calculations...")
+        calc_count = 0
         
-        for i, (vac_idx, target_idx) in enumerate(pairs, 1):
-            result = self.run_single(
-                vacancy_index=vac_idx,
-                target_index=target_idx,
-                num_images=num_images,
-                neb_method=neb_method,
-                climb=climb,
-                save_xyz=save_xyz,
-                output_dir=output_dir
-            )
-            results.append(result)
+        # Process each vacancy and its neighbors
+        for sample in neighbor_samples:
+            vac_idx = sample['vacancy_index']
             
-            # Report progress every 10%
-            if i % progress_step == 0:
-                print(f"Progress: {i}/{total_calcs} calculations completed")
+            # Process nearest neighbors
+            for target_idx in sample['nn']:
+                result = self.run_single(
+                    vacancy_index=vac_idx,
+                    target_index=target_idx,
+                    num_images=num_images,
+                    neb_method=neb_method,
+                    climb=climb,
+                    relax_fmax=relax_fmax,
+                    relax_steps=relax_steps,
+                    neb_fmax=neb_fmax,
+                    neb_steps=neb_steps,
+                    save_xyz=save_xyz,
+                    output_dir=output_dir
+                )
+                # Mark as nearest neighbor
+                result["is_nearest_neighbor"] = True
+                results.append(result)
+                
+                calc_count += 1
+                # Report progress every 10%
+                if calc_count % progress_step == 0:
+                    print(f"Progress: {calc_count}/{total_calcs} calculations completed")
+                
+                # Add to analyzer if successful
+                if result["success"]:
+                    self.analyzer.add_calculation(result)
+                else:
+                    print(f"Calculation failed for vacancy {vac_idx} to NN {target_idx}: {result['error']}")
             
-            # Add to analyzer if successful
-            if result["success"]:
-                self.analyzer.add_calculation(result)
-            else:
-                print(f"Calculation failed for vacancy {vac_idx} to {target_idx}: {result['error']}")
+            # Process next-nearest neighbors
+            for target_idx in sample['nnn']:
+                result = self.run_single(
+                    vacancy_index=vac_idx,
+                    target_index=target_idx,
+                    num_images=num_images,
+                    neb_method=neb_method,
+                    climb=climb,
+                    relax_fmax=relax_fmax,
+                    relax_steps=relax_steps,
+                    neb_fmax=neb_fmax,
+                    neb_steps=neb_steps,
+                    save_xyz=save_xyz,
+                    output_dir=output_dir
+                )
+                # Mark as next-nearest neighbor
+                result["is_nearest_neighbor"] = False
+                results.append(result)
+                
+                calc_count += 1
+                # Report progress every 10%
+                if calc_count % progress_step == 0:
+                    print(f"Progress: {calc_count}/{total_calcs} calculations completed")
+                
+                # Add to analyzer if successful
+                if result["success"]:
+                    self.analyzer.add_calculation(result)
+                else:
+                    print(f"Calculation failed for vacancy {vac_idx} to NNN {target_idx}: {result['error']}")
         
         print(f"Completed {total_calcs} calculations")
         return results

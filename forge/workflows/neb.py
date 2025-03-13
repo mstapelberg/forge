@@ -720,6 +720,9 @@ class VacancyDiffusion:
         vacancy_indices: List[int],
         n_nearest: int = 8,
         n_next_nearest: int = 6,
+        num_images: int = 5,
+        neb_method: str = "dyneb",
+        climb: bool = True,
         save_xyz: bool = False,
         output_dir: Optional[Path] = None,
         rng_seed: Optional[int] = None
@@ -731,6 +734,9 @@ class VacancyDiffusion:
             vacancy_indices: List of vacancy sites to test
             n_nearest: Number of nearest neighbors to sample per vacancy
             n_next_nearest: Number of next-nearest neighbors to sample per vacancy
+            num_images: Number of interpolated images for NEB
+            neb_method: Method to use for NEB calculation (dyneb or neb)
+            climb: Whether to use climbing image for NEB (default: True)
             save_xyz: Save xyz files for each calculation
             output_dir: Directory to save xyz files
             rng_seed: Random seed for neighbor sampling
@@ -759,6 +765,9 @@ class VacancyDiffusion:
             result = self.run_single(
                 vacancy_index=vac_idx,
                 target_index=target_idx,
+                num_images=num_images,
+                neb_method=neb_method,
+                climb=climb,
                 save_xyz=save_xyz,
                 output_dir=output_dir
             )

@@ -18,6 +18,8 @@ from collections import defaultdict
 import torch
 from mace.calculators.mace import MACECalculator
 from monty.json import MontyEncoder, MontyDecoder
+import warnings
+from forge.workflows.relax import relax
 
 class NEBMethod(Enum):
     """NEB calculation method."""
@@ -50,6 +52,7 @@ class NEBCalculation:
         seed: int = 42,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         use_cueq: bool = False,
+        logfile: Optional[str] = '-'  # Add logfile parameter
     ):
         """
         Initialize NEB calculation.
@@ -68,6 +71,7 @@ class NEBCalculation:
             seed: Random seed for reproducibility
             device: Device to run calculations on
             use_cueq: Whether to use CUEQ
+            logfile: File for logging output (None=no output, '-'=stdout)
         """
         self.start_atoms = start_atoms
         self.end_atoms = end_atoms
@@ -82,6 +86,7 @@ class NEBCalculation:
         self.seed = seed
         self.device = device
         self.use_cueq = use_cueq
+        self.logfile = logfile
         np.random.seed(self.seed)  # Set seed for reproducibility
 
     def _create_calculator(self) -> MACECalculator:
@@ -118,8 +123,8 @@ class NEBCalculation:
         for image in images[1:-1]:
             image.calc = self._create_calculator()
 
-        # Run optimization
-        opt = FIRE(neb)
+        # Run optimization with logfile control
+        opt = FIRE(neb, logfile=self.logfile)
         opt.run(fmax=self.fmax, steps=self.steps)
 
         # Get energies for intermediate images
@@ -272,7 +277,8 @@ class NEBAnalyzer:
         title: Optional[str] = None,
         show_stats: bool = True,  # Add mean/std to legend
         alpha: float = 0.5,
-        min_barrier: float = 0.0
+        min_barrier: float = 0.0,
+        max_barrier: float = 10.0  # Maximum barrier height to include in eV
     ):
         """
         Plot histograms of migration barriers for NN and NNN transitions.
@@ -287,6 +293,7 @@ class NEBAnalyzer:
             show_stats: Include mean/std in legend
             alpha: Transparency of histogram bars
             min_barrier: Minimum barrier height to include
+            max_barrier: Maximum barrier height to include (useful for filtering outliers)
         """
         nn_barriers, nnn_barriers = self._group_barriers()
         
@@ -294,8 +301,8 @@ class NEBAnalyzer:
         
         def plot_barriers(ax, barriers, title):
             for key, values in barriers.items():
-                # Filter out small/negative barriers
-                values = [v for v in values if v >= min_barrier]
+                # Filter out small/negative barriers and too large barriers
+                values = [v for v in values if min_barrier <= v <= max_barrier]
                 if not values:
                     continue
                 
@@ -326,7 +333,8 @@ class NEBAnalyzer:
             plt.savefig(save_path, bbox_inches='tight', dpi=300)
         else:
             plt.show()
-            
+    
+    
     def save_results(self, filepath: Path, composition: Optional[Dict[str, float]] = None):
         """
         Save calculation results and statistics to JSON using Monty serialization.
@@ -366,6 +374,125 @@ class NEBAnalyzer:
             analyzer.add_calculation(calc)
             
         return analyzer
+
+    def plot_barriers_by_element(
+        self,
+        save_path: Optional[Path] = None,
+        figsize: Tuple[int, int] = (12, 8),
+        title: str = "Energy Barriers by Element Type",
+        plot_type: str = "box",  # 'box' or 'bar'
+        min_barrier: float = 0.0,
+        max_barrier: float = 10.0,  # Maximum barrier height to include
+        neighbor_type: Optional[str] = None  # 'nn', 'nnn', or None for both
+    ):
+        """
+        Plot energy barriers grouped by element combinations.
+        
+        Args:
+            save_path: Path to save the plot
+            figsize: Figure size (width, height)
+            title: Plot title
+            plot_type: Type of plot ('box' or 'bar')
+            min_barrier: Minimum barrier height to include
+            max_barrier: Maximum barrier height to include (useful for filtering outliers)
+            neighbor_type: Type of neighbors to include ('nn', 'nnn', or None for both)
+        """
+        # Filter calculations based on criteria
+        if neighbor_type:
+            filtered_calcs = self.filter_calculations(
+                neighbor_type=neighbor_type,
+                min_barrier=min_barrier
+            )
+        else:
+            filtered_calcs = [c for c in self.calculations 
+                             if c.get("success") and c.get("barrier", 0) >= min_barrier]
+        
+        # Additional filter for max_barrier
+        filtered_calcs = [c for c in filtered_calcs if c.get("barrier", 0) <= max_barrier]
+        
+        # Group by element combination
+        element_barriers = defaultdict(list)
+        for calc in filtered_calcs:
+            key = f"{calc['vacancy_element']}→{calc['target_element']}"
+            element_barriers[key].append(calc["barrier"])
+        
+        # Sort by mean barrier height
+        sorted_elements = sorted(
+            element_barriers.keys(),
+            key=lambda k: np.mean(element_barriers[k])
+        )
+        
+        # Prepare data for plotting
+        data = [element_barriers[key] for key in sorted_elements]
+        
+        # Create plot
+        plt.figure(figsize=figsize)
+        
+        if plot_type == 'box':
+            # Box plot
+            box = plt.boxplot(
+                data, 
+                labels=sorted_elements,
+                patch_artist=True,
+                showfliers=True,  # Show outliers
+                medianprops={'color': 'black'}
+            )
+            
+            # Add some color
+            colors = plt.cm.tab10.colors
+            for i, patch in enumerate(box['boxes']):
+                patch.set_facecolor(colors[i % len(colors)])
+            
+        else:
+            # Bar plot with error bars
+            means = [np.mean(barriers) for barriers in data]
+            stds = [np.std(barriers) for barriers in data]
+            x = np.arange(len(sorted_elements))
+            
+            plt.bar(
+                x, means, 
+                yerr=stds, 
+                capsize=5, 
+                color=plt.cm.tab10.colors[:len(means)],
+                alpha=0.7
+            )
+            plt.xticks(x, sorted_elements)
+        
+        # Add labels and title
+        plt.ylabel('Energy Barrier (eV)')
+        plt.xlabel('Element Transition')
+        
+        # Add subtitle with neighbor type info
+        subtitle = ""
+        if neighbor_type == "nn":
+            subtitle = "Nearest Neighbor Transitions"
+        elif neighbor_type == "nnn":
+            subtitle = "Next-Nearest Neighbor Transitions"
+        else:
+            subtitle = "All Transitions"
+        
+        plt.title(f"{title}\n{subtitle}")
+        
+        # Add count annotations
+        for i, key in enumerate(sorted_elements):
+            count = len(element_barriers[key])
+            mean = np.mean(element_barriers[key])
+            plt.annotate(
+                f"n={count}\nμ={mean:.2f}eV", 
+                xy=(i, 0), 
+                xytext=(0, 10),
+                textcoords="offset points",
+                ha='center', 
+                va='bottom'
+            )
+        
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        else:
+            plt.show()
 
 @dataclass
 class NeighborInfo:
@@ -486,7 +613,8 @@ class VacancyDiffusion:
         vacancy_index: int,
         target_index: int,
         relax_fmax: float = 0.01,
-        relax_steps: int = 100
+        relax_steps: int = 100,
+        verbose: int = 1  # Add verbose parameter
     ) -> Tuple[Atoms, Atoms, Dict[str, str]]:
         """
         Create and relax start and end configurations.
@@ -496,10 +624,15 @@ class VacancyDiffusion:
             target_index: Index of atom to move to vacancy site
             relax_fmax: Force tolerance for endpoint relaxation
             relax_steps: Maximum steps for endpoint relaxation
+            verbose: Verbosity level (0=silent, 1=basic info, 2=detailed)
             
         Returns:
             Tuple of (start_atoms, end_atoms, metadata)
         """
+        # Suppress torch.load warnings
+        warnings.filterwarnings("ignore", category=FutureWarning, 
+                               message=".*You are using `torch.load` with `weights_only=False`.*")
+        
         # Get element information before modifications
         vacancy_element = self.atoms[vacancy_index].symbol
         target_element = self.atoms[target_index].symbol
@@ -518,14 +651,32 @@ class VacancyDiffusion:
         start_atoms.pop(vacancy_index)
         end_atoms.pop(vacancy_index)
         
-        # Relax configurations
+        # Configure logfile based on verbosity
+        logfile = None if verbose == 0 else '-'
+        
+        # Relax configurations using the relax module
         device = "cuda" if torch.cuda.is_available() else "cpu"
         use_cueq = device == "cuda"
         
         for atoms in (start_atoms, end_atoms):
-            atoms.calc = MACECalculator(model_paths=[self.model_path], device=device, default_dtype="float32", use_cueq=use_cueq)
-            opt = FIRE(atoms)
-            opt.run(fmax=relax_fmax, steps=relax_steps)
+            calculator = MACECalculator(
+                model_paths=self.model_path if hasattr(self, 'model_path') else [self.model_path], 
+                device=device, 
+                default_dtype="float32", 
+                use_cueq=use_cueq
+            )
+            
+            # Use the relax module instead of direct optimization
+            atoms = relax(
+                atoms=atoms,
+                calculator=calculator,
+                relax_cell=False,  # Keep cell fixed
+                fmax=relax_fmax,
+                steps=relax_steps,
+                optimizer="FIRE",
+                logfile=logfile,
+                verbose=verbose
+            )
         
         metadata = {
             "vacancy_element": vacancy_element,
@@ -599,7 +750,8 @@ class VacancyDiffusion:
         neb_fmax: float = 0.01,
         neb_steps: int = 200,
         save_xyz: bool = False,
-        output_dir: Optional[Path] = None
+        output_dir: Optional[Path] = None,
+        verbose: int = 1  # Add verbose parameter
     ) -> Dict:
         """
         Run single NEB calculation between specified sites.
@@ -616,10 +768,34 @@ class VacancyDiffusion:
             neb_steps: Maximum steps for NEB calculation
             save_xyz: Save initial and final xyz files
             output_dir: Directory to save xyz files
+            verbose: Verbosity level (0=silent, 1=basic info, 2=detailed)
             
         Returns:
             Dictionary containing calculation results and metadata
         """
+        # Suppress torch.load warnings
+        warnings.filterwarnings("ignore", category=FutureWarning, 
+                               message=".*You are using `torch.load` with `weights_only=False`.*")
+        
+        # Convert indices to integers if they're not already
+        try:
+            vacancy_index = int(vacancy_index)
+            target_index = int(target_index)
+        except (TypeError, ValueError):
+            # Handle case where target_index might be a list with a single element
+            if isinstance(target_index, list) and len(target_index) == 1:
+                target_index = int(target_index[0])
+            else:
+                error_msg = f"Invalid indices: vacancy_index={vacancy_index}, target_index={target_index}"
+                if verbose > 0:
+                    print(f"Error: {error_msg}")
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "vacancy_index": str(vacancy_index),
+                    "target_index": str(target_index)
+                }
+        
         # Initialize metadata outside try block
         metadata = {
             "vacancy_element": self.atoms[vacancy_index].symbol,
@@ -641,11 +817,12 @@ class VacancyDiffusion:
             output_dir.mkdir(parents=True, exist_ok=True)
         
         try:
-            # Create and relax endpoints
+            # Create and relax endpoints - pass verbose parameter
             start_atoms, end_atoms, endpoint_metadata = self.create_endpoints(
                 vacancy_index, target_index, 
                 relax_fmax=relax_fmax, 
-                relax_steps=relax_steps
+                relax_steps=relax_steps,
+                verbose=verbose  # Pass verbose parameter
             )
             
             # Update metadata with any additional info from endpoints
@@ -682,7 +859,10 @@ class VacancyDiffusion:
                 neb.interpolate(mic=True)
                 write(output_dir / f"{base_name}_initial.xyz", images)
             
-            # Run NEB with seed
+            # Set up logfile based on verbosity
+            logfile = None if verbose == 0 else '-'
+            
+            # Create and run NEB calculation with verbosity control
             neb_calc = NEBCalculation(
                 start_atoms=start_atoms,
                 end_atoms=end_atoms,
@@ -690,11 +870,13 @@ class VacancyDiffusion:
                 start_energy=start_energy,
                 end_energy=end_energy,
                 n_images=num_images,
-                method=NEBMethod.DYNAMIC if neb_method == "dyneb" else NEBMethod.REGULAR,
+                method=NEBMethod(neb_method),
                 climbing=climb,
-                seed=self.seed,
                 fmax=neb_fmax,
-                steps=neb_steps
+                steps=neb_steps,
+                seed=self.seed,
+                device=device,
+                logfile=logfile  # Pass logfile parameter
             )
             result = neb_calc.run()
             
@@ -713,6 +895,8 @@ class VacancyDiffusion:
             return output
             
         except Exception as e:
+            if verbose > 0:
+                print(f"Error in NEB calculation: {e}")
             output = {
                 **metadata,
                 "success": False,
@@ -734,9 +918,7 @@ class VacancyDiffusion:
 
     def run_multiple(
         self,
-        vacancy_indices: List[int],
-        n_nearest: int = 8,
-        n_next_nearest: int = 6,
+        vacancy_indices: Optional[List[int]] = None,
         num_images: int = 5,
         neb_method: str = "dyneb",
         climb: bool = True,
@@ -746,15 +928,16 @@ class VacancyDiffusion:
         neb_steps: int = 200,
         save_xyz: bool = False,
         output_dir: Optional[Path] = None,
-        rng_seed: Optional[int] = None
+        n_nearest: int = 3,
+        n_next_nearest: int = 3,
+        rng_seed: Optional[int] = None,
+        verbose: int = 1  # Add verbose parameter
     ) -> List[Dict]:
         """
-        Run multiple NEB calculations.
+        Run multiple NEB calculations for vacancy diffusion.
         
         Args:
             vacancy_indices: List of vacancy sites to test
-            n_nearest: Number of nearest neighbors to sample per vacancy
-            n_next_nearest: Number of next-nearest neighbors to sample per vacancy
             num_images: Number of interpolated images for NEB
             neb_method: Method to use for NEB calculation (dyneb or neb)
             climb: Whether to use climbing image for NEB (default: True)
@@ -764,17 +947,24 @@ class VacancyDiffusion:
             neb_steps: Maximum steps for NEB calculation
             save_xyz: Save xyz files for each calculation
             output_dir: Directory to save xyz files
+            n_nearest: Number of nearest neighbors to sample per vacancy
+            n_next_nearest: Number of next-nearest neighbors to sample per vacancy
             rng_seed: Random seed for neighbor sampling
+            verbose: Verbosity level (0=silent, 1=basic info, 2=detailed)
             
         Returns:
-            List of calculation results
+            List of dictionaries containing calculation results
         """
+        # Suppress torch.load warnings
+        warnings.filterwarnings("ignore", category=FutureWarning, 
+                               message=".*You are using `torch.load` with `weights_only=False`.*")
+        
         # Use class seed if no specific seed provided
         seed_to_use = rng_seed if rng_seed is not None else self.seed
         
         # Generate vacancy-target pairs with structured format
         neighbor_samples = self.sample_neighbors(
-            vacancy_indices=vacancy_indices,
+            vacancy_indices=vacancy_indices if vacancy_indices else [i for i in range(len(self.atoms))],
             n_nearest=n_nearest,
             n_next_nearest=n_next_nearest,
             rng_seed=seed_to_use
@@ -789,14 +979,17 @@ class VacancyDiffusion:
         calc_count = 0
         
         # Process each vacancy and its neighbors
-        for sample in neighbor_samples:
+        for i, sample in enumerate(neighbor_samples):
             vac_idx = sample['vacancy_index']
             
             # Process nearest neighbors
-            for target_idx in sample['nn']:
+            for nn_idx in sample['nn']:
+                if verbose > 0:
+                    print(f"Running NEB {i+1}/{len(neighbor_samples)} - NN: vacancy at {vac_idx}, target at {nn_idx}")
+                
                 result = self.run_single(
                     vacancy_index=vac_idx,
-                    target_index=target_idx,
+                    target_index=nn_idx,
                     num_images=num_images,
                     neb_method=neb_method,
                     climb=climb,
@@ -805,10 +998,10 @@ class VacancyDiffusion:
                     neb_fmax=neb_fmax,
                     neb_steps=neb_steps,
                     save_xyz=save_xyz,
-                    output_dir=output_dir
+                    output_dir=output_dir,
+                    verbose=verbose  # Pass verbose parameter
                 )
-                # Mark as nearest neighbor
-                result["is_nearest_neighbor"] = True
+                result['is_nearest_neighbor'] = True
                 results.append(result)
                 
                 calc_count += 1
@@ -820,13 +1013,16 @@ class VacancyDiffusion:
                 if result["success"]:
                     self.analyzer.add_calculation(result)
                 else:
-                    print(f"Calculation failed for vacancy {vac_idx} to NN {target_idx}: {result['error']}")
+                    print(f"Calculation failed for vacancy {vac_idx} to NN {nn_idx}: {result['error']}")
             
             # Process next-nearest neighbors
-            for target_idx in sample['nnn']:
+            for nnn_idx in sample['nnn']:
+                if verbose > 0:
+                    print(f"Running NEB {i+1}/{len(neighbor_samples)} - NNN: vacancy at {vac_idx}, target at {nnn_idx}")
+                
                 result = self.run_single(
                     vacancy_index=vac_idx,
-                    target_index=target_idx,
+                    target_index=nnn_idx,
                     num_images=num_images,
                     neb_method=neb_method,
                     climb=climb,
@@ -835,10 +1031,10 @@ class VacancyDiffusion:
                     neb_fmax=neb_fmax,
                     neb_steps=neb_steps,
                     save_xyz=save_xyz,
-                    output_dir=output_dir
+                    output_dir=output_dir,
+                    verbose=verbose  # Pass verbose parameter
                 )
-                # Mark as next-nearest neighbor
-                result["is_nearest_neighbor"] = False
+                result['is_nearest_neighbor'] = False
                 results.append(result)
                 
                 calc_count += 1
@@ -850,7 +1046,7 @@ class VacancyDiffusion:
                 if result["success"]:
                     self.analyzer.add_calculation(result)
                 else:
-                    print(f"Calculation failed for vacancy {vac_idx} to NNN {target_idx}: {result['error']}")
+                    print(f"Calculation failed for vacancy {vac_idx} to NNN {nnn_idx}: {result['error']}")
         
         print(f"Completed {total_calcs} calculations")
         return results

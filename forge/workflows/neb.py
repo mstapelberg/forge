@@ -658,26 +658,42 @@ class VacancyDiffusion:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         use_cueq = device == "cuda"
         
-        for atoms in (start_atoms, end_atoms):
-            calculator = MACECalculator(
-                model_paths=self.model_path if hasattr(self, 'model_path') else [self.model_path], 
-                device=device, 
-                default_dtype="float32", 
-                use_cueq=use_cueq
-            )
+        start_calculator = MACECalculator(
+            model_paths=self.model_path if hasattr(self, 'model_path') else [self.model_path], 
+            device=device, 
+            default_dtype="float32", 
+            use_cueq=use_cueq
+        )
+
+        end_calculator = MACECalculator(
+            model_paths=self.model_path if hasattr(self, 'model_path') else [self.model_path], 
+            device=device, 
+            default_dtype="float32", 
+            use_cueq=use_cueq
+        )
+
+        rel_start_atoms = relax(
+            atoms=start_atoms,
+            calculator=start_calculator,
+            relax_cell=False,  # Keep cell fixed
+            fmax=relax_fmax,
+            steps=relax_steps,
+            optimizer="FIRE",
+            logfile=logfile,
+            verbose=verbose
+        )
+
+        rel_end_atoms = relax(
+            atoms=end_atoms,
+            calculator=end_calculator,
+            relax_cell=False,  # Keep cell fixed
+            fmax=relax_fmax,
+            steps=relax_steps,
+            optimizer="FIRE",
+            logfile=logfile,
+            verbose=verbose
+        )
             
-            # Use the relax module instead of direct optimization
-            atoms = relax(
-                atoms=atoms,
-                calculator=calculator,
-                relax_cell=False,  # Keep cell fixed
-                fmax=relax_fmax,
-                steps=relax_steps,
-                optimizer="FIRE",
-                logfile=logfile,
-                verbose=verbose
-            )
-        
         metadata = {
             "vacancy_element": vacancy_element,
             "target_element": target_element,
@@ -685,7 +701,7 @@ class VacancyDiffusion:
             "target_index": str(target_index)
         }
         
-        return start_atoms, end_atoms, metadata
+        return rel_start_atoms, rel_end_atoms, metadata
 
     def sample_neighbors(
         self,
@@ -824,20 +840,12 @@ class VacancyDiffusion:
                 relax_steps=relax_steps,
                 verbose=verbose  # Pass verbose parameter
             )
-            
+
             # Update metadata with any additional info from endpoints
             metadata.update(endpoint_metadata)
             
-            # Calculate endpoint energies and remove calculators
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            use_cueq = device == "cuda"
-
-            start_atoms.calc = MACECalculator(model_paths=[self.model_path], device=device, default_dtype="float32", use_cueq=use_cueq)
-            end_atoms.calc = MACECalculator(model_paths=[self.model_path], device=device, default_dtype="float32", use_cueq=use_cueq)
             start_energy = start_atoms.get_potential_energy()
             end_energy = end_atoms.get_potential_energy()
-            start_atoms.calc = None
-            end_atoms.calc = None
             
             # Save initial configuration if requested
             if save_xyz and output_dir:
@@ -861,6 +869,9 @@ class VacancyDiffusion:
             
             # Set up logfile based on verbosity
             logfile = None if verbose == 0 else '-'
+            
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            use_cueq = device == "cuda"
             
             # Create and run NEB calculation with verbosity control
             neb_calc = NEBCalculation(

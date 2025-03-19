@@ -153,6 +153,7 @@ def _log_status(system, verbose):
     
     logger.info(f"Energy: {energy:.6f} eV, Max force: {fmax:.6f} eV/Å")
     
+    """
     if verbose >= 2:
         # Log more detailed information
         if hasattr(system, 'atoms'):  # FrechetCellFilter case
@@ -163,3 +164,4 @@ def _log_status(system, verbose):
         logger.debug("Forces (eV/Å):")
         for i, force in enumerate(forces):
             logger.debug(f"  Atom {i}: {force[0]:.6f} {force[1]:.6f} {force[2]:.6f}")
+    """

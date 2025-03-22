@@ -417,3 +417,118 @@ def test_invalid_methods():
     
     with pytest.raises(ValueError):
         analyzer.analyze_compositions([], cluster_method='INVALID')
+
+def test_reduce_and_cluster(random_compositions):
+    """Test reduce_and_cluster functionality."""
+    analyzer = CompositionAnalyzer(n_components=2, random_state=123)
+    embeddings, clusters, metadata = analyzer.reduce_and_cluster(
+        random_compositions,
+        n_clusters=4,
+        dim_method='PCA',
+        cluster_method='KMEANS',
+        comp_type="existing"
+    )
+    assert embeddings.shape == (len(random_compositions), 2)
+    assert len(clusters) == len(random_compositions)
+    assert len(metadata) == len(random_compositions)
+    for i, meta in enumerate(metadata):
+        assert "comp_id" in meta
+        assert "composition" in meta
+        assert "embedding" in meta
+        assert "cluster" in meta
+        # Check that metadata matches the computed embeddings and clusters
+        np.testing.assert_array_almost_equal(meta["embedding"], embeddings[i])
+        assert meta["cluster"] == clusters[i]
+
+def test_detect_outliers():
+    """Test detect_outliers functionality using synthetic data."""
+    analyzer = CompositionAnalyzer(n_components=2, random_state=123)
+    # Create synthetic embeddings: 10 normal points and 1 outlier point
+    np.random.seed(123)
+    normal_points = np.random.normal(0, 0.1, (10, 2))
+    outlier_point = np.array([[10, 10]])
+    embeddings = np.vstack([normal_points, outlier_point])
+    # Create simple dummy metadata for each point
+    metadata = [{"composition": {"dummy": 1.0}, "lof_score": None, "is_outlier": False} for _ in range(len(embeddings))]
+    
+    updated_meta = analyzer.detect_outliers(embeddings, metadata, contamination=0.1, n_neighbors=2, use_lof=True)
+    # Expect at least one outlier to be flagged (the obvious far away point)
+    n_outliers = sum(meta["is_outlier"] for meta in updated_meta)
+    assert n_outliers >= 1, "At least one outlier should be detected"
+    # Check that LOF scores were assigned
+    for meta in updated_meta:
+        assert meta["lof_score"] is not None
+
+def test_visualize_compositions(tmp_path, random_compositions):
+    """Test visualize_compositions in 2D mode by saving a plot to a temporary file."""
+    analyzer = CompositionAnalyzer(n_components=2, random_state=123)
+    embeddings, clusters, metadata = analyzer.reduce_and_cluster(random_compositions, n_clusters=3)
+    save_file = tmp_path / "test_plot.png"
+    analyzer.visualize_compositions(embeddings, metadata, outlier_option='include', save_path=str(save_file))
+    assert save_file.exists(), "2D visualization file not created"
+
+def test_visualize_compositions_3d(tmp_path, random_compositions):
+    """Test visualize_compositions in 3D mode by saving a plot to a temporary file."""
+    analyzer = CompositionAnalyzer(n_components=3, random_state=123, dim_method='PCA')
+    embeddings, clusters, metadata = analyzer.reduce_and_cluster(random_compositions, n_clusters=3)
+    save_file = tmp_path / "test_plot.html"
+    analyzer.visualize_compositions(embeddings, metadata, outlier_option='include', save_path=str(save_file))
+    assert save_file.exists(), "3D visualization file not created"
+
+def test_suggest_new_compositions_no_metadata(random_compositions):
+    """Test suggest_new_compositions without providing metadata."""
+    analyzer = CompositionAnalyzer(n_components=2, random_state=123)
+    new_comps = analyzer.suggest_new_compositions(random_compositions, n_suggestions=5)
+    assert len(new_comps) == 5
+    original_keys = set(random_compositions[0].keys())
+    for comp in new_comps:
+        assert set(comp.keys()) == original_keys
+
+def test_suggest_new_compositions_with_metadata(random_compositions):
+    """Test suggest_new_compositions with metadata provided (using only inliers)."""
+    analyzer = CompositionAnalyzer(n_components=2, random_state=123)
+    _, _, metadata = analyzer.reduce_and_cluster(random_compositions, n_clusters=3)
+    new_comps = analyzer.suggest_new_compositions(random_compositions, n_suggestions=5, metadata=metadata)
+    assert len(new_comps) == 5
+    original_keys = set(random_compositions[0].keys())
+    for comp in new_comps:
+        assert set(comp.keys()) == original_keys
+
+def test_quantify_uncertainty():
+    """Test that quantify_uncertainty returns a list of zeros."""
+    analyzer = CompositionAnalyzer(n_components=2, random_state=123)
+    # Create dummy Atoms objects for testing
+    atoms_list = [Atoms("H2O"), Atoms("CO2"), Atoms("NaCl")]
+    uncertainties = analyzer.quantify_uncertainty(model_paths=["dummy_model"], structures=atoms_list)
+    assert len(uncertainties) == len(atoms_list)
+    assert all(u == 0.0 for u in uncertainties)
+
+def test_create_random_alloy():
+    """Test the creation of a random alloy structure."""
+    analyzer = CompositionAnalyzer()
+    comp = {'A': 0.3, 'B': 0.3, 'C': 0.4}
+    alloy = analyzer.create_random_alloy(comp, crystal_type='fcc', dimensions=[2,2,2], lattice_constant=3.5, balance_element='A')
+    # Ensure that number of sites equals the number of symbols and that only allowed elements are present
+    assert len(alloy) == len(alloy.symbols)
+    for sym in alloy.symbols:
+        assert sym in comp.keys()
+
+def test_find_diverse_compositions(random_compositions):
+    """Test the find_diverse_compositions method."""
+    analyzer = CompositionAnalyzer(n_components=2, random_state=123)
+    embeddings, _, _ = analyzer.reduce_and_cluster(random_compositions, n_clusters=3)
+    diverse_indices_maximin = analyzer.find_diverse_compositions(embeddings, random_compositions, n_select=5, method='maximin')
+    assert len(diverse_indices_maximin) == 5
+    diverse_indices_maxsum = analyzer.find_diverse_compositions(embeddings, random_compositions, n_select=5, method='maxsum')
+    assert len(diverse_indices_maxsum) == 5
+
+def test_plot_with_diverse_points(random_compositions):
+    """Test that plot_with_diverse_points returns a valid diverse indices array and a plotly figure."""
+    analyzer = CompositionAnalyzer(n_components=3, random_state=123)
+    embeddings, clusters, _ = analyzer.reduce_and_cluster(random_compositions, n_clusters=3)
+    new_comps = analyzer.suggest_new_compositions(random_compositions, n_suggestions=10)
+    new_embeddings, _ = analyzer.analyze_compositions(new_comps, n_clusters=3)
+    diverse_indices, fig = analyzer.plot_with_diverse_points(embeddings, clusters, new_embeddings, new_comps, n_diverse=5, method='maximin')
+    assert len(diverse_indices) == 5
+    import plotly.graph_objects as go
+    assert isinstance(fig, go.Figure)

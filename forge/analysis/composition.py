@@ -18,48 +18,27 @@ except ImportError:
     HAS_UMAP = False
     print("UMAP not installed. Please install umap-learn to use it, using t-SNE instead")
 
+from sklearn.neighbors import LocalOutlierFactor  # for outlier detection
 
 class CompositionAnalyzer:
     def __init__(self, n_components: int = 2, random_state: int = 42, 
                  dim_method: str = 't-SNE', cluster_method: str = 'KMeans'):
         """
         Initialize the CompositionAnalyzer for analyzing chemical composition spaces.
-
-        This class provides tools for dimensionality reduction and clustering of chemical
-        compositions, supporting multiple methods for both tasks. It can visualize the
-        reduced composition space and identify clusters of similar compositions.
-
-        Args:
-            n_components (int, optional): Number of dimensions for reduced space. 
-                Typically 2 or 3 for visualization. Defaults to 2.
-            random_state (int, optional): Seed for reproducible results. Defaults to 42.
-            dim_method (str, optional): Dimensionality reduction method to use. Options:
-                - 't-SNE': t-Distributed Stochastic Neighbor Embedding (preserves local structure)
-                - 'PCA': Principal Component Analysis (preserves global variance)
-                - 'MDS': Multidimensional Scaling (preserves distances)
-                - 'UMAP': Uniform Manifold Approximation and Projection (if installed)
-                Defaults to 't-SNE'.
-            cluster_method (str, optional): Clustering algorithm to use. Options:
-                - 'KMeans': K-means clustering (assumes spherical clusters)
-                - 'AGGLOMERATIVE': Hierarchical clustering
-                - 'SPECTRAL': Spectral clustering (good for non-spherical clusters)
-                - 'DBSCAN': Density-based clustering (handles noise, variable density)
-                Defaults to 'KMeans'.
         """
         self.n_components = n_components
         self.random_state = random_state
-        self.dim_method = dim_method.upper()  # Store in uppercase for case-insensitive comparison
+        self.dim_method = dim_method.upper()  # Normalize to uppercase
         self.cluster_method = cluster_method.upper()
         
         # Initialize methods
         self.reducer = self.initialize_reducer()
-        self.clusterer = self.initialize_cluster_method()  # Renamed from kmeans for clarity
+        self.clusterer = self.initialize_cluster_method()
 
     def initialize_reducer(self):
         """Initialize dimensionality reduction method based on self.dim_method."""
-        method = self.dim_method.upper()  # Normalize case
-        
-        if method in ['T-SNE', 'TSNE']:  # Allow both forms
+        method = self.dim_method.upper()
+        if method in ['T-SNE', 'TSNE']:
             return TSNE(n_components=self.n_components, random_state=self.random_state)
         elif method == 'PCA':
             return PCA(n_components=self.n_components, random_state=self.random_state)
@@ -72,8 +51,7 @@ class CompositionAnalyzer:
                 return TSNE(n_components=self.n_components, random_state=self.random_state)
             return umap.UMAP(n_components=self.n_components, random_state=self.random_state)
         else:
-            raise ValueError(f"Unsupported dimensionality reduction method: {self.dim_method}. "
-                           f"Supported methods are: 't-SNE', 'PCA', 'MDS', 'UMAP'")
+            raise ValueError(f"Unsupported dimensionality reduction method: {self.dim_method}. Supported methods are: 't-SNE', 'PCA', 'MDS', 'UMAP'")
 
     def initialize_cluster_method(self):
         """Initialize clustering method based on self.cluster_method."""
@@ -98,13 +76,6 @@ class CompositionAnalyzer:
                        save_path: Optional[str] = None):
         """
         Compare different dimensionality reduction and clustering methods.
-        
-        Args:
-            compositions: List of composition dictionaries
-            dim_methods: List of dimensionality reduction methods to try
-            cluster_methods: List of clustering methods to try
-            n_clusters: Number of clusters for applicable methods
-            save_path: Path to save comparison plot
         """
         if dim_methods is None:
             dim_methods = ['T-SNE', 'PCA', 'MDS']
@@ -114,72 +85,49 @@ class CompositionAnalyzer:
         if cluster_methods is None:
             cluster_methods = ['KMEANS', 'AGGLOMERATIVE', 'DBSCAN', 'SPECTRAL']
 
-        # Convert compositions to array once
         comp_array = self._compositions_to_array(compositions)
-        
-        # Setup subplot grid
         n_rows = len(dim_methods)
         n_cols = len(cluster_methods)
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 5*n_rows))
-        
-        # Store scores for comparison
         scores = {}
         
         for i, dim_method in enumerate(dim_methods):
-            # Initialize and fit reducer
             self.dim_method = dim_method
             reducer = self.initialize_reducer()
             embeddings = reducer.fit_transform(comp_array)
             
             for j, clust_method in enumerate(cluster_methods):
-                # Initialize and fit clusterer
                 self.cluster_method = clust_method
                 clusterer = self.initialize_cluster_method()
-                
-                # Set n_clusters if applicable
                 if hasattr(clusterer, 'n_clusters'):
                     clusterer.n_clusters = n_clusters
-                
-                # Fit clusterer and get labels
                 clusters = clusterer.fit_predict(comp_array)
                 
-                # Calculate silhouette score if applicable
                 from sklearn.metrics import silhouette_score
                 try:
                     score = silhouette_score(comp_array, clusters)
                     scores[f"{dim_method}_{clust_method}"] = score
-                except:
+                except Exception:
                     scores[f"{dim_method}_{clust_method}"] = None
                 
-                # Plot results
                 ax = axes[i, j] if n_rows > 1 and n_cols > 1 else axes[j] if n_rows == 1 else axes[i]
-                scatter = ax.scatter(embeddings[:, 0], embeddings[:, 1], 
-                                   c=clusters, cmap='viridis')
-                ax.set_title(f"{dim_method} + {clust_method}\nScore: {scores[f'{dim_method}_{clust_method}']:.3f}"
-                            if scores[f"{dim_method}_{clust_method}"] is not None 
-                            else f"{dim_method} + {clust_method}")
+                scatter = ax.scatter(embeddings[:, 0], embeddings[:, 1], c=clusters, cmap='viridis')
+                score_text = f"Score: {scores[f'{dim_method}_{clust_method}']:.3f}" if scores[f"{dim_method}_{clust_method}"] is not None else ""
+                ax.set_title(f"{dim_method} + {clust_method}\n{score_text}")
                 
         plt.tight_layout()
         if save_path:
             plt.savefig(save_path)
         plt.close()
-        
         return scores
 
     def analyze_compositions(self, compositions: List[Dict[str, float]], 
-                            n_clusters: int = 5,
-                            dim_method: Optional[str] = None,
-                            cluster_method: Optional[str] = None):
+                             n_clusters: int = 5,
+                             dim_method: Optional[str] = None,
+                             cluster_method: Optional[str] = None):
         """
-        Analyze composition space using specified dimensionality reduction and clustering.
-        
-        Args:
-            compositions: List of composition dictionaries
-            n_clusters: Number of clusters (for applicable methods)
-            dim_method: Override current dimensionality reduction method
-            cluster_method: Override current clustering method
+        Legacy method: Analyze composition space using specified dimensionality reduction and clustering.
         """
-        # Set temporary methods if provided
         orig_dim = self.dim_method
         orig_clust = self.cluster_method
         
@@ -189,329 +137,743 @@ class CompositionAnalyzer:
             self.cluster_method = cluster_method.upper()
         
         try:
-            # Convert compositions to array
             comp_array = self._compositions_to_array(compositions)
-            
-            # Perform dimensionality reduction
             reducer = self.initialize_reducer()
             embeddings = reducer.fit_transform(comp_array)
             
-            # Perform clustering
             clusterer = self.initialize_cluster_method()
             if hasattr(clusterer, 'n_clusters'):
                 clusterer.n_clusters = n_clusters
             clusters = clusterer.fit_predict(comp_array)
             
             return embeddings, clusters
-        
         finally:
-            # Restore original methods
             self.dim_method = orig_dim
             self.cluster_method = orig_clust
 
     def _compositions_to_array(self, compositions: List[Dict[str, float]]) -> np.ndarray:
-        """Convert composition dictionaries to numpy array"""
+        """Convert composition dictionaries to numpy array."""
         elements = sorted(set().union(*compositions))
         return np.array([[comp.get(elem, 0.0) for elem in elements] for comp in compositions])
+    
+    def _create_metadata(self, compositions: List[Dict[str, float]], comp_type: str = 'existing') -> List[Dict]:
+        """
+        Create a metadata dictionary for each composition.
+        Each entry will have a unique comp_id, the composition dictionary, type, and placeholders for embedding, cluster, and outlier info.
+        """
+        metadata = []
+        for idx, comp in enumerate(compositions):
+            metadata.append({
+                "comp_id": idx,
+                "composition": comp,
+                "type": comp_type,
+                "embedding": None,
+                "cluster": None,
+                "lof_score": None,
+                "is_outlier": False
+            })
+        return metadata
 
-    def plot_analysis(self, embeddings: np.ndarray, clusters: np.ndarray, save_path: Optional[str] = None):
-        """Create visualization of composition analysis"""
-        plt.figure(figsize=(10, 8))
-        scatter = plt.scatter(embeddings[:, 0], embeddings[:, 1], c=clusters, cmap='viridis')
-        plt.colorbar(scatter, label='Cluster')
-        plt.xlabel('t-SNE 1')
-        plt.ylabel('t-SNE 2')
-        plt.title('Composition Space Analysis')
+    def reduce_and_cluster(self, compositions: List[Dict[str, float]], 
+                           n_clusters: int = 5, comp_type: str = 'existing',
+                           dim_method: Optional[str] = None, cluster_method: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray, List[Dict]]:
+        """
+        Perform dimensionality reduction and clustering while generating metadata for each composition.
+        
+        Returns:
+            embeddings: Reduced space coordinates.
+            clusters: Cluster labels.
+            metadata: List of dictionaries with composition metadata.
+        """
+        # Optionally override methods
+        orig_dim = self.dim_method
+        orig_clust = self.cluster_method
+        if dim_method:
+            self.dim_method = dim_method.upper()
+        if cluster_method:
+            self.cluster_method = cluster_method.upper()
+        
+        metadata = self._create_metadata(compositions, comp_type)
+        comp_array = self._compositions_to_array(compositions)
+        
+        # Dimensionality reduction
+        reducer = self.initialize_reducer()
+        embeddings = reducer.fit_transform(comp_array)
+        
+        # Clustering
+        clusterer = self.initialize_cluster_method()
+        if hasattr(clusterer, 'n_clusters'):
+            clusterer.n_clusters = n_clusters
+        clusters = clusterer.fit_predict(comp_array)
+        
+        # Update metadata with embedding and cluster information
+        for i, meta in enumerate(metadata):
+            meta["embedding"] = embeddings[i]
+            meta["cluster"] = clusters[i]
+        
+        # Restore original methods
+        self.dim_method = orig_dim
+        self.cluster_method = orig_clust
+        
+        return embeddings, clusters, metadata
 
-        if save_path:
-            plt.savefig(save_path)
-        plt.close()
+    def detect_outliers(self, embeddings: np.ndarray, metadata: List[Dict], 
+                        contamination: float = 0.05, n_neighbors: int = 5, use_lof: bool = True) -> List[Dict]:
+        """
+        Flag outliers using LocalOutlierFactor. Updates metadata entries with 'lof_score' and 'is_outlier'.
+        
+        Args:
+            embeddings: Reduced dimensionality embeddings.
+            metadata: Metadata list from reduce_and_cluster.
+            contamination: Proportion of expected outliers.
+            n_neighbors: Number of neighbors for LOF.
+            use_lof: Toggle LOF-based detection.
+        Returns:
+            Updated metadata.
+        """
+        if use_lof:
+            lof = LocalOutlierFactor(n_neighbors=n_neighbors, contamination=contamination)
+            # Note: fit_predict returns -1 for outliers and 1 for inliers
+            labels = lof.fit_predict(embeddings)
+            lof_scores = -lof.negative_outlier_factor_
+            for i, meta in enumerate(metadata):
+                meta["lof_score"] = lof_scores[i]
+                meta["is_outlier"] = (labels[i] == -1)
+        return metadata
+
+    def visualize_compositions(self, embeddings: np.ndarray, metadata: List[Dict],
+                               outlier_option: str = 'include',  # 'include', 'exclude', or 'only'
+                               save_path: Optional[str] = None):
+        """
+        Visualize the composition space with flexibility to include/exclude outliers.
+        
+        The visualization is 2D or 3D based on self.n_components.
+        
+        Args:
+            embeddings: Reduced dimensionality coordinates.
+            metadata: Metadata list with composition info.
+            outlier_option: How to handle outliers: 'include' (all), 'exclude' (omit outliers), or 'only' (only outliers).
+            save_path: Optional path to save the figure.
+        """
+        # Filter metadata indices based on outlier_option
+        indices = []
+        for i, meta in enumerate(metadata):
+            if outlier_option == 'exclude' and meta["is_outlier"]:
+                continue
+            if outlier_option == 'only' and not meta["is_outlier"]:
+                continue
+            indices.append(i)
+        
+        filtered_embeddings = embeddings[indices]
+        filtered_meta = [metadata[i] for i in indices]
+        
+        # Prepare arrays for plotting markers by type
+        existing = [meta for meta in filtered_meta if meta["type"] == 'existing']
+        new = [meta for meta in filtered_meta if meta["type"] == 'new']
+        
+        # Extract coordinates for plotting
+        def get_coords(meta_list):
+            return np.array([m["embedding"] for m in meta_list])
+        
+        existing_coords = get_coords(existing) if existing else np.empty((0, self.n_components))
+        new_coords = get_coords(new) if new else np.empty((0, self.n_components))
+        
+        if self.n_components == 3:
+            # 3D visualization using plotly
+            import plotly.graph_objects as go
+            fig = go.Figure()
+            
+            if existing_coords.size:
+                fig.add_trace(go.Scatter3d(
+                    x=existing_coords[:, 0],
+                    y=existing_coords[:, 1],
+                    z=existing_coords[:, 2],
+                    mode='markers',
+                    marker=dict(
+                        size=6,
+                        color='blue',
+                        opacity=0.7
+                    ),
+                    name='Existing'
+                ))
+            if new_coords.size:
+                fig.add_trace(go.Scatter3d(
+                    x=new_coords[:, 0],
+                    y=new_coords[:, 1],
+                    z=new_coords[:, 2],
+                    mode='markers',
+                    marker=dict(
+                        size=8,
+                        color='red',
+                        symbol='diamond'
+                    ),
+                    name='New'
+                ))
+            
+            fig.update_layout(
+                title=f'Composition Space ({self.dim_method})',
+                scene=dict(
+                    xaxis_title=f'{self.dim_method} 1',
+                    yaxis_title=f'{self.dim_method} 2',
+                    zaxis_title=f'{self.dim_method} 3'
+                ),
+                width=1000,
+                height=800
+            )
+            if save_path:
+                fig.write_html(save_path)
+            else:
+                fig.show()
+        else:
+            # 2D visualization using matplotlib
+            plt.figure(figsize=(10, 8))
+            if existing_coords.size:
+                plt.scatter(existing_coords[:, 0], existing_coords[:, 1], c='blue', label='Existing', alpha=0.7, s=50)
+            if new_coords.size:
+                plt.scatter(new_coords[:, 0], new_coords[:, 1], c='red', label='New', marker='D', s=70)
+            plt.xlabel(f'{self.dim_method} 1')
+            plt.ylabel(f'{self.dim_method} 2')
+            plt.title(f'Composition Space ({self.dim_method})')
+            plt.legend()
+            if save_path:
+                plt.savefig(save_path)
+            else:
+                plt.show()
 
     def suggest_new_compositions(self, compositions: List[Dict[str, float]], 
-                               n_suggestions: int = 10, 
-                               constraints: Optional[Dict[str, Tuple[float, float]]] = None) -> List[Dict[str, float]]:
+                                 n_suggestions: int = 10, 
+                                 constraints: Optional[Dict[str, Tuple[float, float]]] = None,
+                                 metadata: Optional[List[Dict]] = None,
+                                 seed: Optional[int] = None) -> List[Dict[str, float]]:
         """
         Suggest new compositions based on clustering analysis.
         
-        For methods without explicit cluster centers (like DBSCAN), uses centroids
-        of points in each cluster instead.
+        If metadata is provided, suggestions are generated only from inlier compositions.
         """
-        if self.clusterer is None:
-            raise ValueError("Must run analyze_compositions first")
+        if seed:
+            random.seed(seed)
 
-        # Get cluster assignments for the data
-        comp_array = self._compositions_to_array(compositions)
-        clusters = self.clusterer.fit_predict(comp_array)
-        
-        # Get cluster centers (either from clusterer or compute centroids)
-        if hasattr(self.clusterer, 'cluster_centers_'):
-            centers = self.clusterer.cluster_centers_
-        else:
-            # Compute centroids manually for each cluster
+        # Use only inlier compositions if metadata is provided
+        if metadata:
+            valid_indices = [i for i, m in enumerate(metadata) if not m["is_outlier"]]
+            if not valid_indices:
+                raise ValueError("No inlier compositions available for suggestions.")
+            comp_array = self._compositions_to_array([metadata[i]["composition"] for i in valid_indices])
+            # Use clustering on the filtered array
+            clusterer = self.initialize_cluster_method()
+            if hasattr(clusterer, 'n_clusters'):
+                clusterer.n_clusters = n_suggestions
+            clusters = clusterer.fit_predict(comp_array)
+            # Compute centroids manually
             unique_clusters = np.unique(clusters)
-            centers = np.array([
-                comp_array[clusters == i].mean(axis=0)
-                for i in unique_clusters if i != -1  # Skip noise points (-1)
-            ])
-
-        # Generate new compositions near cluster boundaries
+            centers = []
+            for cl in unique_clusters:
+                if cl == -1:  # Skip noise
+                    continue
+                pts = comp_array[clusters == cl]
+                centers.append(pts.mean(axis=0))
+            centers = np.array(centers)
+        else:
+            comp_array = self._compositions_to_array(compositions)
+            clusterer = self.initialize_cluster_method()
+            if hasattr(clusterer, 'n_clusters'):
+                clusterer.n_clusters = n_suggestions
+            clusters = clusterer.fit_predict(comp_array)
+            if hasattr(clusterer, 'cluster_centers_'):
+                centers = clusterer.cluster_centers_
+            else:
+                unique_clusters = np.unique(clusters)
+                centers = np.array([comp_array[clusters == i].mean(axis=0) for i in unique_clusters if i != -1])
+        
         new_compositions = []
-        max_attempts = n_suggestions * 10
+        max_attempts = n_suggestions * 100
         attempts = 0
-
+        elements = sorted(set().union(*compositions))
         while len(new_compositions) < n_suggestions and attempts < max_attempts:
             if len(centers) < 2:
-                # If we have fewer than 2 centers, interpolate between random points
                 idx1, idx2 = np.random.choice(len(comp_array), 2, replace=False)
                 point1, point2 = comp_array[idx1], comp_array[idx2]
             else:
-                # Select random pair of centers
                 c1, c2 = np.random.choice(len(centers), 2, replace=False)
                 point1, point2 = centers[c1], centers[c2]
-
-            # Generate composition between points
             mix = np.random.random()
             new_comp = point1 * mix + point2 * (1 - mix)
-
-            # Convert to dictionary
-            elements = sorted(set().union(*compositions))
             comp_dict = dict(zip(elements, new_comp))
-
-            # Check constraints if provided
+            valid = True
             if constraints:
-                valid = True
                 for element, (min_frac, max_frac) in constraints.items():
                     if element in comp_dict:
                         if not (min_frac <= comp_dict[element] <= max_frac):
                             valid = False
                             break
-
-                if not valid:
-                    attempts += 1
-                    continue
-
+            if not valid:
+                attempts += 1
+                continue
             new_compositions.append(comp_dict)
             attempts += 1
-
         return new_compositions
+
+    def quantify_uncertainty(self, model_paths: List[str], structures: List[Atoms]) -> List[float]:
+        """
+        Placeholder method to quantify uncertainty.
+        Given paths to ML potential models and a list of 128-atom Atoms objects,
+        compute the force variance across the ensemble for each structure.
+        
+        Args:
+            model_paths: List of file paths to ML potential models.
+            structures: List of ASE Atoms objects (each with 128 atoms).
+            
+        Returns:
+            List of force variance values (one per structure).
+            
+        To be implemented.
+        """
+        # Placeholder: return a list of zeros.
+        uncertainties = [0.0 for _ in structures]
+        return uncertainties
 
     def create_random_alloy(self, composition: Dict[str, float], crystal_type: str, dimensions: List[int], lattice_constant: float, balance_element: str, cubic: bool = True) -> Atoms:
         """
         Create a random alloy with specified composition.
-
-        Args:
-            composition: Dictionary of element symbols and their fractions
-            crystal_type: Crystal structure ('bcc', 'fcc', etc.)
-            dimensions: Supercell dimensions [nx, ny, nz]
-            lattice_constant: Lattice constant in Å
-            balance_element: Element to use as balance (usually majority element)
-            cubic: Whether to create a cubic structure (default True)
-        Returns:
-            ASE Atoms object with randomized atomic positions
         """
-        # Validate composition sums to 1 (within tolerance)
         total = sum(composition.values())
         if not np.isclose(total, 1.0, rtol=1e-3):
             raise ValueError(f"Composition fractions must sum to 1.0 (got {total})")
-
-        # Create base structure and supercell
         base_atoms = bulk(balance_element, crystal_type, a=lattice_constant, cubic=cubic)
         atoms = base_atoms * dimensions
         total_sites = len(atoms)
-
-        # Calculate number of atoms for each element
         atom_counts = {}
         remaining_sites = total_sites
-
-        # Handle all elements except balance element
         for element, fraction in composition.items():
             if element != balance_element:
-                # Ceil the count for non-balance elements
                 count = int(np.ceil(fraction * total_sites))
                 atom_counts[element] = count
                 remaining_sites -= count
-
-        # Assign remaining sites to balance element
         atom_counts[balance_element] = remaining_sites
-
-        # Verify we haven't created an impossible situation
         if remaining_sites < 0:
             raise ValueError("Composition resulted in negative sites for balance element")
-
-        # Create list of atomic symbols
         symbols = []
         for element, count in atom_counts.items():
             symbols.extend([element] * count)
-
-        # Randomly shuffle the symbols
         random.shuffle(symbols)
-
-        # Assign shuffled symbols to atomic positions
         atoms.symbols = symbols
-
         return atoms
 
-    def find_diverse_compositions(self, embeddings: np.ndarray, compositions: List[Dict[str, float]], 
-                               n_select: int = 5, method: str = 'maximin',
-                               constraints: Optional[Dict[str, Tuple[float, float]]] = None) -> np.ndarray:
-        """
-        Find diverse compositions based on t-SNE embeddings, with optional composition constraints.
+def analyze_composition_distribution(analyzer,
+                                     existing_compositions,
+                                     new_compositions,
+                                     n_clusters=5,
+                                     n_neighbors=5,
+                                     plot_type='both',
+                                     top_n=5,
+                                     weights=(0.4, 0.3, 0.3),
+                                     clustering_params=None):
+    """
+    Comprehensive analysis of new compositions' distribution in composition space,
+    highlighting the most novel compositions based on a combined metric.
 
-        Args:
-            embeddings: Array of t-SNE embeddings
-            compositions: List of composition dictionaries corresponding to embeddings
-            n_select: Number of diverse points to select
-            method: Either 'maximin' or 'maxsum'
-            constraints: Dictionary mapping element symbols to (min, max) fraction tuples
+    Args:
+        analyzer: Initialized CompositionAnalyzer.
+        existing_compositions: List of existing composition dictionaries.
+        new_compositions: List of new composition dictionaries.
+        n_clusters: Number of clusters for visualization.
+        n_neighbors: Number of neighbors for LOF/density estimation.
+        plot_type: One of 'both', '2d', or '3d'.
+        top_n: Number of most novel compositions to highlight.
+        weights: Tuple of (distance_weight, lof_weight, diversity_weight) for scoring.
+        clustering_params: Dictionary of additional parameters for the clustering algorithm.
+                           Example: {'eps': 0.5, 'min_samples': 5} for DBSCAN.
 
-        Returns:
-            Indices of selected diverse points
-        """
-        if method not in ['maximin', 'maxsum']:
-            raise ValueError("Method must be either 'maximin' or 'maxsum'")
+    Returns:
+        A dictionary containing:
+          - embeddings for existing and new compositions
+          - distance metrics and LOF scores
+          - top compositions with novelty scores
+          - dictionary of generated figures
+    """
+    import numpy as np
+    from scipy import stats
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import plotly.graph_objects as go
+    from sklearn.neighbors import LocalOutlierFactor
+    from scipy.spatial.distance import pdist, squareform
+    from adjustText import adjust_text  # For smart label positioning
 
-        # Apply composition constraints if provided
-        valid_indices = np.arange(len(embeddings))
-        if constraints:
-            valid_mask = np.ones(len(embeddings), dtype=bool)
-            for element, (min_frac, max_frac) in constraints.items():
-                element_fractions = np.array([comp.get(element, 0.0) for comp in compositions])
-                valid_mask &= (element_fractions >= min_frac) & (element_fractions <= max_frac)
-            valid_indices = np.where(valid_mask)[0]
-            
-            if len(valid_indices) < n_select:
-                raise ValueError(f"Only {len(valid_indices)} compositions meet constraints, but {n_select} requested")
-            
-            # Filter embeddings to only valid ones
-            embeddings = embeddings[valid_indices]
+    # Apply custom clustering parameters if provided
+    if clustering_params and isinstance(clustering_params, dict):
+        original_clusterer = analyzer.clusterer
+        # Create a new instance with custom parameters
+        if analyzer.cluster_method == 'KMEANS':
+            from sklearn.cluster import KMeans
+            analyzer.clusterer = KMeans(n_clusters=n_clusters, random_state=analyzer.random_state, **clustering_params)
+        elif analyzer.cluster_method == 'DBSCAN':
+            from sklearn.cluster import DBSCAN
+            analyzer.clusterer = DBSCAN(**clustering_params)
+        elif analyzer.cluster_method == 'AGGLOMERATIVE':
+            from sklearn.cluster import AgglomerativeClustering
+            analyzer.clusterer = AgglomerativeClustering(n_clusters=n_clusters, **clustering_params)
+        elif analyzer.cluster_method == 'SPECTRAL':
+            from sklearn.cluster import SpectralClustering
+            analyzer.clusterer = SpectralClustering(n_clusters=n_clusters, random_state=analyzer.random_state, **clustering_params)
 
-        # Calculate pairwise distances for valid embeddings
-        distances = squareform(pdist(embeddings))
-        
-        if method == 'maximin':
-            # Maximin approach: Maximize minimum distance between selected points
-            selected = []
-            
-            # Start with the two points that are furthest apart
-            initial_pair = np.unravel_index(np.argmax(distances), distances.shape)
-            selected.extend(initial_pair)
-            
-            # Iteratively add points that maximize the minimum distance to selected points
-            while len(selected) < n_select:
-                min_distances = np.min(distances[selected][:, ~np.isin(range(len(embeddings)), selected)], axis=0)
-                next_point = np.where(~np.isin(range(len(embeddings)), selected))[0][np.argmax(min_distances)]
-                selected.append(next_point)
-            
-            # Map back to original indices if constraints were applied
-            return valid_indices[np.array(selected)] if constraints else np.array(selected)
-        
-        else:  # maxsum approach
-            # Initialize with random point
-            selected = [np.random.randint(len(embeddings))]
-            
-            # Iteratively add points that maximize sum of distances to selected points
-            while len(selected) < n_select:
-                sum_distances = np.sum(distances[selected][:, ~np.isin(range(len(embeddings)), selected)], axis=0)
-                next_point = np.where(~np.isin(range(len(embeddings)), selected))[0][np.argmax(sum_distances)]
-                selected.append(next_point)
-            
-            # Map back to original indices if constraints were applied
-            return valid_indices[np.array(selected)] if constraints else np.array(selected)
+    # 1. Compute unified embeddings by combining all compositions
+    all_compositions = existing_compositions + new_compositions
+    all_embeddings, clusters = analyzer.analyze_compositions(all_compositions, n_clusters=n_clusters)
+    embeddings_existing = all_embeddings[:len(existing_compositions)]
+    embeddings_new = all_embeddings[len(existing_compositions):]
 
-    def plot_with_diverse_points(self, embeddings: np.ndarray, clusters: np.ndarray,
-                               new_embeddings: np.ndarray, new_compositions: List[Dict[str, float]],
-                               n_diverse: int = 5, method: str = 'maximin',
-                               constraints: Optional[Dict[str, Tuple[float, float]]] = None) -> Tuple[np.ndarray, dict]:
-        """
-        Create an interactive plot highlighting diverse compositions.
+    # Restore original clusterer if modified
+    if clustering_params and isinstance(clustering_params, dict):
+        analyzer.clusterer = original_clusterer
 
-        Args:
-            embeddings: Original embeddings from dimensionality reduction
-            clusters: Cluster assignments for original embeddings
-            new_embeddings: Embeddings for new compositions
-            new_compositions: List of new composition dictionaries
-            n_diverse: Number of diverse points to select
-            method: Either 'maximin' or 'maxsum'
-            constraints: Optional composition constraints
+    # 2. Create metadata and update with outlier detection
+    meta_existing = analyzer._create_metadata(existing_compositions, comp_type='existing')
+    meta_new = analyzer._create_metadata(new_compositions, comp_type='new')
+    meta_existing = analyzer.detect_outliers(embeddings_existing, meta_existing, contamination=0.05, n_neighbors=n_neighbors)
+    meta_new = analyzer.detect_outliers(embeddings_new, meta_new, contamination=0.05, n_neighbors=n_neighbors)
 
-        Returns:
-            Tuple of (indices of diverse points, plotly figure dict)
-        """
-        import plotly.graph_objects as go
+    # 3. Compute centroid and distances
+    centroid = np.mean(embeddings_existing, axis=0)
+    distances_existing = np.linalg.norm(embeddings_existing - centroid, axis=1)
+    distances_new = np.linalg.norm(embeddings_new - centroid, axis=1)
 
-        # Find diverse points
-        diverse_indices = self.find_diverse_compositions(
-            new_embeddings, new_compositions, n_diverse, method, constraints
+    # 4. Compute LOF scores
+    lof = LocalOutlierFactor(n_neighbors=n_neighbors, novelty=True)
+    lof.fit(embeddings_existing)
+    new_lof_scores = -lof.score_samples(embeddings_new)
+    existing_lof_scores = -lof.score_samples(embeddings_existing)
+
+    # 5. Compute diversity scores (minimum distance to other new compositions)
+    diversity_scores = np.zeros(len(new_compositions))
+    if len(new_compositions) > 1:
+        # Compute pairwise distances between new compositions in embedding space
+        pairwise_dists = squareform(pdist(embeddings_new))
+        # For each composition, find minimum distance to any other composition
+        for i in range(len(new_compositions)):
+            # Set diagonal to infinity so we don't count self-distance
+            pairwise_dists[i, i] = np.inf
+            diversity_scores[i] = np.min(pairwise_dists[i])
+    
+    # 6. Normalize metrics to [0,1] range for fair combination
+    norm_distances = (distances_new - np.min(distances_new)) / (np.max(distances_new) - np.min(distances_new) + 1e-10)
+    norm_lof = (new_lof_scores - np.min(new_lof_scores)) / (np.max(new_lof_scores) - np.min(new_lof_scores) + 1e-10)
+    if len(new_compositions) > 1:
+        norm_diversity = (diversity_scores - np.min(diversity_scores)) / (np.max(diversity_scores) - np.min(diversity_scores) + 1e-10)
+    else:
+        norm_diversity = np.zeros(1)  # If only one composition, diversity is meaningless
+    
+    # 7. Compute combined novelty score
+    distance_weight, lof_weight, diversity_weight = weights
+    novelty_scores = (distance_weight * norm_distances + 
+                      lof_weight * norm_lof + 
+                      diversity_weight * norm_diversity)
+    
+    # 8. Get indices of top N compositions by novelty score
+    top_indices = np.argsort(novelty_scores)[::-1][:top_n]
+    if len(top_indices) < top_n:
+        print(f"Warning: Only {len(top_indices)} compositions available (requested {top_n})")
+    
+    # 9. Prepare readable string representations for compositions
+    string_new_compositions = []
+    for comp in new_compositions:
+        string_comp = "V-{:.1f}%Cr-{:.1f}%Ti-{:.1f}%W-{:.1f}%Zr".format(
+            comp.get('Cr', 0)*100, comp.get('Ti', 0)*100,
+            comp.get('W', 0)*100, comp.get('Zr', 0)*100
         )
+        string_new_compositions.append(string_comp)
 
-        # Calculate statistics for outlier detection
-        mean = np.mean(np.vstack([embeddings, new_embeddings]), axis=0)
-        std = np.std(np.vstack([embeddings, new_embeddings]), axis=0)
-        n_std = 2
+    # 10. Create detailed information for top compositions
+    top_compositions = []
+    for rank, idx in enumerate(top_indices):
+        top_compositions.append({
+            'rank': rank + 1,
+            'index': idx,
+            'composition': new_compositions[idx],
+            'composition_string': string_new_compositions[idx],
+            'metrics': {
+                'distance': distances_new[idx],
+                'distance_percentile': stats.percentileofscore(distances_existing, distances_new[idx]),
+                'lof_score': new_lof_scores[idx],
+                'diversity': diversity_scores[idx] if len(new_compositions) > 1 else 0,
+            },
+            'normalized_metrics': {
+                'distance': norm_distances[idx],
+                'lof_score': norm_lof[idx],
+                'diversity': norm_diversity[idx] if len(new_compositions) > 1 else 0,
+            },
+            'novelty_score': novelty_scores[idx],
+            'embedding': embeddings_new[idx].tolist()
+        })
 
-        # Create masks
-        mask_original = np.all(np.abs(embeddings - mean) < n_std * std, axis=1)
-        mask_new = np.all(np.abs(new_embeddings - mean) < n_std * std, axis=1)
+    # 11. Create plots
+    figs = {}
+    n_components = analyzer.n_components
 
-        # Create the figure
-        fig = go.Figure()
-
-        # Plot original compositions
-        fig.add_trace(go.Scatter3d(
-            x=embeddings[mask_original, 0],
-            y=embeddings[mask_original, 1],
-            z=embeddings[mask_original, 2],
-            mode='markers',
-            marker=dict(
-                size=6,
-                color=clusters[mask_original],
-                colorscale='Viridis',
-                showscale=True,
-                colorbar=dict(title='Cluster')
-            ),
-            name='Existing'
-        ))
-
-        # Plot new compositions (non-diverse)
-        non_diverse_mask = mask_new & ~np.isin(np.arange(len(new_embeddings)), diverse_indices)
-        fig.add_trace(go.Scatter3d(
-            x=new_embeddings[non_diverse_mask, 0],
-            y=new_embeddings[non_diverse_mask, 1],
-            z=new_embeddings[non_diverse_mask, 2],
-            mode='markers',
-            marker=dict(
-                size=8,
-                color='red',
-                symbol='diamond'
-            ),
-            name='Suggested'
-        ))
-
-        # Plot diverse points
-        fig.add_trace(go.Scatter3d(
-            x=new_embeddings[diverse_indices, 0],
-            y=new_embeddings[diverse_indices, 1],
-            z=new_embeddings[diverse_indices, 2],
-            mode='markers',
-            marker=dict(
-                size=12,
-                color='black',
-                symbol='diamond'
-            ),
-            name=f'Most Diverse ({method})'
-        ))
-
-        # Update layout with current dimensionality reduction method
-        fig.update_layout(
-            title=f'Composition Space Analysis with {n_diverse} Most Diverse Points ({method}) using {self.dim_method}',
+    # --- 3D Plot (if requested and available) ---
+    if plot_type in ['both', '3d'] and n_components == 3:
+        fig3d = go.Figure()
+        
+        # Existing compositions (colored by cluster label)
+        fig3d.add_trace(
+            go.Scatter3d(
+                x=embeddings_existing[:, 0], y=embeddings_existing[:, 1], z=embeddings_existing[:, 2],
+                mode='markers',
+                marker=dict(
+                    size=6,
+                    color=clusters[:len(existing_compositions)],
+                    colorscale='viridis', 
+                    opacity=0.5,
+                    showscale=True,
+                    colorbar=dict(title='Cluster')
+                ),
+                name='Existing'
+            )
+        )
+        
+        # Plot only top N compositions
+        for i, comp_info in enumerate(top_compositions):
+            idx = comp_info['index']
+            fig3d.add_trace(
+                go.Scatter3d(
+                    x=[embeddings_new[idx, 0]], 
+                    y=[embeddings_new[idx, 1]], 
+                    z=[embeddings_new[idx, 2]],
+                    mode='markers+text',
+                    marker=dict(
+                        size=12,
+                        color=comp_info['novelty_score'],
+                        colorscale='plasma',
+                        showscale=True if i == 0 else False,
+                        colorbar=dict(title='Novelty Score') if i == 0 else None,
+                        symbol='diamond'
+                    ),
+                    text=f"#{comp_info['rank']}",
+                    textposition='top center',
+                    name=f"#{comp_info['rank']} {comp_info['composition_string']}",
+                    hovertext=f"Rank: {comp_info['rank']}<br>" +
+                         f"Novelty Score: {comp_info['novelty_score']:.3f}<br>" +
+                         f"Distance: {comp_info['metrics']['distance']:.3f}<br>" +
+                         f"LOF Score: {comp_info['metrics']['lof_score']:.3f}<br>" +
+                         f"Diversity: {comp_info['metrics']['diversity']:.3f}<br>" +
+                         "<br>".join([f"{k}: {v:.3f}" for k, v in comp_info['composition'].items()]),
+                    hoverinfo='text'
+                )
+            )
+        
+        # Add centroid
+        fig3d.add_trace(
+            go.Scatter3d(
+                x=[centroid[0]], y=[centroid[1]], z=[centroid[2]],
+                mode='markers',
+                marker=dict(
+                    size=15,
+                    color='black',
+                    symbol='cross'
+                ),
+                name='Centroid'
+            )
+        )
+        
+        fig3d.update_layout(
+            height=800, width=1000,
+            title_text=f"3D Composition Space Analysis - Top {len(top_compositions)} Novel Compositions",
             scene=dict(
-                xaxis_title=f'{self.dim_method} 1',
-                yaxis_title=f'{self.dim_method} 2',
-                zaxis_title=f'{self.dim_method} 3'
-            ),
-            width=1000,
-            height=800,
-            showlegend=True
+                xaxis_title=f'{analyzer.dim_method} 1',
+                yaxis_title=f'{analyzer.dim_method} 2',
+                zaxis_title=f'{analyzer.dim_method} 3'
+            )
         )
+        figs['3d'] = fig3d
 
-        return diverse_indices, fig
+    # --- 2D Plot with improved label placement ---
+    if plot_type in ['both', '2d']:
+        fig2d, ax = plt.subplots(figsize=(12, 8))
+        
+        # Plot existing compositions
+        scatter = ax.scatter(
+            embeddings_existing[:, 0],
+            embeddings_existing[:, 1],
+            c=clusters[:len(existing_compositions)],
+            cmap='viridis', s=50, alpha=0.4, label='Existing'
+        )
+        
+        # Add color bar for clusters
+        cbar1 = plt.colorbar(scatter, label='Cluster')
+        
+        # Plot top N compositions
+        top_novelty = np.array([comp_info['novelty_score'] for comp_info in top_compositions])
+        top_embeddings = np.array([embeddings_new[comp_info['index']] for comp_info in top_compositions])
+        
+        if len(top_compositions) > 0:
+            new_scatter = ax.scatter(
+                top_embeddings[:, 0],
+                top_embeddings[:, 1],
+                c=top_novelty,
+                cmap='plasma', s=100, marker='D', edgecolors='black'
+            )
+            
+            # Add color bar for novelty scores
+            cbar2 = plt.colorbar(new_scatter, label='Novelty Score')
+            
+            # Add labels with smart placement
+            texts = []
+            for comp_info in top_compositions:
+                idx = comp_info['index']
+                texts.append(ax.text(
+                    embeddings_new[idx, 0],
+                    embeddings_new[idx, 1],
+                    f"#{comp_info['rank']}",
+                    fontsize=10,
+                    fontweight='bold',
+                    ha='center',
+                    va='center',
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="black", alpha=0.8)
+                ))
+            
+            # Use adjust_text if available, otherwise fall back to basic placement
+            try:
+                from adjustText import adjust_text
+                adjust_text(texts, arrowprops=dict(arrowstyle='->', color='black'))
+            except ImportError:
+                # Alternate approach: Place labels at the edges with arrows
+                # Get plot boundaries
+                x_min, x_max = ax.get_xlim()
+                y_min, y_max = ax.get_ylim()
+                margin = 0.05 * (x_max - x_min)
+                
+                # Place labels on the right side with equal spacing
+                for i, comp_info in enumerate(top_compositions):
+                    idx = comp_info['index']
+                    # Remove the previous text
+                    texts[i].remove()
+                    
+                    # Calculate position on the right edge
+                    y_pos = y_max - (i + 1) * (y_max - y_min) / (len(top_compositions) + 1)
+                    
+                    # Add annotation with arrow
+                    ax.annotate(
+                        f"#{comp_info['rank']}",
+                        xy=(embeddings_new[idx, 0], embeddings_new[idx, 1]),  # Point to annotate
+                        xytext=(x_max - margin, y_pos),  # Label position
+                        fontsize=10,
+                        fontweight='bold',
+                        ha='right',
+                        va='center',
+                        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="black", alpha=0.8),
+                        arrowprops=dict(
+                            arrowstyle="->",
+                            color="black",
+                            shrinkA=5,
+                            shrinkB=5,
+                            patchA=None,
+                            patchB=None,
+                            connectionstyle="arc3,rad=0.3"
+                        )
+                    )
+                
+                # Adjust plot limits to make room for labels
+                ax.set_xlim(x_min, x_max + 0.1 * (x_max - x_min))
+        
+        # Plot centroid
+        ax.scatter(centroid[0], centroid[1], c='black', marker='*', s=200, label='Centroid')
+        
+        ax.set_xlabel(f'{analyzer.dim_method} 1')
+        ax.set_ylabel(f'{analyzer.dim_method} 2')
+        ax.set_title(f'2D Composition Space Analysis - Top {len(top_compositions)} Novel Compositions')
+        ax.legend()
+        figs['2d'] = fig2d
+
+    # --- Distribution Plot ---
+    fig_dist, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Box plot
+    ax1.boxplot([distances_existing, distances_new], labels=['Existing', 'New'])
+    ax1.set_title('Distance Distribution')
+    ax1.set_ylabel('Distance from Centroid')
+    
+    # Add markers for top compositions
+    for comp_info in top_compositions:
+        idx = comp_info['index']
+        ax1.plot(2, distances_new[idx], 'ro', markersize=8, alpha=0.7)
+        ax1.annotate(
+            f"#{comp_info['rank']}",
+            (2, distances_new[idx]),
+            xytext=(5, 0),
+            textcoords='offset points',
+            fontsize=10,
+            fontweight='bold'
+        )
+    
+    # KDE plot of existing distances
+    sns.kdeplot(distances_existing, ax=ax2, label='Existing')
+    
+    # Get the current y-axis limits for spacing annotations
+    ymin_lim, ymax_lim = ax2.get_ylim()
+    
+    # Calculate spacing for annotations
+    spacing = ymax_lim * 0.7 / len(top_compositions) if top_compositions else 0
+    start_y = ymax_lim * 0.85
+    
+    # Plot vertical lines for top compositions
+    for j, comp_info in enumerate(top_compositions):
+        idx = comp_info['index']
+        dist = distances_new[idx]
+        
+        # Plot vertical line
+        ax2.axvline(x=dist, color='red', linestyle='--', alpha=0.7, linewidth=2)
+        
+        # Calculate y position
+        y_pos = start_y - (j * spacing)
+        
+        # Draw arrow and annotation
+        ax2.annotate(
+            f"#{comp_info['rank']} {comp_info['composition_string']}",
+            xy=(dist, y_pos),
+            xytext=(max(distances_existing) * 1.6, y_pos),
+            ha='left',
+            va='center',
+            bbox=dict(facecolor='white', edgecolor='red', alpha=0.7, boxstyle="round,pad=0.3"),
+            arrowprops=dict(
+                arrowstyle='->',
+                connectionstyle='bar,fraction=0',
+                color='red',
+                alpha=0.7,
+                linewidth=2
+            )
+        )
+    
+    # Adjust x-axis limits to make room for annotations
+    x_max = max(max(distances_existing), max(distances_new)) * 2.5
+    ax2.set_xlim(0, x_max)
+    
+    ax2.set_title('Distance Density')
+    ax2.set_xlabel('Distance from Centroid')
+    ax2.legend()
+    figs['dist'] = fig_dist
+
+    # --- Print statistics ---
+    print("\nDistance Statistics:")
+    print("Existing Compositions:")
+    print(f"  Mean: {np.mean(distances_existing):.3f}, Median: {np.median(distances_existing):.3f}, Std: {np.std(distances_existing):.3f}")
+    
+    print("\nTop Novel Compositions:")
+    for comp_info in top_compositions:
+        print(f"\nRank #{comp_info['rank']}: {comp_info['composition_string']}")
+        print(f"  Novelty Score: {comp_info['novelty_score']:.3f}")
+        print(f"  Distance: {comp_info['metrics']['distance']:.3f} (percentile: {comp_info['metrics']['distance_percentile']:.1f}%)")
+        print(f"  LOF Score: {comp_info['metrics']['lof_score']:.3f}")
+        print(f"  Diversity: {comp_info['metrics']['diversity']:.3f}")
+        print(f"  Composition: {', '.join([f'{k}: {v:.3f}' for k, v in comp_info['composition'].items()])}")
+
+    return {
+        'embeddings_existing': embeddings_existing,
+        'embeddings_new': embeddings_new,
+        'distances': {'existing': distances_existing, 'new': distances_new},
+        'lof_scores': {'existing': existing_lof_scores, 'new': new_lof_scores},
+        'top_compositions': top_compositions,
+        'figures': figs
+    }
+
+    
+

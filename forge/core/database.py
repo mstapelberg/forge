@@ -715,7 +715,7 @@ class DatabaseManager:
             return metadata
 
     def update_structure_metadata(self, structure_id: int, metadata: Dict) -> None:
-        """Update structure metadata in the database.
+        """Update structure metadata in the database. WARNING: This will overwrite the existing metadata.
         
         Args:
             structure_id: Structure ID
@@ -805,3 +805,65 @@ class DatabaseManager:
                 print(f"[WARNING] Failed to retrieve structure {struct_id} with calculation: {e}")
                 
         return atoms_list
+
+    def find_structures_by_metadata(self, 
+                                 metadata_filters: Dict[str, any],
+                                 operator: str = 'exact',
+                                 debug: bool = False) -> List[int]:
+        """
+        Search for structures by metadata fields.
+        
+        Args:
+            metadata_filters: Dictionary of {metadata_key: value} to search for
+            operator: How to match values - 'exact' (default), 'contains', '>', '<', '>=', '<='
+                     String values only support 'exact' and 'contains'
+            debug: If True, print debug information about the query
+            
+        Returns:
+            List of structure IDs matching the criteria
+        """
+        if self.dry_run:
+            print(f"[DRY RUN] Would search for structures with metadata: {metadata_filters}")
+            return [1, 2, 3]  # Return dummy IDs
+        
+        query = "SELECT structure_id FROM structures WHERE 1=1"
+        params = []
+        
+        for key, value in metadata_filters.items():
+            # Handle nested keys with -> operator in PostgreSQL
+            if '.' in key:
+                # Convert Python-style dot notation to PostgreSQL JSON path
+                parts = key.split('.')
+                json_path = '->'.join([f"'{part}'" for part in parts[:-1]]) + "->>'" + parts[-1] + "'"
+                db_key = f"metadata->{json_path}"
+            else:
+                db_key = f"metadata->>'{key}'"
+            
+            # Build query based on operator and value type
+            if operator == 'exact':
+                if value is None:
+                    query += f" AND {db_key} IS NULL"
+                else:
+                    query += f" AND {db_key} = %s"
+                    params.append(str(value))  # Convert to string for JSON key comparison
+            elif operator == 'contains' and isinstance(value, str):
+                query += f" AND {db_key} LIKE %s"
+                params.append(f'%{value}%')
+            elif operator in ('>', '<', '>=', '<=') and isinstance(value, (int, float)):
+                query += f" AND ({db_key})::float {operator} %s"
+                params.append(value)
+            else:
+                raise ValueError(f"Unsupported operator '{operator}' for value type {type(value)}")
+        
+        if debug:
+            print(f"[DEBUG] Executing query: {query}")
+            print(f"[DEBUG] With params: {params}")
+        
+        with self.conn.cursor() as cur:
+            cur.execute(query, params)
+            results = [row[0] for row in cur.fetchall()]
+        
+        if debug:
+            print(f"[DEBUG] Query returned {len(results)} matching structures")
+        
+        return results

@@ -147,7 +147,7 @@ def prepare_variance_calculation_jobs(
         for i, atoms in enumerate(batch_atoms_list):
             structure_id = atoms.info.get('structure_id')
             if structure_id:
-                atoms.info['structure_name'] = f'struct_id_{structure_id}'
+                atoms.info['structure_name'] = str(structure_id)
             else:
                 atoms.info['structure_name'] = f'batch_{batch_id}_index_{i}'
 
@@ -330,7 +330,7 @@ def prepare_gradient_aa_optimization(
         for i, atoms in enumerate(batch_atoms_list):
             structure_id, variance = batch_struct_ids[i]
             atoms.info['structure_id'] = structure_id
-            atoms.info['structure_name'] = f"struct_id_{structure_id}"
+            atoms.info['structure_name'] = str(structure_id)
             atoms.info['initial_variance'] = variance
         
         # Create batch XYZ file
@@ -346,7 +346,7 @@ def prepare_gradient_aa_optimization(
         for i, atoms in enumerate(batch_atoms_list):
             structure_id = atoms.info['structure_id']
             structure_meta = {
-                'name': f"struct_id_{structure_id}",
+                'name': str(structure_id),
                 'variance': atoms.info['initial_variance'],
                 'structure_id': structure_id
             }

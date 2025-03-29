@@ -150,7 +150,7 @@ def run_gradient_aa_optimization(
                 best_atoms.info['initial_variance'] = initial_variance or loss_history[0]
                 best_atoms.info['final_variance'] = best_variance
                 best_atoms.info['optimization_method'] = 'gradient-based'
-                best_atoms.info['parent_structure_name'] = struct_name
+                best_atoms.info['parent_structure_name'] = str(structure_id)
                 
                 # Prepare metadata for database with explicit type conversion
                 metadata = {
@@ -445,8 +445,11 @@ def create_vasp_jobs_from_aa_results(
     if not summary_files:
         # Try to find structures directly from database
         # This is useful if structures were added to DB but don't have VASP calcs yet
+        # TODO: need to modify this to find *_aa-gradient and *_aa-mc config_types
+        # as we append the aa-gradient and aa-mc to the config_type field of the parent structure to the 
+        # config_type field of the child structure
         query = {
-            'config_type': ['aa-gradient', 'aa-monte-carlo'],
+            'config_type': ['aa-gradient', 'aa-mc'],
             'vasp': None
         }
         structure_ids = db_manager.find_structures_without_calculation(model_type='vasp*')
@@ -711,7 +714,7 @@ def main():
         )
     else:
         # Use original Metropolis optimization
-        config_type = args.config_type or "aa-monte-carlo"
+        config_type = args.config_type or "aa-mc"
         
         run_aa_optimization(
             xyz_file=args.xyz_file,

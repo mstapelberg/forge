@@ -298,6 +298,7 @@ def _replace_properties(xyz_path: Path):
     with open(xyz_path, 'w') as f:
         f.writelines(new_content)
 
+# TODO: modify the template and allow for more flexibility to change the parameters
 def _create_training_script(
     job_dir: Path,
     job_name: str,

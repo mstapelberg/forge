@@ -25,14 +25,22 @@ def prepare_mace_job(
     test_ratio: float = 0.1,
     e0s: str = "default",
     seed: int = 42,
-    num_ensemble: Optional[int] = None
+    num_ensemble: Optional[int] = None,
+    num_interactions: int = 2,
+    num_channels: int = 128,
+    max_L: int = 0,
+    r_max: float = 5.0,
+    lr: float = 0.001,
+    forces_weight: float = 50.0,
+    energy_weight: float = 1.0,
+    stress_weight: float = 25.0
 ) -> Dict[str, List[int]]:
     """
     Prepare a MACE training job from database structures.
     
     Args:
         db_manager: DatabaseManager instance for accessing structure data
-        job_name: Name for the training job
+        job_name: Name for the training job (used as base name for files/WandB)
         job_dir: Directory to create job in
         gpu_config: GPU configuration with count and type
         structure_ids: Optional list of specific structure IDs to use
@@ -40,12 +48,21 @@ def prepare_mace_job(
         train_ratio: Fraction of data for training (0-1)
         val_ratio: Fraction of data for validation (0-1)
         test_ratio: Fraction of data for testing (0-1)
-        e0s: "default" or "average" for E0 configuration
+        e0s: "default" or "average" for E0 configuration.
+             "default" uses hardcoded values '{22: -2.15...}'
         seed: Random seed for structure selection and splitting
         num_ensemble: Optional number of ensemble models to create
+        num_interactions: MACE num_interactions parameter
+        num_channels: MACE num_channels parameter
+        max_L: MACE max_L parameter
+        r_max: MACE r_max parameter
+        lr: MACE learning rate
+        forces_weight: MACE forces_weight parameter
+        energy_weight: MACE energy_weight parameter
+        stress_weight: MACE stress_weight parameter
         
     Returns:
-        Dict mapping 'train', 'val', 'test' to lists of structure_ids
+        Dict mapping 'train', 'val', 'test' to lists of structure_ids used in each split.
         
     Raises:
         ValueError: If invalid arguments are provided
@@ -108,20 +125,38 @@ def prepare_mace_job(
         _create_training_script(
             job_dir=job_dir,
             job_name=job_name,
+            base_name=job_name,
             gpu_config=gpu_config,
             e0s=e0s,
-            seed=seed
+            seed=seed,
+            num_interactions=num_interactions,
+            num_channels=num_channels,
+            max_L=max_L,
+            r_max=r_max,
+            lr=lr,
+            forces_weight=forces_weight,
+            energy_weight=energy_weight,
+            stress_weight=stress_weight
         )
     else:
         # Create multiple models with different seeds
         for model_idx in range(num_ensemble):
-            model_name = f"{job_name}_model_{model_idx}"
+            model_job_name = f"{job_name}_model_{model_idx}"
             _create_training_script(
                 job_dir=job_dir,
-                job_name=model_name,
+                job_name=model_job_name,
+                base_name=job_name,
                 gpu_config=gpu_config,
                 e0s=e0s,
-                seed=model_idx  # Each model gets its index as seed
+                seed=model_idx,
+                num_interactions=num_interactions,
+                num_channels=num_channels,
+                max_L=max_L,
+                r_max=r_max,
+                lr=lr,
+                forces_weight=forces_weight,
+                energy_weight=energy_weight,
+                stress_weight=stress_weight
             )
     
     return saved_structure_ids
@@ -184,13 +219,13 @@ def _save_structures_to_xyz(
     
     for i, struct_id in enumerate(structure_ids):
         try:
-            calcs = db_manager.get_calculations(struct_id, model_type='vasp*')
+            calcs = db_manager.get_calculations(struct_id, calculator='vasp')
             if not calcs:
                 if i % 100 == 0:
                     print(f"No VASP calculations found for structure {struct_id}")
                 continue
             
-            calc = calcs[-1]
+            calc = calcs[0]
             
             try:
                 atoms = db_manager.get_structure(struct_id)
@@ -205,6 +240,7 @@ def _save_structures_to_xyz(
             # Validate array shapes
             forces = np.array(calc['forces']) if calc.get('forces') is not None else None
             stress = np.array(calc['stress']) if calc.get('stress') is not None else None
+            energy = calc.get('energy')
             n_atoms = len(atoms)
             
             if forces is not None and forces.shape[0] != n_atoms:
@@ -212,8 +248,8 @@ def _save_structures_to_xyz(
                     'structure_id': struct_id,
                     'n_atoms': n_atoms,
                     'forces_shape': forces.shape,
-                    'model_type': calc['model_type'],
-                    'calculation_id': calc['id']
+                    'calculator': calc.get('calculator'),
+                    'calculation_id': calc.get('calculation_id')
                 }
                 mismatches.append(mismatch)
                 print(f"WARNING: Structure {struct_id} has {n_atoms} atoms but forces shape is {forces.shape}")
@@ -223,9 +259,7 @@ def _save_structures_to_xyz(
             if i % 100 == 0:
                 print(f"Processing structure {i}/{len(structure_ids)}: ID={struct_id}")
                 print(f"Structure {struct_id} calculation info:")
-                print(f"  model_type: {calc.get('model_type')}")
-                energy = calc.get('energy')
-                energy = energy[0] if isinstance(energy, list) else energy
+                print(f"  calculator: {calc.get('calculator')}")
                 print(f"  energy: {energy}")
                 print(f"  forces shape: {forces.shape if forces is not None else None}")
                 print(f"  stress shape: {stress.shape if stress is not None else None}")
@@ -238,7 +272,7 @@ def _save_structures_to_xyz(
                 atoms.info['stress'] = stress
             
             # Remove any empty keys from atoms.info
-            atoms.info = {k: v for k, v in atoms.info.items() if v is not None}
+            atoms.info = {k: v for k, v in atoms.info.items() if v is not None and not (isinstance(v, (list, np.ndarray)) and len(v) == 0)}
             
             structures.append(atoms)
             saved_ids.append(struct_id)
@@ -255,7 +289,7 @@ def _save_structures_to_xyz(
         for m in mismatches:
             print(f"Structure {m['structure_id']} (calc {m['calculation_id']}):")
             print(f"  {m['n_atoms']} atoms but forces shape {m['forces_shape']}")
-            print(f"  model_type: {m['model_type']}")
+            print(f"  calculator: {m['calculator']}")
     
     if failed_loads:
         print("\nFailed to load these structures:")
@@ -298,13 +332,21 @@ def _replace_properties(xyz_path: Path):
     with open(xyz_path, 'w') as f:
         f.writelines(new_content)
 
-# TODO: modify the template and allow for more flexibility to change the parameters
 def _create_training_script(
     job_dir: Path,
     job_name: str,
+    base_name: str,
     gpu_config: Dict,
     e0s: str = "default",
-    seed: int = 42
+    seed: int = 42,
+    num_interactions: int = 2,
+    num_channels: int = 128,
+    max_L: int = 0,
+    r_max: float = 5.0,
+    lr: float = 0.001,
+    forces_weight: float = 50.0,
+    energy_weight: float = 1.0,
+    stress_weight: float = 25.0
 ):
     """Create MACE training script from template."""
     template_path = Path(__file__).parent / "templates" / "mace_train_template.sh"
@@ -315,36 +357,39 @@ def _create_training_script(
     with open(template_path, 'r') as f:
         template = f.read()
     
-    # Get base job name without model suffix for data files
-    base_name = job_name.split('_model_')[0]
+    # Determine E0s string based on input
+    if e0s == "average":
+        e0s_str = "average"
+    else: # Default to the hardcoded string if not "average"
+        e0s_str = '{22: -2.15203187, 23 : -3.55411419, 24 : -5.42767241, 40 : -2.3361286, 74 : -4.55186158}'
     
-    # Replace template variables
+    # Replace template variables using exact placeholder names from template
     replacements = {
-        'gen_6_model_0_L0_isolated_energy': job_name,  # Use full name for job
-        '--ntasks-per-node=4': f"--ntasks-per-node={gpu_config['count']}",
-        '--gres=gpu:4': f"--gres=gpu:{gpu_config['count']}",
-        '--constraint=rtx6000': f"--constraint={gpu_config['type']}",
-        '--name=\'gen_6_model_0_L0_isolated-2026-01-16\'': f"--name=\'{job_name}\'",
-        '--train_file="data/gen_6_2025-01-16_train.xyz"': f'--train_file="data/{base_name}_train.xyz"',  # Use base name
-        '--valid_file="data/gen_6_2025-01-16_val.xyz"': f'--valid_file="data/{base_name}_val.xyz"',      # Use base name
-        '--test_file="data/gen_6_2025-01-16_test.xyz"': f'--test_file="data/{base_name}_test.xyz"',      # Use base name
-        '--wandb_name=\'gen_6_model_0_L0_isolated-2025-01-16\'': f"--wandb_name=\'{job_name}\'",
-        '--seed=0': f'--seed={seed}'
+        '${JOB_NAME}': job_name, # SBATCH job name
+        '${NTASKS_PER_NODE}': str(gpu_config['count']),
+        '${GPUS_PER_NODE}': str(gpu_config['count']),
+        '${GPU_TYPE}': gpu_config['type'],
+        '${RUN_NAME}': job_name, # MACE --name argument
+        '${NUM_INTERACTIONS}': str(num_interactions),
+        '${NUM_CHANNELS}': str(num_channels),
+        '${MAX_L}': str(max_L),
+        '${E0S_STR}': e0s_str, # Use the processed E0s string
+        '${FORCES_WEIGHT}': str(forces_weight),
+        '${ENERGY_WEIGHT}': str(energy_weight),
+        '${STRESS_WEIGHT}': str(stress_weight),
+        '${R_MAX}': str(r_max),
+        '${LR}': str(lr),
+        '${BASE_NAME}': base_name, # Base name for data files
+        '${SEED}': str(seed),
+        '${WANDB_NAME}': job_name # WandB run name
     }
     
     script_content = template
-    for old, new in replacements.items():
-        script_content = script_content.replace(old, new)
-    
-    # Handle E0s configuration
-    if e0s == "average":
-        script_content = script_content.replace(
-            "--E0s='{22: -2.15203187, 23 : -3.55411419, 24 : -5.42767241, 40 : -2.3361286, 74 : -4.55186158}'",
-            "--E0s='average'"
-        )
+    for placeholder, value in replacements.items():
+        script_content = script_content.replace(placeholder, value)
     
     # Write training script
-    script_path = job_dir / f"{job_name}_train.sh"
+    script_path = job_dir / f"{job_name}_train.sh" # Use job_name for script file
     with open(script_path, 'w') as f:
         f.write(script_content)
     
@@ -416,6 +461,7 @@ def _create_single_model(
     _create_training_script(
         job_dir=job_dir,
         job_name=job_name,
+        base_name=job_name,
         gpu_config=gpu_config,
         e0s=e0s
     )

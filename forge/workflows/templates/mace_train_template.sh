@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-#SBATCH --job-name=gen_6_model_0_L0_isolated_energy
-#SBATCH --output=gen_6_model_0_L0_isolated_energy.out
-#SBATCH --error=gen_6_model_0_L0_isolated_energy.err
-#SBATCH --ntasks-per-node=4
+#SBATCH --job-name=${JOB_NAME}
+#SBATCH --output=${JOB_NAME}.out
+#SBATCH --error=${JOB_NAME}.err
+#SBATCH --ntasks-per-node=${NTASKS_PER_NODE}
 #SBATCH --cpus-per-task=10
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:4
-#SBATCH --constraint=rtx6000
+#SBATCH --gres=gpu:${GPUS_PER_NODE}
+#SBATCH --constraint=${GPU_TYPE}
 #SBATCH --time=5-06:00:00
 #SBATCH -p regular
 
@@ -22,27 +22,27 @@ cd "$SLURM_SUBMIT_DIR"
 export OMP_NUM_THREADS=10
 
 srun python /home/myless/Packages/mace_all/mace/scripts/run_train.py \
-    --name='gen_6_model_0_L0_isolated-2026-01-16' \
+    --name='${RUN_NAME}' \
     --model='MACE' \
-    --num_interactions=2 \
-    --num_channels=128 \
-    --max_L=0 \
+    --num_interactions=${NUM_INTERACTIONS} \
+    --num_channels=${NUM_CHANNELS} \
+    --max_L=${MAX_L} \
     --correlation=3 \
-    --E0s='{22: -2.15203187, 23 : -3.55411419, 24 : -5.42767241, 40 : -2.3361286, 74 : -4.55186158}' \
+    --E0s='${E0S_STR}' \
     --loss='stress' \
-    --forces_weight=50.0 \
-    --energy_weight=1.0 \
-    --stress_weight=25.0 \
+    --forces_weight=${FORCES_WEIGHT} \
+    --energy_weight=${ENERGY_WEIGHT} \
+    --stress_weight=${STRESS_WEIGHT} \
     --compute_stress=True \
     --compute_forces=True \
     --energy_key='REF_energy' \
     --forces_key='REF_force' \
     --stress_key='REF_stress' \
-    --r_max=5.0 \
-    --lr=0.001 \
-    --train_file="data/gen_6_2025-01-16_train.xyz" \
-    --valid_file="data/gen_6_2025-01-16_val.xyz" \
-    --test_file="data/gen_6_2025-01-16_test.xyz" \
+    --r_max=${R_MAX} \
+    --lr=${LR} \
+    --train_file="data/${BASE_NAME}_train.xyz" \
+    --valid_file="data/${BASE_NAME}_val.xyz" \
+    --test_file="data/${BASE_NAME}_test.xyz" \
     --swa \
     --swa_lr=0.0005 \
     --start_swa=160 \
@@ -63,9 +63,9 @@ srun python /home/myless/Packages/mace_all/mace/scripts/run_train.py \
     --enable_cueq="True" \
     --distributed \
     --restart_latest \
-    --seed=0 \
+    --seed=${SEED} \
     --wandb \
-    --wandb_name='gen_6_model_0_L0_isolated-2025-01-16' \
+    --wandb_name='${WANDB_NAME}' \
     --wandb_project='mace_vcrtiwzr_fixed_al' \
     --wandb_entity='mnm-shortlab-mit' \
     --wandb_dir='.'

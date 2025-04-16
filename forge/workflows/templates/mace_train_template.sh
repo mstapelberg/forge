@@ -27,6 +27,7 @@ srun python /home/myless/Packages/mace_all/mace/scripts/run_train.py \
     --num_interactions=${NUM_INTERACTIONS} \
     --num_channels=${NUM_CHANNELS} \
     --max_L=${MAX_L} \
+    --pair_repulsion \
     --correlation=3 \
     --E0s='${E0S_STR}' \
     --loss='stress' \

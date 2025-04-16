@@ -309,13 +309,13 @@ class DatabaseManager:
             structure_id: Database ID of structure
             
         Returns:
-            Atoms: ASE Atoms object
+            Atoms: ASE Atoms object with structure_id in info dict.
         """
         if self.dry_run:
             # Return a dummy structure in dry run mode
             from ase.build import bulk
             atoms = bulk('Ti', 'bcc', a=3.3)
-            atoms.info['structure_id'] = structure_id
+            atoms.info['structure_id'] = structure_id # Add ID even for dummy
             atoms.info['structure_name'] = f'test_struct_{structure_id}'
             return atoms
         
@@ -326,7 +326,11 @@ class DatabaseManager:
                 WHERE structure_id = %s
             """, (structure_id,))
             
-            positions, cell, pbc, formula, metadata = cur.fetchone()
+            result = cur.fetchone() # Get the result row
+            if result is None:
+                 raise ValueError(f"Structure with ID {structure_id} not found.")
+
+            positions, cell, pbc, formula, metadata = result # Unpack the result
             
             atoms = Atoms(
                 symbols=formula,
@@ -335,9 +339,13 @@ class DatabaseManager:
                 pbc=pbc
             )
 
+            # Update with metadata first (if any)
             if metadata:
                 atoms.info.update(metadata)
-            
+
+            # Explicitly add/overwrite structure_id in the info dict
+            atoms.info['structure_id'] = structure_id
+
             return atoms
 
     def add_calculation(self, structure_id: int, calc_data: Dict) -> int:

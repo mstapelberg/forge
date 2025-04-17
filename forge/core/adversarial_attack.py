@@ -60,7 +60,8 @@ class GradientAdversarialOptimizer:
     """Optimizer that uses PyTorch autograd to maximize adversarial loss."""
 
     def __init__(self, model_paths, device='cuda', learning_rate=0.01,
-                 temperature=0.86, include_probability=True, debug=False, energy_list=None):
+                 temperature=0.86, include_probability=True, debug=False,
+                 energy_list=None, use_energy_per_atom=False):
         """Initialize optimizer with model paths.
 
         Args:
@@ -70,7 +71,8 @@ class GradientAdversarialOptimizer:
             temperature: Temperature for probability weighting (eV)
             include_probability: Whether to include probability term in loss
             debug: Whether to print debug messages
-            energy_list: List of energies for normalization constant calculation
+            energy_list: List of energies (total or per atom) for normalization constant calculation
+            use_energy_per_atom: If True, treat energy_list as energy/atom and use energy/atom for probability calc.
         """
         self.energy_list = energy_list
         self.model_paths = model_paths
@@ -81,6 +83,7 @@ class GradientAdversarialOptimizer:
         self.debug = debug
         self.timer = Timer(debug=debug)
         self.dtype = torch.float32  # Explicitly set data type
+        self.use_energy_per_atom = use_energy_per_atom
 
         # Initialize ASE calculator for force calculations
         self.timer.start("calculator_init")
@@ -90,21 +93,36 @@ class GradientAdversarialOptimizer:
         )
         self.timer.stop("calculator_init")
 
+        # Calculate normalization constant based on flag
+        self.normalization_constant = 1.0
+        if self.include_probability and self.energy_list is not None and len(self.energy_list) > 0:
+             self.normalization_constant = self._calculate_normalization_constant(
+                 self.energy_list, self.temperature, use_energy_per_atom=self.use_energy_per_atom
+             )
+             if self.debug:
+                 print(f"[DEBUG] Normalization constant (Q): {self.normalization_constant:.6f} (using {'energy/atom' if self.use_energy_per_atom else 'total energy'})")
+        elif self.include_probability:
+             if self.debug:
+                 print("[DEBUG] No energy list provided or empty, using default normalization constant Q=1.0")
+
     def _calculate_force_variance(self, atoms):
-        """Calculate force variance across ensemble models."""
+        """Calculate force variance and mean forces across ensemble models."""
         self.timer.start("force_calculation")
-        forces = self.calculator.calculate_forces(atoms)
+        forces = self.calculator.calculate_forces(atoms) # Shape (n_models, n_atoms, 3)
         self.timer.stop("force_calculation")
+
+        # Calculate mean forces
+        mean_forces = np.mean(forces, axis=0)
 
         self.timer.start("variance_calculation")
         atom_variances = self.calculator.calculate_normalized_force_variance(forces)
-        variance = float(np.mean(atom_variances))
+        variance = float(np.mean(atom_variances)) if atom_variances.size > 0 else 0.0
         self.timer.stop("variance_calculation")
 
-        return variance, atom_variances, forces
+        return variance, atom_variances, mean_forces # Return mean forces as well
 
     def _calculate_energy(self, atoms):
-        """Calculate mean energy across ensemble models."""
+        """Calculate mean TOTAL energy across ensemble models."""
         self.timer.start("energy_calculation")
         energies = []
         for model in self.calculator.models:
@@ -141,198 +159,174 @@ class GradientAdversarialOptimizer:
             return 1.0
         return probability
 
-    def optimize(self, atoms, n_iterations=60, min_distance=1.5, output_dir='.'):
+    def optimize(self, atoms, generation: int, n_iterations=60, min_distance=1.5, output_dir='.'):
         """Run gradient-based adversarial attack optimization.
 
         Args:
-            atoms: ASE Atoms object
-            energy_list: list of energies for normalization constant
+            atoms: ASE Atoms object (must contain 'structure_id' and 'config_type' in info)
+            generation: Generation identifier (integer) for the output structures.
             n_iterations: Maximum number of iterations
             min_distance: Minimum allowed distance between atoms
-            output_dir: Directory to save results
+            output_dir: Directory to save plots
 
         Returns:
-            tuple: (best_atoms, best_loss, loss_history)
+            List[Atoms]: Trajectory of Atoms objects, each with detailed info and mean forces.
         """
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Calculate normalization constant (approximated as 1.0 if no energy list is provided)
-        # In a full dataset scenario, this would be calculated across all structures
-        if self.energy_list is not None and len(self.energy_list) > 0:
-            normalization_constant, shifted_energies = self._calculate_normalization_constant(
-                self.energy_list, self.temperature)
+        # --- Extract initial info ---
+        parent_id = atoms.info.get('structure_id')
+        if parent_id is None:
+            raise ValueError("Input 'atoms' object must have 'structure_id' in its info dictionary.")
+        original_config_type = atoms.info.get('config_type', 'unknown')
+        struct_name = atoms.info.get('structure_name', f'structure_{parent_id}')
+
+        # Derive new config_type
+        if '_aa' in original_config_type:
+            new_config_type = original_config_type
+        else:
+            new_config_type = f"{original_config_type}_aa"
+
+        # --- Calculate normalization constant ---
+        normalization_constant = 1.0
+        if self.include_probability and self.energy_list is not None and len(self.energy_list) > 0:
+            normalization_constant, _ = self._calculate_normalization_constant(
+                self.energy_list, self.temperature) # Shifted energies not needed here
             if self.debug:
                 print(f"[DEBUG] Normalization constant: {normalization_constant:.6f}")
-                print(f"[DEBUG] Shifted energies: {shifted_energies}")
-        else:
-            if self.include_probability and self.debug:
-                print("[DEBUG] No energy list provided, using default normalization constant of 1.0")
-            normalization_constant = 1.0
-            shifted_energies = None
-
-        # Prepare output trajectory file
-        struct_name = atoms.info.get('structure_name', 'structure')
-        output_file = output_path / f"{struct_name}_adversarial.xyz"
+        elif self.include_probability and self.debug:
+            print("[DEBUG] No energy list provided or energy list empty, using default normalization constant Q=1.0")
 
         # Initialize tracking variables
         original_positions = atoms.positions.copy()
-        best_loss = -float('inf')
-        best_positions = original_positions.copy()
-        loss_history = []
-        variance_history = []
-        probability_history = []
-        energy_history = []
+        best_loss = -float('inf') # Still track best loss for potential future use/logging
+        # best_positions = original_positions.copy() # No longer need to track best_positions separately
+        trajectory = [] # Store Atoms objects for each step
 
-        # Save initial structure
-        current_atoms = atoms.copy()
-
-        # Calculate initial values
-        if self.debug:
-            print(f"[DEBUG] Calculating initial values for {len(atoms)} atoms")
-
-        initial_variance, _, _ = self._calculate_force_variance(current_atoms)
-        initial_energy = self._calculate_energy(current_atoms)
-        initial_probability = self._calculate_probability(
-            initial_energy, self.temperature, normalization_constant
-        )
-
-        # Calculate initial loss
-        if self.include_probability:
-            initial_loss = initial_probability * initial_variance
-        else:
-            initial_loss = initial_variance
-
-        # Set initial values
-        best_loss = initial_loss
-        current_loss = initial_loss
-
-        # Save initial state
-        current_atoms.info['variance'] = initial_variance
-        current_atoms.info['energy'] = initial_energy
-        current_atoms.info['probability'] = initial_probability
-        current_atoms.info['loss'] = initial_loss
-
-        write(output_file, current_atoms, write_results=False)
-
-        # Track history
-        loss_history.append(initial_loss)
-        variance_history.append(initial_variance)
-        probability_history.append(initial_probability)
-        energy_history.append(initial_energy)
-
-        print(f"[INFO] Initial values:")
-        print(f"  Variance: {initial_variance:.6f}")
-        print(f"  Energy: {initial_energy:.6f} eV")
-        print(f"  Probability: {initial_probability:.6f}")
-        print(f"  Loss: {initial_loss:.6f}")
-
-        # Initialize displacement tensor with gradient tracking - explicitly set dtype
+        # Initialize displacement tensor with gradient tracking
         displacement = torch.zeros(
             (len(atoms), 3),
             requires_grad=True,
-            device="cpu",
-            dtype=self.dtype  # Explicitly set data type
+            device="cpu", # Keep displacement on CPU for numpy conversion
+            dtype=self.dtype
         )
 
         # Create optimizer
         optimizer = torch.optim.Adam([displacement], lr=self.learning_rate)
 
-        # Optimization loop
-        for step in tqdm(range(n_iterations), desc="Optimizing structure"):
+        print(f"[INFO] Starting optimization for parent ID: {parent_id}, generation: {generation}")
+
+        # --- Optimization loop ---
+        for step in tqdm(range(n_iterations), desc=f"Optimizing {struct_name}"):
             self.timer.start(f"step_{step}")
 
             # Zero gradients
             optimizer.zero_grad()
 
             # Apply displacements to get new positions
+            # Ensure displacement is detached before numpy conversion
             new_positions = original_positions + displacement.detach().cpu().numpy()
+
+            # Create current_atoms for this step's calculations
+            current_atoms_step = atoms.copy()
+            current_atoms_step.positions = new_positions
 
             # Check minimum distance constraint
             self.timer.start("distance_check")
-            current_atoms.positions = new_positions
-            distances = current_atoms.get_all_distances(mic=True)
-            np.fill_diagonal(distances, np.inf)
-            min_dist = np.min(distances)
+            distances = current_atoms_step.get_all_distances(mic=True)
+            np.fill_diagonal(distances, np.inf) # Ignore self-distance
+            min_dist = np.min(distances) if distances.size > 0 else np.inf
             self.timer.stop("distance_check")
 
             if min_dist < min_distance:
                 if self.debug:
-                    print(f"[DEBUG] Minimum distance constraint violated: {min_dist:.3f} Å")
+                    print(f"[DEBUG] Step {step}: Minimum distance constraint violated: {min_dist:.3f} Å. Scaling back.")
                 # Scale back displacement to satisfy constraint
-                scale_factor = 0.9  # Scale back by 10%
+                scale_factor = 0.9
                 with torch.no_grad():
                     displacement.data *= scale_factor
                 self.timer.stop(f"step_{step}")
+                # Skip gradient calculation and optimizer step for this iteration
                 continue
 
-            # Calculate variance
-            variance, _, _ = self._calculate_force_variance(current_atoms)
+            # Calculate variance and mean forces using the step's atoms
+            self.timer.start("variance_forces_calc")
+            variance, _, mean_forces = self._calculate_force_variance(current_atoms_step)
+            self.timer.stop("variance_forces_calc")
 
-            # Calculate energy and probability
-            energy = self._calculate_energy(current_atoms)
+            # Calculate energy using the step's atoms
+            energy = self._calculate_energy(current_atoms_step)
 
-            self.timer.start("probability_calculation")
-            probability = self._calculate_probability(
-                energy, self.temperature,
-                normalization_constant
-            )
-            self.timer.stop("probability_calculation")
-
-            # Calculate loss (negative because we're maximizing)
+            # Calculate probability if needed
+            probability = 1.0 # Default if not included
             if self.include_probability:
-                loss = probability * variance
-            else:
-                loss = variance
+                self.timer.start("probability_calculation")
+                probability = self._calculate_probability(
+                    energy, self.temperature, normalization_constant
+                )
+                self.timer.stop("probability_calculation")
 
-            # Track values
-            variance_history.append(variance)
-            energy_history.append(energy)
-            probability_history.append(probability)
-            loss_history.append(loss)
+            # Calculate loss
+            loss = probability * variance if self.include_probability else variance
 
-            # Update best values if improved
+            # Update best loss tracking
             if loss > best_loss:
                 best_loss = loss
-                best_positions = new_positions.copy()
-                print(f"[INFO] Step {step}: New best loss: {loss:.6f}")
+                # No need to save best_positions, best structure is just the one in the trajectory with highest loss
+                if self.debug:
+                     print(f"[DEBUG] Step {step}: New best loss: {loss:.6f}")
 
-            # Save current structure to trajectory
-            self.timer.start("save_trajectory")
-            current_atoms.info['variance'] = variance
-            current_atoms.info['energy'] = energy
-            current_atoms.info['probability'] = probability
-            current_atoms.info['loss'] = loss
-            current_atoms.info['step'] = step
 
-            write(output_file, current_atoms, append=True, write_results=False)
-            self.timer.stop("save_trajectory")
+            # --- Store step results in trajectory ---
+            self.timer.start("store_trajectory_step")
+            step_atoms = current_atoms_step # Use the atoms object already created for this step
 
-            # Compute gradient using numerical approximation
+            # Clear previous calculator if attached by internal methods
+            step_atoms.calc = None
+
+            # Store results in info
+            step_atoms.info['parent_id'] = parent_id
+            step_atoms.info['generation'] = generation
+            step_atoms.info['config_type'] = new_config_type
+            step_atoms.info['step'] = step
+            step_atoms.info['variance'] = variance
+            step_atoms.info['energy'] = energy # Mean energy
+            step_atoms.info['loss'] = loss
+            if self.include_probability:
+                step_atoms.info['probability'] = probability
+
+            # Store mean forces in arrays
+            step_atoms.arrays['forces'] = mean_forces # Store mean forces
+
+            trajectory.append(step_atoms)
+            self.timer.stop("store_trajectory_step")
+
+            # --- Compute gradient using numerical approximation ---
+            # (Calculation performed on current_atoms_step implicitly via forward diff)
             self.timer.start("gradient_calculation")
-            # This replaces the need for autograd/Hessian calculations
-            # by directly estimating the gradient of the loss function
-            epsilon = 1e-4  # Small perturbation
+            epsilon = 1e-4
             grad = np.zeros_like(original_positions)
 
-            if self.debug:
-                print(f"[DEBUG] Starting gradient calculation for {len(atoms)} atoms")
+            if self.debug and step % 10 == 0: # Print less often
+                print(f"[DEBUG] Grad calc step {step}: Starting gradient for {len(atoms)} atoms")
+
+            # Re-use current_atoms_step for gradient calculation to avoid extra copies
+            temp_atoms_for_grad = current_atoms_step.copy()
 
             for i in range(len(atoms)):
                 for j in range(3):
-                    # Forward difference
+                    # Forward difference positions
                     forward_positions = new_positions.copy()
                     forward_positions[i, j] += epsilon
-
-                    # Apply forward positions
-                    current_atoms.positions = forward_positions
+                    temp_atoms_for_grad.positions = forward_positions # Modify positions of the temp object
 
                     # Calculate forward variance
-                    forward_variance, _, _ = self._calculate_force_variance(current_atoms)
+                    forward_variance, _, _ = self._calculate_force_variance(temp_atoms_for_grad)
 
-                    # Calculate forward energy and probability if needed
+                    # Calculate forward loss
                     if self.include_probability:
-                        forward_energy = self._calculate_energy(current_atoms)
+                        forward_energy = self._calculate_energy(temp_atoms_for_grad)
                         forward_probability = self._calculate_probability(
                             forward_energy, self.temperature, normalization_constant
                         )
@@ -340,16 +334,21 @@ class GradientAdversarialOptimizer:
                     else:
                         forward_loss = forward_variance
 
-                    # Estimate gradient
+                    # Estimate gradient component
                     grad[i, j] = (forward_loss - loss) / epsilon
 
             self.timer.stop("gradient_calculation")
 
-            # Convert gradient to torch tensor with matching dtype
-            grad_tensor = torch.tensor(grad, device="cpu", dtype=self.dtype)
+            # Convert gradient to torch tensor
+            grad_tensor = torch.tensor(grad, device=displacement.device, dtype=self.dtype)
 
-            # Manually set the gradient
-            displacement.grad = -grad_tensor  # Negative because optimizer minimizes
+            # Manually set the gradient on the displacement tensor
+            # Gradient points towards increase, optimizer minimizes, so negate it.
+            if displacement.grad is None:
+                 displacement.grad = -grad_tensor
+            else:
+                 displacement.grad.copy_(-grad_tensor) # Use copy_ for in-place update if grad already exists
+
 
             # Step optimizer
             self.timer.start("optimizer_step")
@@ -358,60 +357,50 @@ class GradientAdversarialOptimizer:
 
             self.timer.stop(f"step_{step}")
 
-            if self.debug:
-                print(f"[DEBUG] Step {step} completed in {self.timer.timers[f'step_{step}'][-1]:.4f} seconds")
-                print(f"[DEBUG] Current metrics - Variance: {variance:.6f}, Probability: {probability:.6f}, Loss: {loss:.6f}")
-            else:
-                print(f"Step {step}: Variance={variance:.6f}, Probability={probability:.6f}, Loss={loss:.6f}")
+            # Log progress
+            if self.debug and (step % 5 == 0 or step == n_iterations - 1):
+                 print(f"[DEBUG] Step {step}: Var={variance:.6f}, Prob={probability:.6f}, Loss={loss:.6f}, LR={optimizer.param_groups[0]['lr']:.1e}, Disp_norm={torch.norm(displacement.data):.4f}")
+            elif not self.debug and (step % 10 == 0 or step == n_iterations - 1):
+                 print(f"Step {step}: Variance={variance:.6f}, Probability={probability:.6f}, Loss={loss:.6f}")
 
-        # Create best atoms
-        best_atoms = atoms.copy()
-        best_atoms.positions = best_positions
-        best_variance, _, _ = self._calculate_force_variance(best_atoms)
-        best_energy = self._calculate_energy(best_atoms)
-        best_probability = self._calculate_probability(
-            best_energy, self.temperature, normalization_constant
-        )
 
-        # Save best structure
-        best_atoms.info['variance'] = best_variance
-        best_atoms.info['energy'] = best_energy
-        best_atoms.info['probability'] = best_probability
-        best_atoms.info['loss'] = best_loss
-        best_atoms.info['final'] = True
+        # --- Finalization ---
+        print(f"[INFO] Optimization finished for parent ID: {parent_id}. Total steps: {len(trajectory)}")
 
-        # Create plots
-        self._create_plots(
-            output_path, struct_name,
-            loss_history, variance_history,
-            energy_history, probability_history
-        )
+        # Create plots using the generated trajectory
+        if trajectory: # Ensure trajectory is not empty before plotting
+             self._create_plots(output_path, trajectory)
+        else:
+             print("[WARN] No trajectory generated, skipping plot creation.")
 
-        # Save final results
-        self._save_results(
-            output_path, struct_name,
-            atoms, best_atoms,
-            initial_variance, best_variance,
-            initial_energy, best_energy,
-            initial_probability, best_probability,
-            initial_loss, best_loss,
-            loss_history, variance_history,
-            energy_history, probability_history
-        )
 
         # Print performance summary
         self.timer.summary()
 
-        return best_atoms, best_loss, loss_history
+        # Return the full trajectory
+        return trajectory
 
-    def _create_plots(self, output_path, struct_name, losses, variances, energies, probabilities):
-        """Create and save plots for optimization results."""
+    def _create_plots(self, output_path, trajectory):
+        """Create and save plots for optimization results using trajectory data."""
+        if not trajectory:
+            print("[WARN] Cannot create plots: Trajectory is empty.")
+            return
+
         self.timer.start("create_plots")
+
+        # Extract data from trajectory
+        struct_name = trajectory[0].info.get('structure_name', f"structure_{trajectory[0].info.get('parent_id', 'unknown')}")
+        losses = [atoms.info.get('loss', np.nan) for atoms in trajectory]
+        variances = [atoms.info.get('variance', np.nan) for atoms in trajectory]
+        energies = [atoms.info.get('energy', np.nan) for atoms in trajectory]
+        # Check if probability was included during the run
+        has_probability = 'probability' in trajectory[0].info
+        probabilities = [atoms.info.get('probability', np.nan) for atoms in trajectory] if has_probability else None
 
         # Plot loss history
         plt.figure(figsize=(10, 6))
-        plt.plot(losses, marker='o', label='Loss')
-        plt.xlabel('Iteration')
+        plt.plot(losses, marker='o', linestyle='-', label='Loss')
+        plt.xlabel('Iteration Step')
         plt.ylabel('Loss Value')
         plt.title(f'Loss vs. Iteration - {struct_name}')
         plt.grid(True)
@@ -421,8 +410,8 @@ class GradientAdversarialOptimizer:
 
         # Plot variance history
         plt.figure(figsize=(10, 6))
-        plt.plot(variances, marker='o', color='green', label='Force Variance')
-        plt.xlabel('Iteration')
+        plt.plot(variances, marker='o', linestyle='-', color='green', label='Force Variance')
+        plt.xlabel('Iteration Step')
         plt.ylabel('Force Variance')
         plt.title(f'Force Variance vs. Iteration - {struct_name}')
         plt.grid(True)
@@ -432,10 +421,10 @@ class GradientAdversarialOptimizer:
 
         # Plot energy history
         plt.figure(figsize=(10, 6))
-        plt.plot(energies, marker='o', color='red', label='Energy (eV)')
-        plt.xlabel('Iteration')
-        plt.ylabel('Energy (eV)')
-        plt.title(f'Energy vs. Iteration - {struct_name}')
+        plt.plot(energies, marker='o', linestyle='-', color='red', label='Mean Energy (eV)')
+        plt.xlabel('Iteration Step')
+        plt.ylabel('Mean Energy (eV)')
+        plt.title(f'Mean Energy vs. Iteration - {struct_name}')
         plt.grid(True)
         plt.legend()
         plt.savefig(output_path / f"{struct_name}_energy_plot.png")
@@ -444,8 +433,8 @@ class GradientAdversarialOptimizer:
         # Plot probability history if available
         if probabilities:
             plt.figure(figsize=(10, 6))
-            plt.plot(probabilities, marker='o', color='purple', label='Probability')
-            plt.xlabel('Iteration')
+            plt.plot(probabilities, marker='o', linestyle='-', color='purple', label='Probability')
+            plt.xlabel('Iteration Step')
             plt.ylabel('Boltzmann Probability')
             plt.title(f'Probability vs. Iteration - {struct_name}')
             plt.grid(True)
@@ -456,18 +445,21 @@ class GradientAdversarialOptimizer:
         # Combined plot
         fig, ax1 = plt.subplots(figsize=(12, 7))
 
-        ax1.set_xlabel('Iteration')
-        ax1.set_ylabel('Loss / Variance', color='blue')
-        ax1.plot(losses, marker='o', color='blue', label='Loss')
-        ax1.plot(variances, marker='s', color='green', label='Variance')
-        ax1.tick_params(axis='y', labelcolor='blue')
-        ax1.legend(loc='upper left')
+        ax1.set_xlabel('Iteration Step')
+        ax1.set_ylabel('Loss / Variance', color='tab:blue')
+        line1 = ax1.plot(losses, marker='o', linestyle='-', color='tab:blue', label='Loss')
+        line2 = ax1.plot(variances, marker='s', linestyle=':', color='tab:cyan', label='Variance')
+        ax1.tick_params(axis='y', labelcolor='tab:blue')
 
         ax2 = ax1.twinx()
-        ax2.set_ylabel('Energy (eV)', color='red')
-        ax2.plot(energies, marker='^', color='red', label='Energy')
-        ax2.tick_params(axis='y', labelcolor='red')
-        ax2.legend(loc='upper right')
+        ax2.set_ylabel('Mean Energy (eV)', color='tab:red')
+        line3 = ax2.plot(energies, marker='^', linestyle='--', color='tab:red', label='Mean Energy')
+        ax2.tick_params(axis='y', labelcolor='tab:red')
+
+        # Combine legends
+        lines = line1 + line2 + line3
+        labels = [l.get_label() for l in lines]
+        ax1.legend(lines, labels, loc='best')
 
         plt.title(f'Combined Metrics - {struct_name}')
         plt.grid(True)
@@ -481,58 +473,16 @@ class GradientAdversarialOptimizer:
                      initial_variance, best_variance, initial_energy, best_energy,
                      initial_probability, best_probability, initial_loss, best_loss,
                      loss_history, variance_history, energy_history, probability_history):
-        """Save detailed results to JSON file."""
-        self.timer.start("save_results")
+        # This method is no longer used by the modified optimize method.
+        # It can be kept for other potential uses or removed.
+        # For now, let's keep it but note it's disconnected from the main flow.
+        print("[INFO] _save_results is no longer called by optimize method. Results are returned as trajectory.")
+        pass # Keep the method signature but make it do nothing for now
 
-        import json
-
-        results = {
-            'structure_name': struct_name,
-            'initial': {
-                'variance': float(initial_variance),
-                'energy': float(initial_energy),
-                'probability': float(initial_probability),
-                'loss': float(initial_loss)
-            },
-            'final': {
-                'variance': float(best_variance),
-                'energy': float(best_energy),
-                'probability': float(best_probability),
-                'loss': float(best_loss)
-            },
-            'improvement': {
-                'variance_ratio': float(best_variance / initial_variance),
-                'loss_ratio': float(best_loss / initial_loss)
-            },
-            'history': {
-                'loss': [float(x) for x in loss_history],
-                'variance': [float(x) for x in variance_history],
-                'energy': [float(x) for x in energy_history],
-                'probability': [float(x) for x in probability_history]
-            },
-            'parameters': {
-                'learning_rate': self.learning_rate,
-                'temperature': self.temperature,
-                'include_probability': self.include_probability
-            },
-            'output_files': {
-                'trajectory': f"{struct_name}_adversarial.xyz",
-                'loss_plot': f"{struct_name}_loss_plot.png",
-                'variance_plot': f"{struct_name}_variance_plot.png",
-                'energy_plot': f"{struct_name}_energy_plot.png",
-                'probability_plot': f"{struct_name}_probability_plot.png",
-                'combined_plot': f"{struct_name}_combined_plot.png"
-            },
-            'performance': {
-                'timers': {name: {'total': sum(times), 'average': sum(times)/len(times) if times else 0, 'count': len(times)}
-                          for name, times in self.timer.timers.items()}
-            }
-        }
-
-        with open(output_path / f"{struct_name}_results.json", 'w') as f:
-            json.dump(results, f, indent=2)
-
-        self.timer.stop("save_results")
+        # self.timer.start("save_results")
+        # import json
+        # ... (rest of the original code) ...
+        # self.timer.stop("save_results")
 
 class AdversarialCalculator:
     def __init__(self, model_paths, device='cpu', default_dtype='float32'):

@@ -1,0 +1,23 @@
+{
+"slurm_directives": {
+"job-name": "aa-workflow",
+"nodes": 1,
+"time": "5-06:00:00",
+"constraint": "rtx6000",
+"gres": "gpu:1",
+"ntasks-per-node": "1",
+"cpus-per-task": "8",
+"output" : "aa-workflow-%j.out",
+"error" : "aa-workflow-%j.err"
+},
+"environment": {
+"OMP_NUM_THREADS": "8" 
+},
+"environment_setup": [
+    "echo 'Loading conda environment...'",
+    "source /home/myless/.mambaforge/etc/profile.d/conda.sh",
+    "conda activate mace-cueq",
+    "echo 'Conda environment activated.'"
+],
+"module_load": ""
+}

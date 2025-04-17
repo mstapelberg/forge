@@ -202,114 +202,90 @@ def _split_structures(structures: List[int], ratios: List[int]) -> List[List[int
     return splits
 
 def _save_structures_to_xyz(
-    db_manager,
+    db_manager: DatabaseManager,
     structure_ids: List[int],
     output_path: Path
 ) -> List[int]:
-    """Save structures to xyz file and return list of saved structure IDs."""
-    structures = []
-    saved_ids = []
-    failed_loads = []
-    
-    print(f"Attempting to save {len(structure_ids)} structures to {output_path}")
+    """Save structures with attached VASP calculation data to an XYZ file."""
+    if not structure_ids:
+        print("[WARN] No structure IDs provided to save.")
+        return []
+
+    print(f"Attempting to fetch and save {len(structure_ids)} structures to {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Track mismatches for debugging
-    mismatches = []
-    
+
+    # Fetch structures with latest VASP calculation data attached in batch
+    try:
+        atoms_with_calc = db_manager.get_batch_atoms_with_calculation(
+            structure_ids, calculator='vasp'
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch batch atoms with calculation: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return [] # Return empty list if batch fetch fails
+
+    structures_to_write = []
+    saved_ids = []
+    skipped_ids = [] # Track IDs skipped due to missing calculation or other issues
+
+    # Create a map for quick lookup
+    atoms_map = {atoms.info['structure_id']: atoms for atoms in atoms_with_calc}
+
+    # Iterate through the original list to maintain order somewhat,
+    # but process the fetched data
     for i, struct_id in enumerate(structure_ids):
+        if struct_id in atoms_map:
+            atoms = atoms_map[struct_id]
+            # Check if calculation data was successfully attached by the batch method
+            if 'calculation_info' in atoms.info and 'energy' in atoms.info:
+                # Optional: Add extra validation if needed, though shape checks are in batch method
+                # forces = atoms.arrays.get('forces')
+                # n_atoms = len(atoms)
+                # if forces is not None and forces.shape != (n_atoms, 3):
+                #     print(f"[WARN] Skipping structure {struct_id} due to force shape mismatch (this shouldn't happen after batch retrieval)")
+                #     skipped_ids.append(struct_id)
+                #     continue
+
+                # Prepare atoms for writing (remove potentially large/unneeded info)
+                # Keep essential calculation info if needed downstream, but maybe not full calc dict
+                keys_to_keep = {'energy', 'stress', 'structure_id', 'calculation_info'}
+                atoms.info = {k: v for k, v in atoms.info.items() if k in keys_to_keep or not k.startswith('_')}
+
+                structures_to_write.append(atoms)
+                saved_ids.append(struct_id)
+            else:
+                 # Structure was found, but no VASP calculation was attached (or energy was missing)
+                 print(f"[INFO] Skipping structure {struct_id}: No completed VASP calculation data found/attached.")
+                 skipped_ids.append(struct_id)
+        else:
+            # Structure ID was not found in the initial batch retrieval
+            print(f"[WARN] Structure ID {struct_id} not found in database during batch fetch.")
+            skipped_ids.append(struct_id)
+
+        # Print progress periodically
+        if (i + 1) % 100 == 0:
+            print(f"Processed {i+1}/{len(structure_ids)} requested structures...")
+
+    print(f"\nSuccessfully prepared {len(structures_to_write)} structures for writing.")
+    if skipped_ids:
+        print(f"Skipped {len(skipped_ids)} structures due to missing data or errors.")
+
+    # Write the collected structures to the XYZ file
+    if structures_to_write:
         try:
-            calcs = db_manager.get_calculations(struct_id, calculator='vasp')
-            if not calcs:
-                if i % 100 == 0:
-                    print(f"No VASP calculations found for structure {struct_id}")
-                continue
-            
-            calc = calcs[0]
-            
-            try:
-                atoms = db_manager.get_structure(struct_id)
-            except Exception as e:
-                print(f"Failed to load structure {struct_id}: {str(e)}")
-                failed_loads.append({
-                    'structure_id': struct_id,
-                    'error': str(e)
-                })
-                continue
-            
-            # Validate array shapes
-            forces = np.array(calc['forces']) if calc.get('forces') is not None else None
-            stress = np.array(calc['stress']) if calc.get('stress') is not None else None
-            energy = calc.get('energy')
-            n_atoms = len(atoms)
-            
-            if forces is not None and forces.shape[0] != n_atoms:
-                mismatch = {
-                    'structure_id': struct_id,
-                    'n_atoms': n_atoms,
-                    'forces_shape': forces.shape,
-                    'calculator': calc.get('calculator'),
-                    'calculation_id': calc.get('calculation_id')
-                }
-                mismatches.append(mismatch)
-                print(f"WARNING: Structure {struct_id} has {n_atoms} atoms but forces shape is {forces.shape}")
-                continue  # Skip this structure
-            
-            # Print debug info every 100 structures
-            if i % 100 == 0:
-                print(f"Processing structure {i}/{len(structure_ids)}: ID={struct_id}")
-                print(f"Structure {struct_id} calculation info:")
-                print(f"  calculator: {calc.get('calculator')}")
-                print(f"  energy: {energy}")
-                print(f"  forces shape: {forces.shape if forces is not None else None}")
-                print(f"  stress shape: {stress.shape if stress is not None else None}")
-                print(f"  atoms info: {n_atoms} atoms, cell={atoms.cell.tolist()}")
-            
-            # Create calculator with validated arrays
-            atoms.arrays['forces'] = forces  # Forces go in arrays since it's per-atom
-            atoms.info['energy'] = energy    # Energy goes in info
-            if stress is not None:           # Only add stress if it exists
-                atoms.info['stress'] = stress
-            
-            # Remove any empty keys from atoms.info
-            atoms.info = {k: v for k, v in atoms.info.items() if v is not None and not (isinstance(v, (list, np.ndarray)) and len(v) == 0)}
-            
-            structures.append(atoms)
-            saved_ids.append(struct_id)
-            
+            # Using ase.io.write which handles writing multiple frames
+            write(output_path, structures_to_write, format='extxyz')
+            print(f"Wrote {len(structures_to_write)} structures to {output_path}")
         except Exception as e:
-            print(f"Error processing structure {struct_id}: {str(e)}")
+            print(f"[ERROR] Error writing structures to {output_path}: {e}")
             import traceback
             print(traceback.format_exc())
-    
-    print(f"Successfully processed {len(structures)} structures")
-    
-    if mismatches:
-        print("\nFound atom count / forces shape mismatches:")
-        for m in mismatches:
-            print(f"Structure {m['structure_id']} (calc {m['calculation_id']}):")
-            print(f"  {m['n_atoms']} atoms but forces shape {m['forces_shape']}")
-            print(f"  calculator: {m['calculator']}")
-    
-    if failed_loads:
-        print("\nFailed to load these structures:")
-        for f in failed_loads:
-            print(f"Structure {f['structure_id']}: {f['error']}")
-    
-    if structures:
-        try:
-            with open(output_path, 'w') as f:
-                for atoms in structures:
-                    write(f, atoms, format='extxyz')
-            print(f"Wrote {len(structures)} structures to {output_path}")
-        except Exception as e:
-            print(f"Error writing structures to {output_path}: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
+            # Depending on desired behavior, maybe return partial saved_ids or raise error
     else:
-        print("No structures to write!")
-    
-    return saved_ids
+        print("[WARN] No valid structures with calculation data found to write!")
+
+    return saved_ids # Return IDs of structures actually written
 
 def _replace_properties(xyz_path: Path):
     """Replace property names in xyz file."""

@@ -1,5 +1,5 @@
 # Core database interface (core/database.py)
-from typing import Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple
 import psycopg2
 from psycopg2.extras import Json
 from ase import Atoms
@@ -535,13 +535,13 @@ class DatabaseManager:
                 print(f"[DEBUG] Query returned {len(results)} matching structures")  # Debug
             return results
     
-    def find_structures_without_calculation(self, model_type: Optional[str] = None, status: Optional[str] = None) -> List[int]:
+    def find_structures_without_calculation(self, calculator: Optional[str] = None) -> List[int]:
         """
         Return a list of structure_ids that do NOT have a calculation
-        with the given model_type (and optionally status).
-        If model_type and status are None, finds structures with no calculations at all.
+        with the given calculator.
+        If calculator is None, finds structures with no calculations at all.
         """
-        if model_type is None:
+        if calculator is None:
             query = """
                 SELECT s.structure_id
                 FROM structures s
@@ -554,7 +554,7 @@ class DatabaseManager:
             params = []
         else:
             # replace * with % for SQL LIKE pattern matching 
-            model_pattern = model_type.replace('*', '%')
+            calculator_pattern = calculator.replace('*', '%')
             query = """
                 SELECT s.structure_id
                 FROM structures s
@@ -562,14 +562,13 @@ class DatabaseManager:
                     SELECT 1
                     FROM calculations c
                     WHERE c.structure_id = s.structure_id
-                    AND c.model_type LIKE %s
-                    AND (%s IS NULL OR c.metadata->>'status' = %s)
+                    AND c.calculator LIKE %s
                 )
             """
-            params = [model_pattern, status, status]
+            params = [calculator_pattern]
 
         with self.conn.cursor() as cur:
-            cur.execute(query, params)
+            cur.execute(query, tuple(params))
             rows = cur.fetchall()
 
         return [r[0] for r in rows]
@@ -578,7 +577,7 @@ class DatabaseManager:
         self,
         xyz_file: str,
         skip_duplicates: bool = True,
-        default_calculator: str = "vasp" # Changed default
+        default_calculator: str = "vasp", # Changed default
     ) -> List[int]:
         """
         Reads frames from a .xyz file, adds structures, and optionally adds calculations
@@ -587,7 +586,7 @@ class DatabaseManager:
         Args:
             xyz_file: Path to the .xyz file containing frames.
             skip_duplicates: Whether to skip duplicates by position and composition hash.
-            default_calculator: The calculator name to use if adding calculation data.
+            default_calculator: The calculator name to use if adding associated calculation data.
 
         Returns:
             List of structure_ids added to the database.
@@ -722,9 +721,9 @@ class DatabaseManager:
         # No exact match found
         return False
 
-    def remove_duplicate_structures(self,
-                                    decimal: int = 5,
-                                    position_tol: float = 1e-5) -> Dict[int, List[int]]:
+    def remove_duplicate_structures(
+        self, decimal: int = 5, position_tol: float = 1e-5
+    ) -> Dict[int, List[int]]:
         """
         Remove duplicate structures by hashing positions (rounded to `decimal` places)
         and symbols. Keeps only the earliest structure_id in each hash group, removes
@@ -882,11 +881,12 @@ class DatabaseManager:
             return metadata
 
     def update_structure_metadata(self, structure_id: int, metadata: Dict) -> None:
-        """Update structure metadata in the database. WARNING: This will overwrite the existing metadata.
+        """Update structure metadata in the database. WARNING: This will overwrite the existing metadata JSONB
+        field in the database with the provided dictionary.
         
         Args:
-            structure_id: Structure ID
-            metadata: New metadata dictionary
+            structure_id: The ID of the structure whose metadata to update.
+            metadata: The new metadata dictionary to store.
         """
         if self.dry_run:
             print(f"[DRY RUN] Would update metadata for structure {structure_id}")
@@ -902,258 +902,416 @@ class DatabaseManager:
 
     def get_atoms_with_calculation(self, structure_id: int, calculator: Optional[str] = 'vasp') -> Optional[Atoms]:
         """
+        DEPRECATED: Use get_batch_atoms_with_calculation instead for better performance,
+                    especially when fetching multiple structures.
+
         Get an Atoms object with the latest calculation results attached.
 
         Args:
-            structure_id: ID of structure to retrieve.
+            structure_id: ID of the structure to retrieve.
             calculator: Name of calculator results to attach (e.g., 'vasp'). Defaults to 'vasp'.
 
         Returns:
             Atoms object with calculation results in .info/.arrays, or None if structure/calc not found.
         """
+        print("[WARN] get_atoms_with_calculation is deprecated. Use get_batch_atoms_with_calculation.")
+        # Keep old implementation for now, or call the new batch method with single ID
+        batch_result = self.get_batch_atoms_with_calculation([structure_id], calculator=calculator)
+        return batch_result[0] if batch_result else None
+
+    def get_structures_batch(self, structure_ids: List[int]) -> Dict[int, Atoms]:
+        """Retrieves multiple structures efficiently in a single query.
+
+        Args:
+            structure_ids: A list of structure IDs to retrieve.
+
+        Returns:
+            A dictionary mapping each found structure_id to its ASE Atoms object.
+            IDs not found in the database will be omitted from the result.
+        """
+        if not structure_ids:
+            return {}
+        if self.dry_run:
+            # Return dummy structures in dry run mode
+            from ase.build import bulk
+            atoms_dict = {}
+            for sid in structure_ids:
+                atoms = bulk('Ti', 'bcc', a=3.3)
+                atoms.info['structure_id'] = sid
+                atoms.info['structure_name'] = f'test_struct_{sid}'
+                atoms_dict[sid] = atoms
+            print(f"[DRY RUN] Would retrieve batch of {len(structure_ids)} structures.")
+            return atoms_dict
+
+        atoms_map = {}
+        query = """
+            SELECT structure_id, positions, cell, pbc, formula, metadata
+            FROM structures
+            WHERE structure_id = ANY(%s)
+        """
         try:
-            atoms = self.get_structure(structure_id)
+            with self.conn.cursor() as cur:
+                # Pass structure_ids as a list/tuple directly for ANY()
+                cur.execute(query, (list(structure_ids),))
+                results = cur.fetchall()
+
+                for row in results:
+                    struct_id, positions, cell, pbc, formula, metadata = row
+                    atoms = Atoms(
+                        symbols=formula,
+                        positions=np.array(positions),
+                        cell=np.array(cell),
+                        pbc=pbc
+                    )
+                    # Update with metadata first (if any)
+                    if metadata:
+                        atoms.info.update(metadata)
+                    # Explicitly add/overwrite structure_id
+                    atoms.info['structure_id'] = struct_id
+                    atoms_map[struct_id] = atoms
+
         except Exception as e:
-            print(f"[WARN] Failed to retrieve structure {structure_id}: {e}")
-            return None
+            print(f"[ERROR] Failed to retrieve structures batch: {e}")
+            # Optionally re-raise or return partial results depending on desired behavior
+            raise # Re-raise by default
 
-        calcs = self.get_calculations(structure_id, calculator=calculator) # Gets newest first
+        return atoms_map
 
-        if calcs:
-            calc_data = calcs[0] # Use the latest matching calculation
+    def get_calculations_batch(self, structure_ids: List[int], calculator: Optional[str] = None) -> Dict[int, Dict]:
+        """Retrieves the latest calculation for multiple structures efficiently.
 
-            # Store energy and stress in atoms.info
-            if calc_data.get('energy') is not None:
-                # Ensure energy is float, handle potential list artifact from older schema if necessary
-                energy_val = calc_data['energy']
-                atoms.info['energy'] = float(energy_val) if isinstance(energy_val, (int, float)) else None
-            else:
-                atoms.info.pop('energy', None) # Remove if None
-
-            if calc_data.get('stress') is not None:
-                # Stress should already be numpy array from get_calculations
-                atoms.info['stress'] = calc_data['stress']
-            else:
-                 atoms.info.pop('stress', None) # Remove if None
-
-
-            # Store forces in atoms.arrays
-            atoms.arrays.pop('forces', None) # Clear previous forces first
-            if calc_data.get('forces') is not None:
-                forces = calc_data['forces'] # Should be numpy array
-                if forces.shape == (len(atoms), 3):
-                    atoms.arrays['forces'] = forces
-                else:
-                     print(f"[WARN] Mismatched forces shape for structure {structure_id}, calc {calc_data.get('calculation_id')}. Expected {(len(atoms), 3)}, got {forces.shape}. Forces not attached.")
-
-
-            # Add calculation metadata to atoms.info under a specific key
-            atoms.info['calculation_info'] = {
-                 'calculation_id': calc_data.get('calculation_id'),
-                 'calculator': calc_data.get('calculator'),
-                 'calculation_source_path': calc_data.get('calculation_source_path'),
-                 **(calc_data.get('metadata', {})) # Unpack calc metadata here
-             }
-
-        else:
-             # Clear previous calc info if no matching calculation found
-             atoms.info.pop('energy', None)
-             atoms.info.pop('stress', None)
-             atoms.arrays.pop('forces', None)
-             atoms.info.pop('calculation_info', None)
-
-
-        return atoms
-
-    def get_atoms_with_calculations(self, structure_ids: Union[int, List[int]], calculator: Optional[str] = 'vasp') -> List[Atoms]:
-        """
-        Get multiple Atoms objects with calculation results attached.
+        Uses a window function (`ROW_NUMBER`) to select only the most recent
+        calculation per structure_id, optionally filtering by calculator type.
 
         Args:
-            structure_ids: Single ID or list of structure IDs to retrieve.
-            calculator: Name of calculator results to attach (e.g., 'vasp').
+            structure_ids: List of structure IDs to fetch calculations for.
+            calculator: Optional calculator name to filter by.
 
         Returns:
-            List of Atoms objects with calculation results.
+            A dictionary mapping each structure_id (that has a matching calculation)
+            to its latest calculation dictionary.
         """
-        if isinstance(structure_ids, int):
-            structure_ids = [structure_ids]
+        if not structure_ids:
+            return {}
 
-        atoms_list = []
-        for struct_id in structure_ids:
-            atoms = self.get_atoms_with_calculation(struct_id, calculator=calculator)
-            if atoms:
-                atoms.info['structure_id'] = struct_id # Ensure structure_id is in info
-                atoms_list.append(atoms)
-            # Warning printed by get_atoms_with_calculation if retrieval failed
+        params: List[Union[List[int], str]] = [list(structure_ids)] # Start with list of IDs for ANY()
 
-        return atoms_list
-
-    def find_structures_by_metadata(self, 
-                                 metadata_filters: Dict[str, any],
-                                 operator: str = 'exact',
-                                 debug: bool = False) -> List[int]:
+        # Base query using ROW_NUMBER() to get the latest calculation per structure_id
+        query = """
+        WITH RankedCalculations AS (
+            SELECT
+                calculation_id, structure_id, calculator, calculation_source_path,
+                energy, forces, stress, metadata, created_at,
+                ROW_NUMBER() OVER(PARTITION BY structure_id ORDER BY created_at DESC) as rn
+            FROM calculations
+            WHERE structure_id = ANY(%s)
         """
-        Search for structures by metadata fields.
-        
+
+        # Add calculator filter if provided
+        if calculator:
+            query += " AND calculator = %s"
+            params.append(calculator)
+
+        query += """
+        )
+        SELECT
+            calculation_id, structure_id, calculator, calculation_source_path,
+            energy, forces, stress, metadata
+        FROM RankedCalculations
+        WHERE rn = 1;
+        """
+
+        results_map = {}
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, tuple(params))
+                rows = cur.fetchall()
+                for row in rows:
+                    struct_id = row[1]
+                    calc_dict = {
+                        "calculation_id": row[0],
+                        "structure_id": struct_id,
+                        "calculator": row[2],
+                        "calculation_source_path": row[3],
+                        "energy": row[4],
+                        "forces": np.array(row[5]) if row[5] else None,
+                        "stress": np.array(row[6]) if row[6] else None,
+                        "metadata": row[7] if row[7] else {}
+                    }
+                    results_map[struct_id] = calc_dict
+        except Exception as e:
+             print(f"[ERROR] Failed to retrieve calculations batch: {e}")
+             raise # Re-raise by default
+
+        return results_map
+    
+    def get_batch_atoms_with_calculation(
+        self, structure_ids: List[int], calculator: Optional[str] = "vasp"
+    ) -> List[Atoms]:
+        """Efficiently retrieves multiple Atoms objects with their latest calculation attached.
+
+        Combines batch fetching of structures and calculations to minimize
+        database queries.
+
         Args:
-            metadata_filters: Dictionary of {metadata_key: value} to search for
-            operator: How to match values - 'exact' (default), 'contains', '>', '<', '>=', '<='
-                     String values only support 'exact' and 'contains'
-            debug: If True, print debug information about the query
-            
+            structure_ids: List of structure IDs to retrieve.
+            calculator: Name of the calculator results to attach (e.g., 'vasp').
+                        Defaults to 'vasp'. Pass None to get latest calculation
+                        regardless of calculator type.
+
         Returns:
-            List of structure IDs matching the criteria
+            A list of ASE Atoms objects, each populated with data from its latest
+            matching calculation (if found) in `atoms.info` and `atoms.arrays`.
+            Structures for which no matching calculation is found will still be
+            included but without calculation data attached. The order corresponds
+            to the input `structure_ids`, but only includes found structures.
+        """
+        if not structure_ids:
+            return []
+
+        # 1. Batch get structures
+        atoms_map = self.get_structures_batch(structure_ids)
+        if not atoms_map:
+            return [] # No structures found for the given IDs
+
+        # 2. Batch get latest calculations for the *found* structure IDs
+        found_ids = list(atoms_map.keys())
+        calculations_map = self.get_calculations_batch(found_ids, calculator=calculator)
+
+        # 3. Combine data in Python
+        final_atoms_list = []
+        for sid in structure_ids: # Iterate original list to preserve order somewhat
+            if sid in atoms_map:
+                atoms = atoms_map[sid]
+                calc_data = calculations_map.get(sid) # Get the latest calc if available
+
+                # Clear any previous calc info first
+                atoms.info.pop("energy", None)
+                atoms.info.pop("stress", None)
+                atoms.arrays.pop("forces", None)
+                atoms.info.pop("calculation_info", None)
+
+                if calc_data:
+                    # Attach energy/stress to info
+                    if calc_data.get("energy") is not None:
+                         # Should already be float or None from get_calculations_batch
+                        atoms.info["energy"] = calc_data["energy"]
+                    if calc_data.get("stress") is not None:
+                         # Should already be numpy array or None
+                        atoms.info["stress"] = calc_data["stress"]
+
+                    # Attach forces to arrays (with shape check)
+                    if calc_data.get("forces") is not None:
+                        forces = calc_data["forces"] # Should be numpy array or None
+                        if forces is not None and forces.shape == (len(atoms), 3):
+                            atoms.arrays["forces"] = forces
+                        elif forces is not None:
+                             print(f"[WARN] Mismatched forces shape for structure {sid}, "
+                                   f"calc {calc_data.get('calculation_id')}. "
+                                   f"Expected {(len(atoms), 3)}, got {forces.shape}. "
+                                   "Forces not attached.")
+
+                    # Attach calculation metadata
+                    atoms.info["calculation_info"] = {
+                        "calculation_id": calc_data.get("calculation_id"),
+                        "calculator": calc_data.get("calculator"),
+                        "calculation_source_path": calc_data.get(
+                            "calculation_source_path"
+                        ),
+                        **(calc_data.get("metadata", {})),
+                    }
+                final_atoms_list.append(atoms)
+
+        return final_atoms_list
+
+    def find_structures_by_metadata(
+        self,
+        metadata_filters: Dict[str, Any],
+        operator: str = "exact",
+        debug: bool = False,
+    ) -> List[int]:
+        """Searches for structures based on key-value pairs in their metadata.
+
+        Supports matching exact values, checking if a string contains a substring,
+        or comparing numeric values ('>', '<', '>=', '<='). Handles nested
+        metadata keys using dot notation (e.g., 'potential.name').
+
+        Args:
+            metadata_filters: Dictionary of {metadata_key: value} criteria.
+                              Keys can use dot notation for nested access.
+            operator: Comparison operator: 'exact' (default), 'contains' (for strings),
+                      '>', '<', '>=', '<=' (for numbers).
+            debug: If True, print the generated SQL query and parameters.
+
+        Returns:
+            A list of structure IDs matching the metadata criteria.
         """
         if self.dry_run:
-            print(f"[DRY RUN] Would search for structures with metadata: {metadata_filters}")
-            return [1, 2, 3]  # Return dummy IDs
-        
+            print(f"[DRY RUN] Would search structures by metadata: {metadata_filters} ({operator})")
+            return [4, 5, 6]  # Dummy IDs
+
+        if self.conn is None:
+            raise ConnectionError("Database is not connected.")
+
         query = "SELECT structure_id FROM structures WHERE 1=1"
         params = []
-        
+
         for key, value in metadata_filters.items():
-            # Handle nested keys with -> operator in PostgreSQL
-            if '.' in key:
-                # Convert Python-style dot notation to PostgreSQL JSON path
-                parts = key.split('.')
-                json_path = '->'.join([f"'{part}'" for part in parts[:-1]]) + "->>'" + parts[-1] + "'"
-                db_key = f"metadata->{json_path}"
+            # Build JSON path expression (handling potential nesting)
+            parts = key.split(".")
+            # Use #>> for text extraction at the final path element
+            json_path_op = "->".join([f"'{part}'" for part in parts[:-1]])
+            if json_path_op:
+                 db_key_base = f"metadata->{json_path_op}"
             else:
-                db_key = f"metadata->>'{key}'"
-            
-            # Build query based on operator and value type
-            if operator == 'exact':
+                 db_key_base = "metadata" # Top level key
+            db_key = f"{db_key_base}->>'{parts[-1]}'" # Final text extraction
+
+
+            # Add condition based on operator and value type
+            if operator == "exact":
                 if value is None:
-                    query += f" AND {db_key} IS NULL"
+                    # Check if the final key exists and is explicitly NULL, or if path doesn't exist
+                    # This logic might need refinement based on exact desired NULL handling for nested keys
+                     query += f" AND ({db_key} IS NULL)" # Simpler check: is the extracted text value NULL?
                 else:
                     query += f" AND {db_key} = %s"
-                    params.append(str(value))  # Convert to string for JSON key comparison
-            elif operator == 'contains' and isinstance(value, str):
+                    params.append(str(value)) # Compare as text
+            elif operator == "contains" and isinstance(value, str):
                 query += f" AND {db_key} LIKE %s"
-                params.append(f'%{value}%')
-            elif operator in ('>', '<', '>=', '<=') and isinstance(value, (int, float)):
-                query += f" AND ({db_key})::float {operator} %s"
+                params.append(f"%{value}%")
+            elif operator in (">", "<", ">=", "<=") and isinstance(value, int | float):
+                # Attempt direct cast to numeric for comparison
+                query += f" AND ({db_key})::numeric {operator} %s"
                 params.append(value)
+            elif operator in (">", "<", ">=", "<=") and value is None:
+                 raise ValueError(f"Comparison operators ('{operator}') cannot be used with None value.")
             else:
-                raise ValueError(f"Unsupported operator '{operator}' for value type {type(value)}")
-        
+                raise ValueError(
+                    f"Unsupported operator '{operator}' for value type {type(value)} "
+                    f"or unsupported value type for operator."
+                )
+
         if debug:
-            print(f"[DEBUG] Executing query: {query}")
-            print(f"[DEBUG] With params: {params}")
-        
-        with self.conn.cursor() as cur:
-            cur.execute(query, params)
-            results = [row[0] for row in cur.fetchall()]
-        
+             with self.conn.cursor() as temp_cur:
+                  print(f"[DEBUG] Executing query: {temp_cur.mogrify(query, tuple(params)).decode()}")
+
+        results = []
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, tuple(params))
+                results = [row[0] for row in cur.fetchall()]
+        except psycopg2.Error as e:
+            print(f"[ERROR] Failed to find structures by metadata: {e}")
+            raise
+
         if debug:
             print(f"[DEBUG] Query returned {len(results)} matching structures")
-        
+
         return results
 
     def remove_structure(self, structure_id: int, dry_run_override: Optional[bool] = None) -> None:
         """
-        Remove a structure and all its associated calculations from the database.
+        Remove a structure and its associated calculations from the database.
 
         Args:
             structure_id: The ID of the structure to remove.
-            dry_run_override: Optionally override the instance's dry_run setting for this operation.
-                              If None, uses the instance's self.dry_run setting.
+            dry_run_override: Optionally override the instance's dry_run setting
+                              for this specific operation.
+
+        Raises:
+            psycopg2.Error: If there is a database deletion error.
+            ConnectionError: If the database is not connected (and not in dry run).
         """
-        # Determine if this operation should be a dry run
         is_dry_run = self.dry_run if dry_run_override is None else dry_run_override
 
         if is_dry_run:
             print(f"[DRY RUN] Preparing to remove structure ID: {structure_id}")
-            # Simulate finding associated calculations
-            try:
-                with self.conn.cursor() as cur: # Need connection even for dry run reads
-                    cur.execute(
-                        "SELECT calculation_id FROM calculations WHERE structure_id = %s",
-                        (structure_id,)
-                    )
-                    calc_ids = [row[0] for row in cur.fetchall()]
-                if calc_ids:
-                    print(f"[DRY RUN] Would remove associated calculation IDs: {calc_ids}")
-                else:
-                    print("[DRY RUN] No associated calculations found.")
-                print(f"[DRY RUN] Would remove structure ID: {structure_id}")
-            except AttributeError: # Handle case where self.conn is None in dry_run init
-                 print("[DRY RUN] Cannot query calculations as no database connection exists in dry run mode.")
-                 print(f"[DRY RUN] Would attempt to remove structure ID: {structure_id} and any associated calculations.")
-            return # Stop here for dry run
+            # Simulate checking associated calculations (requires connection if possible)
+            if self.conn:
+                 try:
+                    with self.conn.cursor() as cur:
+                         cur.execute(
+                              "SELECT COUNT(*) FROM calculations WHERE structure_id = %s",
+                              (structure_id,)
+                         )
+                         count = cur.fetchone()[0]
+                         print(f"[DRY RUN] Found {count} associated calculations.")
+                         print(f"[DRY RUN] Would remove structure ID: {structure_id} (cascading to calculations).")
+                 except psycopg2.Error as e:
+                      print(f"[DRY RUN][WARN] Could not query calculations (DB error): {e}")
+                      print(f"[DRY RUN] Would attempt removal of structure {structure_id} anyway.")
+            else:
+                 print("[DRY RUN] Cannot query calculations (no DB connection).")
+                 print(f"[DRY RUN] Would attempt removal of structure {structure_id} (cascading to calculations).")
+            return
 
         # --- Actual Deletion ---
         if self.conn is None:
              print("[ERROR] Cannot remove structure: Database connection is not initialized.")
              return
 
-        print(f"[INFO] Attempting to remove structure ID: {structure_id} and its calculations...")
+        print(
+            f"[INFO] Attempting to remove structure ID: {structure_id} "
+            f"and its calculations (via cascade)..."
+        )
         try:
             with self.conn.cursor() as cur:
-                # Step 1: Remove associated calculations first due to foreign key constraints
-                cur.execute(
-                    """
-                    DELETE FROM calculations
-                    WHERE structure_id = %s
-                    RETURNING calculation_id
-                    """,
-                    (structure_id,)
-                )
-                deleted_calc_ids = [row[0] for row in cur.fetchall()]
-                if deleted_calc_ids:
-                    print(f"[INFO] Removed associated calculation IDs: {deleted_calc_ids}")
-                else:
-                    print("[INFO] No associated calculations found to remove.")
-
-                # Step 2: Remove the structure itself
+                # Delete the structure; cascade handled by DB constraint
                 cur.execute(
                     """
                     DELETE FROM structures
                     WHERE structure_id = %s
                     RETURNING structure_id
                     """,
-                    (structure_id,)
+                    (structure_id,),
                 )
                 deleted_struct_id = cur.fetchone()
 
                 if deleted_struct_id:
-                    print(f"[INFO] Successfully removed structure ID: {deleted_struct_id[0]}")
+                    print(
+                        f"[INFO] Successfully removed structure ID: "
+                        f"{deleted_struct_id[0]} (and cascaded deletes)."
+                    )
                 else:
                     print(f"[WARN] Structure ID {structure_id} not found or already removed.")
 
-            # Step 3: Commit the transaction
             self.conn.commit()
             print(f"[INFO] Removal of structure {structure_id} committed.")
 
-        except Exception as e:
+        except psycopg2.Error as e:
             print(f"[ERROR] Failed to remove structure {structure_id}: {e}")
-            # Rollback in case of error during the transaction
             if self.conn:
                 self.conn.rollback()
             print("[INFO] Transaction rolled back.")
+            raise
 
-    def add_mlip_model(self,
-                       model_generation: int,
-                       model_file_path: str, # S3 URI or local path
-                       mlip_type: Optional[str] = None,
-                       train_structure_ids: Optional[List[int]] = None,
-                       validation_structure_ids: Optional[List[int]] = None,
-                       test_structure_ids: Optional[List[int]] = None,
-                       model_parameters: Optional[Dict] = None,
-                       wandb_link: Optional[str] = None,
-                       notes: Optional[str] = None) -> int:
+    def add_mlip_model(
+        self,
+        model_generation: int,
+        model_file_path: str,
+        mlip_type: Optional[str] = None,
+        train_structure_ids: Optional[List[int]] = None,
+        validation_structure_ids: Optional[List[int]] = None,
+        test_structure_ids: Optional[List[int]] = None,
+        model_parameters: Optional[Dict] = None,
+        wandb_link: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> int:
         """Adds a record for a trained MLIP model."""
         if self.dry_run:
-             print(f"[DRY RUN] Would add MLIP model record for generation {model_generation}")
+             print(f"[DRY RUN] Would add MLIP model record for gen {model_generation}")
              fake_id = self._fake_id_counter
              self._fake_id_counter += 1
              return fake_id
 
-        if not model_file_path:
-             raise ValueError("model_file_path is required.")
+        if self.conn is None:
+            raise ConnectionError("Database is not connected.")
+
         if model_generation is None: # Check explicitly as it's NOT NULL
              raise ValueError("model_generation is required.")
+        if not model_file_path:
+             raise ValueError("model_file_path is required.")
 
 
         # Optional: Add validation to check if structure IDs actually exist? Might be slow.
@@ -1176,8 +1334,33 @@ class DatabaseManager:
                  Json(fix_numpy(model_parameters)) if model_parameters else None,
                  wandb_link,
                  model_file_path,
-                 notes
+                 notes,
              ))
              mlip_model_id = cur.fetchone()[0]
         self.conn.commit()
         return mlip_model_id
+
+    def close_connection(self):
+         """Closes the database connection if it is open."""
+         if self.conn is not None:
+              try:
+                   self.conn.close()
+                   self.conn = None
+                   if self.debug: print("[DEBUG] Database connection closed.")
+              except psycopg2.Error as e:
+                   print(f"[ERROR] Failed to close database connection: {e}")
+
+    def __del__(self):
+         """Ensures the database connection is closed when the object is deleted."""
+         self.close_connection()
+
+    def __enter__(self):
+        """Enter the runtime context related to this object."""
+        # Can add logic here if needed, e.g., ensure connection is active
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Exit the runtime context related to this object, ensuring connection closure."""
+        self.close_connection()
+        # Return False to propagate exceptions, True to suppress them
+        return False

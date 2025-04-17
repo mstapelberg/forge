@@ -1,9 +1,4 @@
 #!/usr/bin/env python
-# TODO on 2025-02-28
-# TODO need to add metadata to the vasp jobs individually that was in the ase.info of the atoms object we wrote to
-# TODO Also need to make sure the output from the aa optimization (including the trajectory) is saved to it's own folder in the aa_output
-# subdirectory of the root aa directory
-# TODO need to re-do the test so that it grabs 25 structures from the database at random, runs force variance ranking on them, and then does aa on the top 3
 """Script engine for running adversarial attack optimization on a batch of structures.
 
 This script provides two main optimization engines:
@@ -33,8 +28,109 @@ from forge.core.adversarial_attack import (
 from forge.core.database import DatabaseManager
 
 
+# --- Variance Calculation Function ---
+def calculate_batch_variance(
+    xyz_file: str,
+    output_json: str,
+    model_paths: list[str],
+    device: str = "cuda",
+    debug: bool = False,
+):
+    """Calculates force variance for all structures in an XYZ file.
+
+    Args:
+        xyz_file: Path to the input XYZ file.
+        output_json: Path to save the variance results JSON file.
+        model_paths: List of paths to the MACE model files.
+        device: Device to run calculations on ('cpu' or 'cuda').
+        debug: Enable debug output.
+    """
+    print(f"[INFO] Starting variance calculation for: {xyz_file}")
+    print(f"[INFO] Output JSON: {output_json}")
+    print(f"[INFO] Device: {device}")
+
+    output_path = Path(output_json)
+    output_path.parent.mkdir(parents=True, exist_ok=True) # Ensure output dir exists
+
+    # Initialize calculator
+    try:
+        calculator = AdversarialCalculator(
+            model_paths=model_paths,
+            device=device
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize AdversarialCalculator: {e}")
+        # Write empty results file to signal failure
+        with open(output_path, 'w') as f:
+            json.dump({}, f)
+        sys.exit(1)
+
+    # Load structures
+    try:
+        atoms_list = ase.io.read(xyz_file, ':')
+        print(f"[INFO] Loaded {len(atoms_list)} structures from {xyz_file}")
+    except FileNotFoundError:
+        print(f"[ERROR] Input XYZ file not found: {xyz_file}")
+        with open(output_path, 'w') as f:
+            json.dump({}, f)
+        sys.exit(1)
+    except Exception as e:
+        print(f"[ERROR] Failed to read XYZ file {xyz_file}: {e}")
+        with open(output_path, 'w') as f:
+            json.dump({}, f)
+        sys.exit(1)
+
+    variance_results = {}
+    failed_count = 0
+
+    for i, atoms in enumerate(atoms_list):
+        # Use structure_id directly as the key
+        struct_id = atoms.info.get('structure_id') 
+        if struct_id is None:
+             print(f"[WARNING] Structure at index {i} in {xyz_file} is missing 'structure_id' in info. Skipping.")
+             failed_count += 1
+             continue
+             
+        # Keep original name for logging if needed, but use ID as key
+        #struct_name_log = atoms.info.get('structure_name', f'struct_index_{i}') 
+        #if debug: print(f"[DEBUG] Calculating variance for ID: {struct_id} (Name: {struct_name_log})...")
+
+        try:
+            # Calculate forces
+            forces = calculator.calculate_forces(atoms)
+            if forces.size == 0: # Check if force calculation failed
+                 print(f"[WARNING] Force calculation failed for structure ID {struct_id}. Skipping.")
+                 failed_count += 1
+                 continue
+
+            # Calculate variance
+            atom_variances = calculator.calculate_normalized_force_variance(forces)
+            structure_variance = float(np.mean(atom_variances))
+
+            # Use string representation of struct_id as JSON key
+            variance_results[str(struct_id)] = structure_variance 
+            if debug: print(f"[DEBUG] Structure ID {struct_id}: Variance = {structure_variance:.6f}")
+
+        except Exception as e:
+            print(f"[ERROR] Variance calculation failed for structure ID {struct_id}: {e}")
+            if debug:
+                import traceback
+                traceback.print_exc()
+            failed_count += 1
+            continue # Skip to next structure
+
+    # Save results to JSON
+    try:
+        with open(output_path, 'w') as f:
+            json.dump(variance_results, f, indent=2)
+        print(f"[INFO] Variance results saved to {output_path}")
+        if failed_count > 0:
+             print(f"[WARNING] Failed to calculate variance for {failed_count} structures.")
+    except Exception as e:
+        print(f"[ERROR] Failed to write results JSON {output_path}: {e}")
+
+
 # --- run_gradient_aa_optimization function ---
-# (Add detailed docstring)
 def run_gradient_aa_optimization(
     xyz_file: str,
     output_dir: str,
@@ -46,9 +142,6 @@ def run_gradient_aa_optimization(
     temperature: float = 0.86, # Temp for probability weighting (eV)
     device: str = "cuda",
     use_autograd: bool = False, # This likely needs specific MACE versions/forks
-    save_to_database: bool = True,
-    database_id: int = None, # Specific parent ID if known
-    config_type: str = "aa-gradient",
     debug: bool = False,
     save_trajectory: bool = True, # Added parameter
 ):
@@ -56,6 +149,7 @@ def run_gradient_aa_optimization(
 
     This function iterates through structures in an XYZ file, applying gradient
     ascent to maximize the variance of forces predicted by an ensemble of models.
+    Results (optimized structures, trajectories, summary) are saved to the output directory.
 
     Args:
         xyz_file: Path to input XYZ file containing structures.
@@ -70,10 +164,6 @@ def run_gradient_aa_optimization(
         temperature: Temperature (in eV) used for the probability weighting term.
         device: Device to run calculations on ('cpu' or 'cuda').
         use_autograd: Placeholder for potential future Hessian-based optimizations. Currently unused.
-        save_to_database: Whether to save optimized structures to the forge database.
-        database_id: Optional parent structure ID from the database. If provided when
-                     saving, the new structure will be linked.
-        config_type: Configuration type label assigned when saving to the database.
         debug: Whether to print detailed debug messages during optimization.
         save_trajectory: Whether to save the optimization trajectory XYZ file for each structure.
     """
@@ -83,31 +173,16 @@ def run_gradient_aa_optimization(
     results_path = output_path / "aa_results" # Standardized results subfolder
     results_path.mkdir(parents=True, exist_ok=True)
 
-    # Initialize database connection if needed
-    db_manager = DatabaseManager() if save_to_database else None
-
     # Load structures
     try:
         atoms_list = ase.io.read(xyz_file, ':')
         print(f"[INFO] Loaded {len(atoms_list)} structures from {xyz_file}")
     except FileNotFoundError:
         print(f"[ERROR] Input XYZ file not found: {xyz_file}")
-        return [], [] # Return empty lists on failure
+        return [] # Return empty list on failure
     except Exception as e:
         print(f"[ERROR] Failed to read XYZ file {xyz_file}: {e}")
-        return [], []
-
-    # --- Energy handling for probability term (remains unchanged) ---
-    # ... existing code ...
-    energy_list = []
-    if include_probability:
-        # Get energies from atoms.info if available
-        for atoms in atoms_list:
-            # ... existing code ...
-        # If we couldn't get any energies, disable include_probability
-        if not energy_list:
-            print("[WARNING] No energies found for probability weighting. Disabling probability term.")
-            include_probability = False
+        return []
 
     # Initialize the gradient-based optimizer
     print(f"[INFO] Initializing Gradient Optimizer on device: {device}")
@@ -117,18 +192,16 @@ def run_gradient_aa_optimization(
         learning_rate=learning_rate, # Passed during optimize call now
         temperature=temperature,
         include_probability=include_probability,
-        energy_list=energy_list if energy_list else None,
         debug=debug
     )
 
     # Run optimization for each structure
     all_results_summary = [] # Changed name for clarity
-    added_structure_ids = []
 
     for i, atoms in enumerate(atoms_list):
         struct_name = atoms.info.get('structure_name', f'struct_{i}')
         initial_variance = atoms.info.get('initial_variance', None)
-        structure_id = atoms.info.get('structure_id', database_id) # Use database_id as fallback
+        structure_id = atoms.info.get('structure_id', None) # Get ID if present in input
 
         print(f"\n[INFO] Optimizing structure: {struct_name} (Index: {i}, ID: {structure_id or 'N/A'})")
         if initial_variance:
@@ -142,14 +215,12 @@ def run_gradient_aa_optimization(
         # Run optimization
         try:
             # Pass output_dir for trajectory saving inside optimize
-            best_atoms, best_variance, loss_history = optimizer.optimize(
+            best_atoms, best_loss, loss_history = optimizer.optimize(
                 atoms=atoms.copy(), # Use a copy
                 n_iterations=n_iterations,
                 min_distance=min_distance,
                 output_dir=str(struct_traj_dir) if save_trajectory else None, # Pass dir only if saving
-                save_trajectory=save_trajectory # Explicitly pass flag
             )
-        # ... existing error handling ...
         except Exception as e:
             print(f"[ERROR] Optimization failed for structure {struct_name}: {e}")
             if debug:
@@ -158,81 +229,27 @@ def run_gradient_aa_optimization(
             all_results_summary.append({ # Add failure record
                 'structure_name': struct_name,
                 'structure_index': i,
-                'input_structure_id': structure_id,
+                'parent_structure_id': structure_id,
                 'status': 'failed',
                 'error': str(e)
             })
             continue # Skip to next structure
 
-        # Save optimized structure to database
-        new_structure_id = None
-        if save_to_database and db_manager is not None:
-            try:
-                # Ensure metadata is preserved and enriched
-                # Use calculated initial variance if not present in input
-                calc_initial_variance = loss_history[0] if loss_history else None
-                db_initial_variance = initial_variance if initial_variance is not None else calc_initial_variance
-
-                best_atoms.info['initial_variance'] = db_initial_variance
-                best_atoms.info['final_variance'] = best_variance
-                best_atoms.info['optimization_method'] = 'gradient-based'
-                # Preserve original name/ID if possible
-                best_atoms.info['parent_structure_name'] = atoms.info.get('structure_name', struct_name)
-                best_atoms.info['parent_structure_id'] = structure_id
-
-
-                # Prepare metadata for database with explicit type conversion
-                metadata = {
-                    'config_type': config_type,
-                    'initial_variance': float(db_initial_variance) if db_initial_variance is not None else None,
-                    'final_variance': float(best_variance),
-                    'learning_rate': float(learning_rate),
-                    'n_iterations': int(n_iterations),
-                    'min_distance': float(min_distance),
-                    'include_probability': bool(include_probability),
-                    'temperature': float(temperature), # Temp used for probability weighting
-                    'optimization_method': 'gradient-based'
-                }
-
-                # Add parent structure ID if available and valid
-                if structure_id is not None:
-                    try:
-                        parent_id = int(structure_id)
-                        metadata['parent_structure_id'] = parent_id # Use standard key
-
-                        # Also fetch parent metadata to preserve lineage information
-                        parent_metadata = db_manager.get_structure_metadata(parent_id)
-                        if parent_metadata:
-                            if 'config_type' in parent_metadata:
-                                metadata['parent_config_type'] = str(parent_metadata['config_type'])
-                            # Add other relevant parent info if needed (e.g., composition)
-                    except (ValueError, TypeError) as e:
-                        print(f"[WARNING] Could not use structure_id {structure_id} as parent_id: {e}")
-
-                # Debug metadata before database insertion
-                if debug:
-                    print("[DEBUG] Metadata for database insertion:")
-                    for key, value in metadata.items():
-                        print(f"  {key}: {value} ({type(value)})")
-
-                # Add structure to database
-                new_structure_id = db_manager.add_structure(
-                    best_atoms, # The structure with highest variance
-                    metadata=metadata
-                )
-
-                print(f"[INFO] Added optimized structure to database with ID: {new_structure_id}")
-                added_structure_ids.append(new_structure_id)
-
-            except Exception as e:
-                print(f"[ERROR] Failed to add structure {struct_name} to database: {e}")
-                if debug:
-                     import traceback
-                     traceback.print_exc()
-
         # Save final optimized structure to file (always do this)
         optimized_file = results_path / f"{struct_name}_optimized.xyz"
-        ase.io.write(optimized_file, best_atoms, format="extxyz", write_results=False)
+        # --- Populate best_atoms.info before saving ---
+        # Use calculated initial variance if not present in input
+        calc_initial_variance = loss_history[0] if loss_history else None
+        db_initial_variance = initial_variance if initial_variance is not None else calc_initial_variance
+
+        best_atoms.info['initial_variance'] = db_initial_variance
+        best_atoms.info['final_variance'] = best_loss # best_loss is the final variance/loss value
+        best_atoms.info['optimization_method'] = 'gradient-based'
+        # Preserve original name/ID if possible
+        best_atoms.info['parent_structure_name'] = atoms.info.get('structure_name', struct_name)
+        best_atoms.info['parent_structure_id'] = structure_id # Store the original ID here
+        # --- End populating info ---
+        ase.io.write(optimized_file, best_atoms, format="extxyz", write_results=True) # Write results to save info dict
         print(f"[INFO] Saved final optimized structure: {optimized_file}")
 
         # Append to results summary
@@ -242,18 +259,14 @@ def run_gradient_aa_optimization(
         result_data = {
             'structure_name': struct_name,
             'structure_index': i,
-            'input_structure_id': structure_id, # Original ID from input file/info
+            'parent_structure_id': structure_id, # Original ID from input file/info
             'initial_variance': summary_initial_variance,
-            'final_variance': best_variance,
+            'final_variance': best_loss,
             'loss_history': loss_history,
             'optimized_xyz_file': str(optimized_file.relative_to(output_path)),
             'trajectory_dir': str(struct_traj_dir.relative_to(output_path)) if save_trajectory else None,
             'status': 'success',
         }
-
-        # Add database information if available
-        if new_structure_id:
-            result_data['database_id'] = new_structure_id # ID of the *newly added* structure
 
         all_results_summary.append(result_data)
 
@@ -272,17 +285,12 @@ def run_gradient_aa_optimization(
             'use_autograd': use_autograd, # Keep record of parameter passed
             'save_trajectory': save_trajectory,
         },
-        'database_info': {
-             'saved_to_database': save_to_database,
-             'config_type': config_type if save_to_database else None,
-             'added_structure_ids': added_structure_ids,
-        },
         'results': all_results_summary # Use the more descriptive name
     }
     dumpfn(summary_data, summary_file, indent=2)
     print(f"[INFO] Optimization summary saved to: {summary_file}")
 
-    return all_results_summary, added_structure_ids # Return summary list and DB IDs
+    return all_results_summary # Return summary list only
 
 # --- run_aa_optimization (Monte Carlo) function ---
 # (Add detailed docstring)
@@ -297,9 +305,6 @@ def run_aa_optimization(
     max_displacement: float = 0.1, # Added parameter
     mode: str = "all",
     device: str = "cuda",
-    save_to_database: bool = False,
-    database_id: int = None, # Specific parent ID if known
-    config_type: str = "aa-monte-carlo",
     debug: bool = False, # Added debug flag consistency
     save_trajectory: bool = True, # Added parameter
 ):
@@ -307,7 +312,7 @@ def run_aa_optimization(
 
     This function iterates through structures in an XYZ file, applying random
     displacements accepted based on the Metropolis criterion applied to the
-    force variance, aiming to maximize model disagreement.
+    force variance, aiming to maximize model disagreement. Results are saved to files.
 
     Args:
         xyz_file: Path to input XYZ file containing structures.
@@ -322,10 +327,6 @@ def run_aa_optimization(
         max_displacement: Maximum distance (Å) an atom can be moved in a single step.
         mode: Displacement mode: 'all' (move all atoms) or 'single' (move one atom).
         device: Device to run calculations on ('cpu' or 'cuda').
-        save_to_database: Whether to save optimized structures to the forge database.
-        database_id: Optional parent structure ID from the database. If provided when
-                     saving, the new structure will be linked.
-        config_type: Configuration type label assigned when saving to the database.
         debug: Whether to print detailed debug messages during optimization.
         save_trajectory: Whether to save the optimization trajectory XYZ file for each structure.
                          Note: The MC optimizer saves trajectory if output_dir is given.
@@ -342,16 +343,13 @@ def run_aa_optimization(
     )
     print(f"[INFO] Initializing Displacement Generator: min_dist={min_distance}, max_disp={max_displacement}")
     # Pass max_displacement to the generator
-    displacement_gen = DisplacementGenerator(min_distance=min_distance, max_displacement=max_displacement)
+    displacement_gen = DisplacementGenerator(min_distance=min_distance) # Removed max_displacement from generator init, it's handled inside AdversarialOptimizer now
 
     print("[INFO] Initializing Monte Carlo Optimizer")
     optimizer = AdversarialOptimizer(
         adversarial_calc=calculator,
         displacement_gen=displacement_gen,
-        debug=debug # Pass debug flag
     )
-
-    db_manager = DatabaseManager() if save_to_database else None
 
     # Load structures
     try:
@@ -359,19 +357,18 @@ def run_aa_optimization(
         print(f"[INFO] Loaded {len(atoms_list)} structures from {xyz_file}")
     except FileNotFoundError:
         print(f"[ERROR] Input XYZ file not found: {xyz_file}")
-        return [], []
+        return []
     except Exception as e:
         print(f"[ERROR] Failed to read XYZ file {xyz_file}: {e}")
-        return [], []
+        return []
 
     # Run optimization for each structure
     all_results_summary = [] # Changed name
-    added_structure_ids = []
 
     for i, atoms in enumerate(atoms_list):
         struct_name = atoms.info.get('structure_name', f'struct_{i}')
         initial_variance = atoms.info.get('initial_variance', None)
-        structure_id = atoms.info.get('structure_id', database_id) # Use database_id as fallback
+        structure_id = atoms.info.get('structure_id', None)
 
         print(f"\n[INFO] Optimizing structure: {struct_name} (Index: {i}, ID: {structure_id or 'N/A'})")
         if initial_variance:
@@ -388,18 +385,16 @@ def run_aa_optimization(
             # Also pass save_trajectory flag if optimizer supports it explicitly (check needed)
             # Current AdversarialOptimizer saves traj if output_dir is not None.
             # It also saves a summary snippet there.
-            best_atoms, best_variance, accepted_moves, step_variances = optimizer.optimize(
+            best_atoms, best_variance, accepted_moves = optimizer.optimize(
                 atoms=atoms.copy(), # Use a copy
                 temperature=temperature,
                 max_iterations=max_steps,
                 patience=patience,
                 mode=mode,
                 output_dir=str(struct_output_path) if save_trajectory else None, # Pass dir only if saving
-                # Add save_trajectory=save_trajectory if optimizer takes it
             )
             print(f"[INFO] Optimization complete. Final variance: {best_variance:.6f}, Accepted moves: {accepted_moves}")
 
-        # ... existing error handling ...
         except Exception as e:
             print(f"[ERROR] Optimization failed for structure {struct_name}: {e}")
             if debug:
@@ -414,89 +409,29 @@ def run_aa_optimization(
              })
             continue # Skip to next structure
 
-
-        # Save optimized structure to database
-        new_structure_id = None
-        if save_to_database and db_manager is not None:
-            try:
-                # Ensure metadata is preserved and enriched
-                # Calculate initial variance if not provided
-                forces = calculator.calculate_forces(atoms) # Need initial forces
-                calc_initial_variance = float(np.mean(calculator.calculate_normalized_force_variance(forces)))
-                db_initial_variance = initial_variance if initial_variance is not None else calc_initial_variance
-
-                best_atoms.info['initial_variance'] = db_initial_variance
-                best_atoms.info['final_variance'] = best_variance
-                best_atoms.info['optimization_method'] = 'monte-carlo'
-                best_atoms.info['parent_structure_name'] = atoms.info.get('structure_name', struct_name)
-                best_atoms.info['parent_structure_id'] = structure_id
-                best_atoms.info['accepted_moves'] = accepted_moves
-
-                # Prepare metadata for database
-                metadata = {
-                    'config_type': config_type,
-                    'initial_variance': float(db_initial_variance) if db_initial_variance is not None else None,
-                    'final_variance': float(best_variance),
-                    'temperature': float(temperature), # Temp used for Metropolis
-                    'max_steps': int(max_steps),
-                    'patience': int(patience),
-                    'min_distance': float(min_distance),
-                    'max_displacement': float(max_displacement),
-                    'mode': mode,
-                    'accepted_moves': accepted_moves,
-                    'optimization_method': 'monte-carlo'
-                    # Consider adding step_variances if useful and not too large
-                }
-
-                # Add parent structure ID if available and valid
-                if structure_id is not None:
-                    try:
-                        parent_id = int(structure_id)
-                        metadata['parent_structure_id'] = parent_id
-
-                        # Also fetch parent metadata to preserve lineage information
-                        parent_metadata = db_manager.get_structure_metadata(parent_id)
-                        if parent_metadata:
-                             if 'config_type' in parent_metadata:
-                                 metadata['parent_config_type'] = str(parent_metadata['config_type'])
-                    except (ValueError, TypeError) as e:
-                        print(f"[WARNING] Could not use structure_id {structure_id} as parent_id: {e}")
-
-
-                # Debug metadata before database insertion
-                if debug:
-                     print("[DEBUG] Metadata for database insertion:")
-                     for key, value in metadata.items():
-                         print(f"  {key}: {value} ({type(value)})")
-
-                # Add structure to database
-                new_structure_id = db_manager.add_structure(
-                    best_atoms, # Structure with highest variance found
-                    metadata=metadata
-                )
-
-                print(f"[INFO] Added optimized structure to database with ID: {new_structure_id}")
-                added_structure_ids.append(new_structure_id)
-
-            except Exception as e:
-                print(f"[ERROR] Failed to add structure {struct_name} to database: {e}")
-                if debug:
-                    import traceback
-                    traceback.print_exc()
-
-
         # Save final optimized structure to file (always do this)
         optimized_file = results_path / f"{struct_name}_optimized.xyz"
-        ase.io.write(optimized_file, best_atoms, format="extxyz", write_results=False)
+        # --- Populate best_atoms.info before saving ---
+        # Calculate initial variance if not provided
+        forces = calculator.calculate_forces(atoms) # Need initial forces
+        calc_initial_variance = float(np.mean(calculator.calculate_normalized_force_variance(forces))) if forces.size > 0 else None
+        db_initial_variance = initial_variance if initial_variance is not None else calc_initial_variance
+
+        best_atoms.info['initial_variance'] = db_initial_variance
+        best_atoms.info['final_variance'] = best_variance
+        best_atoms.info['optimization_method'] = 'monte-carlo'
+        best_atoms.info['parent_structure_name'] = atoms.info.get('structure_name', struct_name)
+        best_atoms.info['parent_structure_id'] = structure_id
+        best_atoms.info['accepted_moves'] = accepted_moves
+        # --- End populating info ---
+        ase.io.write(optimized_file, best_atoms, format="extxyz", write_results=True) # Write results to save info dict
         print(f"[INFO] Saved final optimized structure: {optimized_file}")
         if save_trajectory:
              # Trajectory is saved by optimizer inside struct_output_path
              print(f"[INFO] Trajectory and step summary saved in: {struct_output_path}")
 
-
         # Append to results summary
-        forces = calculator.calculate_forces(atoms) # Recalculate if needed
-        calc_initial_variance = float(np.mean(calculator.calculate_normalized_force_variance(forces)))
+        calc_initial_variance = float(np.mean(calculator.calculate_normalized_force_variance(forces))) if forces.size > 0 else None
         summary_initial_variance = initial_variance if initial_variance is not None else calc_initial_variance
 
         result_data = {
@@ -506,15 +441,10 @@ def run_aa_optimization(
             'initial_variance': summary_initial_variance,
             'final_variance': best_variance,
             'accepted_moves': accepted_moves,
-            'step_variances': step_variances, # Include variance history
             'optimized_xyz_file': str(optimized_file.relative_to(output_path)),
             'trajectory_dir': str(struct_output_path.relative_to(output_path)) if save_trajectory else None,
             'status': 'success',
         }
-
-        # Add database information if available
-        if new_structure_id:
-            result_data['database_id'] = new_structure_id
 
         all_results_summary.append(result_data)
 
@@ -533,17 +463,12 @@ def run_aa_optimization(
             'device': device,
             'save_trajectory': save_trajectory,
         },
-         'database_info': {
-             'saved_to_database': save_to_database,
-             'config_type': config_type if save_to_database else None,
-             'added_structure_ids': added_structure_ids,
-        },
         'results': all_results_summary
     }
     dumpfn(summary_data, summary_file, indent=2)
     print(f"[INFO] Optimization summary saved to: {summary_file}")
 
-    return all_results_summary, added_structure_ids
+    return all_results_summary # Return summary list only
 
 # --- REMOVE VASP Job Creation ---
 # def create_vasp_jobs_from_aa_results(...): # REMOVED
@@ -552,124 +477,123 @@ def run_aa_optimization(
 # --- Main execution block ---
 def main():
     parser = argparse.ArgumentParser(
-        description="Run adversarial attack optimization engine on structures from XYZ file."
+        description="Run adversarial attack optimization or variance calculation." # Updated description
     )
-    # Positional arguments expected from SLURM script
-    parser.add_argument(
+
+    # --- Arguments for selecting the mode ---
+    mode_group = parser.add_argument_group('Mode Selection')
+    mode_group.add_argument(
+        "--calculate_variance",
+        action="store_true",
+        help="Run variance calculation instead of AA optimization."
+    )
+    mode_group.add_argument(
+        "--gradient",
+        action="store_true",
+        help="Use gradient-based AA optimization (default is Monte Carlo if not --calculate_variance)."
+    )
+
+    # --- Common arguments for all modes ---
+    common_group = parser.add_argument_group('Common Arguments')
+    common_group.add_argument(
         "xyz_file",
-        help="Input XYZ file containing structures for this batch job."
+        help="Input XYZ file containing structures."
     )
-    parser.add_argument(
-        "output_dir",
-        help="Directory to save optimization results for this batch job."
-    )
-    # Model input
-    parser.add_argument(
+    common_group.add_argument(
         "--model_dir",
         required=True,
         help="Directory containing MACE *.model files for the ensemble."
     )
-    # Method selection
-    parser.add_argument(
-        "--gradient",
-        action="store_true",
-        help="Use gradient-based optimization instead of Monte Carlo."
-    )
-
-    # Common parameters
-    parser.add_argument(
+    common_group.add_argument(
         "--device",
         choices=['cpu', 'cuda'],
         default='cuda',
-        help="Device to run calculations on ('cpu' or 'cuda')."
+        help="Device to run calculations on ('cpu' or 'cuda'). Default: cuda"
     )
-    parser.add_argument(
-        "--min_distance",
-        type=float,
-        # Default depends on method, handle below
-        help="Minimum allowed distance between atoms (Å)."
-    )
-    parser.add_argument(
-        "--save_trajectory",
-        action=argparse.BooleanOptionalAction, # Creates --save-trajectory/--no-save-trajectory
-        default=True,
-        help="Save the optimization trajectory."
-    )
-    parser.add_argument(
+    common_group.add_argument(
         "--debug",
         action="store_true",
         help="Enable detailed debug messages."
     )
 
-    # Database parameters
-    parser.add_argument(
-        "--save_to_database",
-        action="store_true",
-        help="Save optimized structures to the forge database."
-    )
-    parser.add_argument(
-        "--database_id",
-        type=int,
-        help="Optional parent structure ID from database for lineage tracking."
-    )
-    parser.add_argument(
-        "--config_type",
-        type=str,
-        help="Configuration type label for database saving (defaults based on method)."
+    # --- Arguments specific to Variance Calculation ---
+    var_group = parser.add_argument_group('Variance Calculation Arguments')
+    var_group.add_argument(
+        "--output_json",
+        help="Output JSON file path for variance results (--calculate_variance mode)."
     )
 
+    # --- Arguments specific to AA Optimization ---
+    aa_group = parser.add_argument_group('Adversarial Attack Optimization Arguments')
+    aa_group.add_argument(
+        "output_dir", # Made conditional later
+        nargs='?', # Make output_dir optional initially
+        help="Output directory for AA optimization results (Required unless --calculate_variance)."
+    )
+    aa_group.add_argument(
+        "--min_distance",
+        type=float,
+        # Default depends on method, handle below
+        help="Minimum allowed distance between atoms (Å) during AA."
+    )
+    aa_group.add_argument(
+        "--save_trajectory",
+        action=argparse.BooleanOptionalAction, # Creates --save-trajectory/--no-save-trajectory
+        default=True,
+        help="Save the AA optimization trajectory."
+    )
     # Parameters for Gradient optimization
-    parser.add_argument(
+    grad_group = parser.add_argument_group('Gradient AA Arguments')
+    grad_group.add_argument(
         "--learning_rate",
         type=float,
         default=0.01,
-        help="Learning rate for gradient ascent (gradient mode)."
+        help="Learning rate for gradient ascent (--gradient mode)."
     )
-    parser.add_argument(
+    grad_group.add_argument(
         "--n_iterations",
         type=int,
         default=60,
-        help="Number of optimization iterations (gradient mode)."
+        help="Number of optimization iterations (--gradient mode)."
     )
-    parser.add_argument(
+    grad_group.add_argument(
         "--include_probability",
         action="store_true",
-        help="Include probability term in adversarial loss (gradient mode)."
+        help="Include probability term in adversarial loss (--gradient mode)."
     )
-    parser.add_argument(
+    grad_group.add_argument(
         "--use_autograd", # Keep for consistency, even if unused for now
         action="store_true",
-        help="Placeholder for Hessian-based gradient calculation."
+        help="Placeholder for Hessian-based gradient calculation (--gradient mode)."
     )
     # Temperature has different meanings, handle based on mode
-    parser.add_argument(
+    aa_group.add_argument( # Temperature applies to both AA modes
         "--temperature",
         type=float,
         # Default depends on method, handle below
         help="Temperature for optimization: Metropolis (K) for MC, probability weighting (eV) for gradient."
     )
-
-
     # Parameters for Monte Carlo optimization
-    parser.add_argument(
+    mc_group = parser.add_argument_group('Monte Carlo AA Arguments')
+    mc_group.add_argument(
         "--max_steps",
         type=int,
         default=50,
         help="Maximum optimization steps per structure (MC mode)."
     )
-    parser.add_argument(
+    mc_group.add_argument(
         "--patience",
         type=int,
         default=25,
         help="Stop if no improvement after this many steps (MC mode)."
     )
-    parser.add_argument(
+    mc_group.add_argument(
         "--max_displacement", # Added
         type=float,
         default=0.1,
         help="Maximum distance an atom can be moved in a single step (Å) (MC mode)."
     )
-    parser.add_argument(
+    mc_group.add_argument(
         "--mode",
         choices=['all', 'single'],
         default='all',
@@ -679,7 +603,22 @@ def main():
 
     args = parser.parse_args()
 
-    # --- Get model paths ---
+    # --- Validate arguments based on mode ---
+    if args.calculate_variance:
+        if not args.output_json:
+            parser.error("--output_json is required when using --calculate_variance.")
+        if args.output_dir:
+             print("[WARNING] output_dir argument is ignored when using --calculate_variance.")
+        # Cannot run AA and variance calculation simultaneously
+        if args.gradient or args.max_steps != 50: # Check if other AA flags were set
+             print("[WARNING] AA optimization flags (--gradient, etc.) are ignored when using --calculate_variance.")
+    else: # AA Optimization mode
+        if not args.output_dir:
+             parser.error("output_dir (positional argument) is required unless --calculate_variance is used.")
+        if args.output_json:
+             print("[WARNING] --output_json argument is ignored when running AA optimization.")
+
+    # --- Get model paths (common to all modes) ---
     model_dir_path = Path(args.model_dir)
     if not model_dir_path.is_dir():
         print(f"[ERROR] Model directory not found: {args.model_dir}")
@@ -690,78 +629,78 @@ def main():
         sys.exit(1)
     print(f"[INFO] Using {len(model_paths)} models from {args.model_dir}")
 
-    # --- Set method-specific defaults if not provided ---
-    if args.gradient:
-        min_distance = args.min_distance if args.min_distance is not None else 1.5
-        temperature = args.temperature if args.temperature is not None else 0.86 # eV default for gradient probability
-        config_type = args.config_type or "aa-gradient"
-        method_name = "Gradient-Based"
-    else: # Monte Carlo
-        min_distance = args.min_distance if args.min_distance is not None else 2.0
-        temperature = args.temperature if args.temperature is not None else 1200.0 # K default for MC Metropolis
-        config_type = args.config_type or "aa-mc"
-        method_name = "Monte Carlo"
 
-    print(f"[INFO] Running {method_name} Adversarial Attack")
-    print(f"[INFO] Input structures: {args.xyz_file}")
-    print(f"[INFO] Output directory: {args.output_dir}")
-    print(f"[INFO] Device: {args.device}, Min distance: {min_distance}")
-
-    # --- Execute selected optimization method ---
+    # --- Execute selected mode ---
     try:
-        if args.gradient:
-            run_gradient_aa_optimization(
-                xyz_file=args.xyz_file,
-                output_dir=args.output_dir,
-                model_paths=model_paths,
-                learning_rate=args.learning_rate,
-                n_iterations=args.n_iterations,
-                min_distance=min_distance,
-                include_probability=args.include_probability,
-                temperature=temperature, # eV
-                device=args.device,
-                use_autograd=args.use_autograd,
-                save_to_database=args.save_to_database,
-                database_id=args.database_id,
-                config_type=config_type,
-                debug=args.debug,
-                save_trajectory=args.save_trajectory,
+        if args.calculate_variance:
+            print(f"[INFO] Running Variance Calculation")
+            print(f"[INFO] Input structures: {args.xyz_file}")
+            calculate_batch_variance(
+                 xyz_file=args.xyz_file,
+                 output_json=args.output_json,
+                 model_paths=model_paths,
+                 device=args.device,
+                 debug=args.debug,
             )
-        else: # Monte Carlo
-            run_aa_optimization(
-                xyz_file=args.xyz_file,
-                output_dir=args.output_dir,
-                model_paths=model_paths,
-                temperature=temperature, # K
-                max_steps=args.max_steps,
-                patience=args.patience,
-                min_distance=min_distance,
-                max_displacement=args.max_displacement, # Pass this arg
-                mode=args.mode,
-                device=args.device,
-                save_to_database=args.save_to_database,
-                database_id=args.database_id,
-                config_type=config_type,
-                debug=args.debug,
-                save_trajectory=args.save_trajectory,
-            )
-        print("[INFO] Optimization engine finished successfully.")
+            print("[INFO] Variance calculation finished successfully.")
+
+        else: # AA Optimization Mode
+            # --- Set method-specific defaults if not provided ---
+            if args.gradient:
+                min_distance = args.min_distance if args.min_distance is not None else 1.5
+                temperature = args.temperature if args.temperature is not None else 0.86 # eV default for gradient probability
+                method_name = "Gradient-Based"
+            else: # Monte Carlo
+                min_distance = args.min_distance if args.min_distance is not None else 2.0
+                temperature = args.temperature if args.temperature is not None else 1200.0 # K default for MC Metropolis
+                method_name = "Monte Carlo"
+
+            print(f"[INFO] Running {method_name} Adversarial Attack")
+            print(f"[INFO] Input structures: {args.xyz_file}")
+            print(f"[INFO] Output directory: {args.output_dir}")
+            print(f"[INFO] Device: {args.device}, Min distance: {min_distance}")
+
+            if args.gradient:
+                run_gradient_aa_optimization(
+                    xyz_file=args.xyz_file,
+                    output_dir=args.output_dir,
+                    model_paths=model_paths,
+                    learning_rate=args.learning_rate,
+                    n_iterations=args.n_iterations,
+                    min_distance=min_distance,
+                    include_probability=args.include_probability,
+                    temperature=temperature, # eV
+                    device=args.device,
+                    use_autograd=args.use_autograd,
+                    debug=args.debug,
+                    save_trajectory=args.save_trajectory,
+                )
+            else: # Monte Carlo
+                run_aa_optimization(
+                    xyz_file=args.xyz_file,
+                    output_dir=args.output_dir,
+                    model_paths=model_paths,
+                    temperature=temperature, # K
+                    max_steps=args.max_steps,
+                    patience=args.patience,
+                    min_distance=min_distance,
+                    max_displacement=args.max_displacement, # Pass this arg
+                    mode=args.mode,
+                    device=args.device,
+                    debug=args.debug,
+                    save_trajectory=args.save_trajectory,
+                )
+            print("[INFO] Optimization engine finished successfully.")
 
     except Exception as e:
-        print(f"\n[ERROR] An critical error occurred during optimization: {e}")
+        print(f"\\n[ERROR] An critical error occurred during execution: {e}")
         if args.debug:
             import traceback
             traceback.print_exc()
         sys.exit(1)
 
 
-# --- REMOVE Test Workflow ---
-# def db_test_workflow_main(): # REMOVED
-# ... function content removed ...
-
-
 if __name__ == "__main__":
     # Keep the main guard but simplify invocation
     # The SLURM script will directly call this main function
-    # No need for subcommand parsing here anymore
-    main() 
+    main()

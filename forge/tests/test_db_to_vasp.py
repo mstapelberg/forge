@@ -50,26 +50,28 @@ def db_config():
 
 @pytest.fixture
 def db_manager(db_config):
-    """Create a temporary database for testing."""
-    with tempfile.NamedTemporaryFile(suffix='.yaml') as tmp:
-        config_path = Path(tmp.name)
-        with open(config_path, 'w') as f:
-            yaml.dump(db_config, f)
-        
-        db = DatabaseManager(config_path=config_path)
-        
-        # Drop old tables if needed
-        with db.conn.cursor() as cur:
-            cur.execute("""
-                DROP TABLE IF EXISTS calculations CASCADE;
-                DROP TABLE IF EXISTS structures CASCADE;
-            """)
-        db.conn.commit()
-        
+    """Create a temporary database for testing, mirroring test_database.py setup."""
+    db = None # Initialize db to None
+    try:
+        db = DatabaseManager(config_dict=db_config, debug=False)
+
+        # Drop old tables if needed (similar to test_database.py fixture)
+        if db.conn:
+            with db.conn.cursor() as cur:
+                cur.execute("DROP TABLE IF EXISTS mlip_models CASCADE;")
+                cur.execute("DROP TABLE IF EXISTS calculations CASCADE;")
+                cur.execute("DROP TABLE IF EXISTS structures CASCADE;")
+            db.conn.commit()
+
         # Reinitialize tables
         db._initialize_tables()
-        
+
         yield db
+
+    finally:
+        # Ensure connection is closed
+        if db:
+            db.close_connection()
 
 @pytest.fixture
 def test_dir():
@@ -92,8 +94,8 @@ def test_full_workflow(db_manager, test_structure, test_dir):
     prepare_vasp_job(
         db_manager=db_manager,
         structure_id=structure_id,
-        vasp_profile_path="forge/workflows/vasp_settings/static.json",
-        hpc_profile_path="forge/workflows/hpc_profiles/Perlmutter-CPU.json",
+        vasp_profile_name="static",
+        hpc_profile_name="Perlmutter-CPU",
         output_dir=str(job_dir),
         auto_kpoints=True
     )
@@ -106,30 +108,34 @@ def test_full_workflow(db_manager, test_structure, test_dir):
     assert (job_dir / "submit.sh").exists()
     
     # 3. Copy example OUTCAR for testing
-    example_outcar = Path("tests/resources/vasp-out/OUTCAR")
-    if example_outcar.exists():
-        shutil.copy(example_outcar, job_dir / "OUTCAR")
+    example_outcar = Path(__file__).parent / "resources" / "vasp-out" / "OUTCAR"
+    if not example_outcar.exists():
+        pytest.skip(f"Example OUTCAR not found at {example_outcar}")
+
+    shutil.copy(example_outcar, job_dir / "OUTCAR")
         
-        # 4. Parse VASP output and add to database
-        calc_data = parse_vasp_output(str(job_dir))
-        assert calc_data is not None
-        assert "energy" in calc_data
-        assert "forces" in calc_data
-        assert "stress" in calc_data
-        
-        # 5. Add calculation to database
-        add_vasp_results_to_db(db_manager, structure_id, str(job_dir))
-        
-        # 6. Verify calculation was added
-        calcs = db_manager.get_calculations(structure_id)
-        assert len(calcs) == 1
-        assert calcs[0]["status"] == "completed"
-        
-        # 7. Verify structure metadata was updated
-        metadata = db_manager.get_structure_metadata(structure_id)
-        assert "jobs" in metadata
-        for profile_info in metadata["jobs"].values():
-            assert profile_info["status"] == "completed"
+    # 4. Parse VASP output (vasp_to_db function)
+    calc_data = parse_vasp_output(str(job_dir))
+    assert calc_data is not None
+    assert "energy" in calc_data
+    assert "forces" in calc_data
+    assert "stress" in calc_data
+    assert calc_data["status"] == "completed"
+
+    # 5. Add calculation to database (vasp_to_db function)
+    add_vasp_results_to_db(db_manager, structure_id, str(job_dir))
+
+    # 6. Verify calculation was added
+    calcs = db_manager.get_calculations(structure_id)
+    assert len(calcs) == 1
+    assert calcs[0].get("metadata", {}).get("status") == "completed"
+    assert calcs[0].get("calculator") == "vasp"
+
+    # 7. Verify structure metadata was updated by mark_job_pending
+    metadata = db_manager.get_structure_metadata(structure_id)
+    assert "jobs" in metadata
+    assert metadata["jobs"]["Perlmutter-CPU"]["status"] == "pending"
+    assert calcs[0]["metadata"]["status"] == "completed"
 
 def test_structure_composition(test_structure):
     """Verify the test structure has the correct composition."""
@@ -146,9 +152,9 @@ def test_structure_composition(test_structure):
 def test_vasp_output_parsing(test_dir):
     """Test parsing of VASP output files."""
     # Copy example OUTCAR to test directory
-    example_outcar = Path("tests/resources/vasp-out/OUTCAR")
+    example_outcar = Path(__file__).parent / "resources" / "vasp-out" / "OUTCAR"
     if not example_outcar.exists():
-        pytest.skip("Example OUTCAR not available")
+        pytest.skip(f"Example OUTCAR not available at {example_outcar}")
     
     job_dir = test_dir / "test_parsing"
     job_dir.mkdir()
@@ -175,8 +181,8 @@ def test_prepare_vasp_job(db_manager, test_structure, test_dir):
     prepare_vasp_job(
         db_manager=db_manager,
         structure_id=structure_id,
-        vasp_profile_path="forge/workflows/vasp_settings/static.json",
-        hpc_profile_path="forge/workflows/hpc_profiles/Perlmutter-CPU.json",
+        vasp_profile_name="static",
+        hpc_profile_name="Perlmutter-CPU",
         output_dir=str(job_dir),
         auto_kpoints=True
     )

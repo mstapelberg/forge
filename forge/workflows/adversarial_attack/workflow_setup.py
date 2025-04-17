@@ -12,13 +12,15 @@ to prepare directories, input files, and submission scripts for each step:
 import os
 import json
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any, Sequence
 import ase.io
 import shutil
 import glob
 import numpy as np
 from ase import Atoms
-from forge.core.database import DatabaseManager
+from ase.io import read, write
+from forge.core.database import DatabaseManager, fix_numpy
+from forge.workflows.profiles import ProfileManager
 # Removed unused imports: DisplacementGenerator, AdversarialOptimizer, AdversarialCalculator
 # Import from the correct file now for VASP prep helper
 from forge.workflows.db_to_vasp import prepare_vasp_job_from_ase
@@ -27,286 +29,385 @@ from forge.workflows.adversarial_attack.slurm_templates import (
     get_gradient_aa_script,
     get_monte_carlo_aa_script
 )
-
+import logging
 
 # --- select_structures_from_db function ---
 # (Add/improve docstring)
 def select_structures_from_db(
+    output_dir: Path, # ADDED: Directory to save reference data
     elements: Optional[List[str]] = None, # Make explicit that it can be None
-    structure_type: Optional[str] = None,
+    config_type: Optional[str] = None,
     composition_constraints: Optional[str] = None,
     structure_ids: Optional[List[int]] = None,
+    db_manager: Optional[DatabaseManager] = None, # Allow passing existing manager
     debug: bool = False
-) -> Tuple[List[Atoms], List[float]]:
+) -> List[Atoms]: # CHANGED: Return only list of cleaned Atoms
     """
-    Selects structure Atoms objects and their energies from the database.
-
-    Retrieves structures based on provided element/type/composition filters
-    or a specific list of structure IDs. It preferentially fetches structures
-    that have associated VASP static calculation results to obtain energies.
+    Selects structures from the database, saves their reference VASP calculations,
+    and returns a list of cleaned Atoms objects (geometry + metadata only).
 
     Args:
-        elements: List of elements to filter structures by (ignored if structure_ids provided).
-        structure_type: Structure type filter (e.g., 'bulk').
-        composition_constraints: JSON string for composition constraints.
-        structure_ids: Specific list of structure IDs to fetch.
+        output_dir: The root directory for the AA workflow, used to determine
+                    where to save the 'initial_references.json'.
+        elements: List of elements to filter structures by. Ignored if structure_ids provided.
+        config_type: Metadata config_type filter (e.g., 'bulk', 'surface').
+        composition_constraints: JSON string for composition constraints (e.g., '{"Ti": [0, 1]}').
+        structure_ids: List of specific structure IDs to select, bypassing other filters.
+        db_manager: Optional pre-initialized DatabaseManager instance.
         debug: Enable debug output.
 
     Returns:
-        Tuple containing:
-        - List of selected ase.Atoms objects with info dictionary populated.
-        - List of corresponding energies (float) from VASP calculations.
+        List of cleaned ASE Atoms objects (metadata preserved, calculation results removed).
 
     Raises:
-        ValueError: If no selection criteria are provided or no structures are found.
+        ValueError: If no selection criteria are given or no structures are found/valid.
     """
-    db_manager = DatabaseManager()
-    selected_atoms_list = []
-    energies = [] # Store energies corresponding to selected_atoms_list
-
-    if structure_ids:
-        # Use provided IDs directly
-        print(f"[INFO] Selecting specified structure IDs: {structure_ids}")
-    elif elements:
-        # Query based on elements and other optional filters
-        query_kwargs = {'elements': elements}
-        print(f"[INFO] Querying database for structures containing: {elements}")
-        if structure_type:
-            query_kwargs['structure_type'] = structure_type
-            print(f"[INFO] Filtering by structure type: {structure_type}")
-        if composition_constraints:
-            try:
-                constraints = json.loads(composition_constraints)
-                query_kwargs['composition_constraints'] = constraints
-                print(f"[INFO] Filtering by composition constraints: {constraints}")
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Invalid JSON for composition_constraints: {e}")
-
-        structure_ids = db_manager.find_structures(**query_kwargs, debug=debug)
-        print(f"[INFO] Found {len(structure_ids)} structure IDs matching criteria.")
+    if not db_manager:
+        # Initialize DB Manager if not provided
+        try:
+            db_manager = DatabaseManager(debug=debug)
+            close_db = True # Flag to close connection later if created here
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize DatabaseManager: {e}")
+            raise
     else:
-        # No criteria provided
-        raise ValueError("Structure selection requires either --elements or --structure_ids.")
+        close_db = False # Don't close connection if it was passed in
 
-    if not structure_ids:
-        print("[WARNING] No structures found matching the selection criteria.")
-        return [], [] # Return empty lists if no structures found
+    selected_structure_ids: List[int] = []
 
-    # Use the method to get atoms with VASP static calculations preferentially
-    # This method populates atoms.info['energy'] if found
-    selected_atoms_list = db_manager.get_atoms_with_calculations(
-        structure_ids,
-        model_type='vasp-static' # Prioritize getting energy from static calc
-    )
+    try: # Wrap DB operations in try...finally to ensure connection closure
+        if structure_ids:
+            selected_structure_ids = structure_ids
+            print(f"[INFO] Using provided structure IDs: {selected_structure_ids}")
+        else:
+            if not elements:
+                raise ValueError("Either 'elements' or 'structure_ids' must be provided.")
 
-    # Filter out structures where energy couldn't be retrieved and collect energies
-    filtered_atoms_list = []
-    final_energies = [] # Use a new list for energies corresponding to filtered_atoms_list
-    retrieved_ids = set() # Keep track of IDs we got Atoms for
+            query_kwargs = {'elements': elements}
+            print(f"[INFO] Filtering by elements: {elements}")
+            if config_type:
+                # Assuming find_structures_by_metadata is the intended function for config_type
+                # query_kwargs['metadata_filters'] = {'config_type': config_type} # Old way?
+                 # Using the structure_type arg in find_structures instead
+                query_kwargs['structure_type'] = config_type
+                print(f"[INFO] Filtering by config_type: {config_type}")
 
-    for atoms in selected_atoms_list:
-         struct_id = atoms.info.get('structure_id')
-         if struct_id is None:
-             if debug: print(f"[DEBUG] Skipping structure with missing ID in info dict.")
-             continue # Should not happen if retrieved correctly
+            if composition_constraints:
+                try:
+                    constraints = json.loads(composition_constraints)
+                    query_kwargs['composition_constraints'] = constraints
+                    print(f"[INFO] Filtering by composition constraints: {constraints}")
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON for composition_constraints: {e}")
 
-         retrieved_ids.add(struct_id)
+            # Use find_structures or find_structures_by_metadata based on needs
+            # Assuming find_structures covers the current filters
+            # TODO: come back to this to make sure the find_structures is correctly searching by element.
+            selected_structure_ids = db_manager.find_structures(**query_kwargs, debug=debug)
+            print(f"[INFO] Found {len(selected_structure_ids)} structure IDs matching criteria.")
 
-         # Check if energy was populated by get_atoms_with_calculations
-         if 'energy' in atoms.info and atoms.info['energy'] is not None:
-             filtered_atoms_list.append(atoms)
-             final_energies.append(float(atoms.info['energy']))
-         elif debug:
-             print(f"[DEBUG] Skipping structure {struct_id}: Energy not found in vasp-static calculation results.")
+        if not selected_structure_ids:
+            raise ValueError("No structures selected or found matching criteria.")
 
-    # Check if any requested IDs were not retrieved at all
-    if debug:
-        missed_ids = set(structure_ids) - retrieved_ids
-        if missed_ids:
-            print(f"[DEBUG] Could not retrieve Atoms objects for IDs: {missed_ids}")
+        # --- Fetch structures AND their VASP calculations in one batch ---
+        print("[INFO] Fetching structures and their latest VASP calculations from database...")
+        # Default calculator is 'vasp' in get_batch_atoms_with_calculation
+        rich_atoms_list = db_manager.get_batch_atoms_with_calculation(selected_structure_ids)
+        print(f"[INFO] Retrieved {len(rich_atoms_list)} structures with calculation data.")
 
-    if not filtered_atoms_list:
-         print("[WARNING] No structures with associated energies were found for the selection.")
-         # Optionally, we could return structures even without energy, but the current
-         # design seems to rely on having energies for the variance calculation step.
-         # Let's return empty for now to match previous apparent behavior.
-         return [], []
+        initial_references = {}
+        cleaned_atoms_list = []
+        missing_data_count = 0
 
-    print(f"[INFO] Successfully retrieved {len(filtered_atoms_list)} structures with energy data.")
-    if debug:
-        print(f"[DEBUG] Final selected structure IDs: {[a.info['structure_id'] for a in filtered_atoms_list]}")
+        # --- Process fetched structures: extract references, clean atoms ---
+        print("[INFO] Processing structures: extracting reference data and cleaning Atoms objects...")
+        for atoms in rich_atoms_list:
+            atoms_info = atoms.info
+            atoms_arrays = atoms.arrays
 
-    return filtered_atoms_list, final_energies
+            struct_id = atoms_info.get('structure_id')
+            # Extract reference data (energy/forces should be top-level from get_batch...)
+            energy = atoms_info.get('energy')
+            forces = atoms_arrays.get('forces')
+            # calculation_info = atoms_info.get('calculation_info', {}) # Contains metadata about the calc
+
+            if struct_id is None:
+                 if debug: print("[DEBUG] Skipping structure with no structure_id in info.")
+                 missing_data_count += 1
+                 continue
+
+            # Check if essential reference data is present
+            if energy is None or forces is None:
+                if debug: print(f"[DEBUG] Skipping structure ID {struct_id}: Missing energy or forces.")
+                missing_data_count += 1
+                continue
+
+            # Store reference data (use NumPy arrays for forces if needed downstream)
+            initial_references[struct_id] = {
+                'energy': float(energy), # Ensure float
+                # Convert forces back to list for JSON serialization if needed,
+                # or keep as np.array if processing happens before saving JSON.
+                # Plan indicates saving to JSON, so list is better.
+                'forces': forces.tolist() if isinstance(forces, np.ndarray) else forces
+                # Can add other calculation metadata here if needed, e.g.,
+                # 'calculator': calculation_info.get('calculator'),
+                # 'source_path': calculation_info.get('calculation_source_path'),
+            }
+
+            # --- Clean the Atoms object ---
+            # Remove calculator
+            atoms.calc = None
+            # Remove calculation results from info and arrays
+            atoms.info.pop('energy', None)
+            atoms.info.pop('stress', None) # Also remove stress if present
+            atoms.info.pop('calculation_info', None) # Remove the dict holding calc metadata
+            atoms.arrays.pop('forces', None)
+
+            # Append the cleaned atoms object
+            cleaned_atoms_list.append(atoms)
+
+        if missing_data_count > 0:
+             print(f"[WARNING] Skipped {missing_data_count} structures due to missing ID, energy, or forces.")
+
+        if not cleaned_atoms_list:
+            raise ValueError("No valid structures with required calculation data found.")
+
+        # --- Save initial references to JSON ---
+        variance_calc_dir = output_dir / "variance_calculations"
+        variance_calc_dir.mkdir(parents=True, exist_ok=True) # Ensure directory exists
+        ref_file = variance_calc_dir / "initial_references.json"
+
+        try:
+            with open(ref_file, 'w') as f:
+                # Use fix_numpy just in case, although energy/forces were handled
+                json.dump(fix_numpy(initial_references), f, indent=2)
+            print(f"[INFO] Saved initial reference data (energy/forces) for {len(initial_references)} structures to: {ref_file}")
+        except Exception as e:
+            print(f"[ERROR] Failed to save initial references JSON to {ref_file}: {e}")
+            # Decide if this is a critical error or just a warning
+            raise # Re-raise for now
+
+        print(f"[INFO] Returning {len(cleaned_atoms_list)} cleaned Atoms objects.")
+        return cleaned_atoms_list
+
+    finally:
+        # Ensure DB connection is closed if opened by this function
+        if close_db and db_manager and db_manager.conn:
+            db_manager.close_connection()
+            if debug: print("[DEBUG] Database connection closed by select_structures_from_db.")
 
 
 # --- prepare_variance_calculation_jobs function ---
-# (Add/improve docstring)
 def prepare_variance_calculation_jobs(
-    selected_atoms_list: List[Atoms],
-    # energies: List[float], # Energies not directly used here, handled by db query now
+    selected_atoms_list: List[Atoms], # Input list of *cleaned* atoms
     output_dir: Path,
-    model_dir: Path,
+    model_dir: Path, # Source directory for models
     n_batches: int,
-    device: str = "cpu", # Variance calc often feasible on CPU
-) -> Path:
+    hpc_profile_name: str = "default",
+    debug: bool = False, # Add debug flag
+) -> Path: # Return path to results dir, not script
     """
-    Prepares batch directories and SLURM script for initial variance calculation.
+    Prepares SLURM array job for variance calculation on cleaned structures.
 
-    Splits the selected structures into batches, writes them to XYZ files,
-    copies the model ensemble, and generates a SLURM array job script to
-    calculate force variances.
+    Takes a list of cleaned Atoms objects, copies necessary models, splits
+    structures into batches, writes batch XYZ files, loads the specified
+    HPC profile, and generates a SLURM submission script.
 
     Args:
-        selected_atoms_list: List of input ase.Atoms objects.
-        output_dir: The main workflow output directory.
-        model_dir: Path to the directory containing MACE models.
-        n_batches: Number of batches (SLURM jobs) to create.
-        device: Device argument for the variance calculation script (currently unused
-                in template, but kept for potential future use).
+        selected_atoms_list: List of cleaned ASE Atoms objects (geometry + metadata).
+        output_dir: Root directory for the AA workflow.
+        model_dir: Path to the directory containing MACE *.model files.
+        n_batches: Number of batches (SLURM jobs) to split calculations into.
+        hpc_profile_name: Name of the HPC profile (e.g., 'PSFC-GPU') to use for SLURM script.
+        debug: Enable debug output.
 
     Returns:
-        Path to the directory where variance results will be stored.
+        Path to the directory where variance results JSON files will be stored.
+
+    Raises:
+        ValueError: If model directory is invalid or no models are found.
+        FileNotFoundError: If HPC profile is not found.
     """
+    print("[INFO] Preparing variance calculation jobs...")
+
+    # Define directories relative to output_dir
     variance_calculation_dir = output_dir / "variance_calculations"
+    variance_results_dir = output_dir / "variance_results" # Where engine saves results
+    slurm_logs_dir = variance_calculation_dir / "slurm_logs" # Log dir inside calc dir
+    workflow_models_dir = output_dir / "models" # Models copied to workflow root
+
+    # Create directories
     variance_calculation_dir.mkdir(parents=True, exist_ok=True)
-    variance_results_dir = output_dir / "variance_results" # Expected output location
     variance_results_dir.mkdir(parents=True, exist_ok=True)
-    slurm_log_dir = variance_calculation_dir / "slurm_logs" # Logs inside job dir
-    slurm_log_dir.mkdir(exist_ok=True)
+    slurm_logs_dir.mkdir(parents=True, exist_ok=True)
+    workflow_models_dir.mkdir(parents=True, exist_ok=True) # Create models dir at workflow root
 
-    # --- No need to save energies separately if obtained via get_atoms_with_calculations ---
-    # energies_file = variance_calculation_dir / "energies.json"
-    # with open(energies_file, 'w') as f:
-    #     json.dump(energies, f, indent=2)
-    # print(f"[INFO] Saved energies to {energies_file}") # Removed
+    # --- Copy Models ---
+    print(f"[INFO] Copying models from {model_dir} to {workflow_models_dir}")
+    copied_model_paths = []
+    model_dir_path = Path(model_dir).resolve()
+    if not model_dir_path.is_dir():
+        raise ValueError(f"Model directory not found: {model_dir_path}")
 
-    # --- Create 'models' directory and copy models ---
-    # This copies models into the main workflow dir, accessible by all steps
-    models_dest_dir = output_dir / "models"
-    models_dest_dir.mkdir(exist_ok=True)
-    copied_model_rel_paths = [] # Relative paths from output_dir
+    n_models_copied = 0
+    for item in model_dir_path.glob("*.model"):
+        if item.is_file():
+            dest_path = workflow_models_dir / item.name
+            try:
+                shutil.copy2(item, dest_path)
+                # Store relative path for script generation
+                copied_model_paths.append(str(Path("models") / item.name))
+                n_models_copied += 1
+            except Exception as e:
+                 print(f"[WARN] Failed to copy model {item.name}: {e}")
 
-    model_src_path = Path(model_dir).resolve()
-    if not model_src_path.is_dir():
-        raise ValueError(f"Model source directory not found: {model_src_path}")
-
-    num_models_copied = 0
-    for item in os.listdir(model_src_path):
-        if item.endswith(".model"):
-            src_file = model_src_path / item
-            dest_file = models_dest_dir / item
-            # Avoid re-copying if exists? Use copy2 to preserve metadata.
-            if not dest_file.exists() or os.stat(src_file).st_mtime != os.stat(dest_file).st_mtime:
-                 shutil.copy2(src_file, dest_file)
-            copied_model_rel_paths.append(f"models/{item}") # Path relative to output_dir
-            num_models_copied += 1
-    print(f"[INFO] Ensured {num_models_copied} models are present in {models_dest_dir}")
-    if num_models_copied == 0:
-        raise ValueError(f"No *.model files found in source directory: {model_src_path}")
+    if n_models_copied == 0:
+        raise ValueError(f"No *.model files found or copied from {model_dir_path}")
+    print(f"[INFO] Copied {n_models_copied} models.")
 
     # --- Split structures into batches ---
     n_structures = len(selected_atoms_list)
     if n_structures == 0:
-        print("[WARNING] No structures provided for variance calculation batching.")
-        # Create an empty results dir marker? Or just let it be empty.
+        print("[WARN] No structures provided to prepare_variance_calculation_jobs. Skipping batch creation.")
+        # Return variance_results_dir as jobs won't run but dir exists
         return variance_results_dir
 
     # Ensure n_batches is not greater than n_structures
     if n_batches > n_structures:
-        print(f"[WARNING] Number of batches ({n_batches}) > number of structures ({n_structures}). Setting n_batches = {n_structures}.")
+        print(f"[WARN] Number of batches ({n_batches}) > number of structures ({n_structures}). Setting n_batches = {n_structures}.")
         n_batches = n_structures
-    if n_batches <= 0:
-         print(f"[WARNING] Invalid number of batches ({n_batches}). Setting n_batches = 1.")
-         n_batches = 1
+    elif n_batches <= 0:
+        print(f"[WARN] Invalid number of batches ({n_batches}). Setting n_batches = 1.")
+        n_batches = 1
 
-    structures_per_batch = n_structures // n_batches
-    remaining_structures = n_structures % n_batches
+
+    structures_per_batch, remainder = divmod(n_structures, n_batches)
+    print(f"[INFO] Splitting {n_structures} structures into {n_batches} batches (~{structures_per_batch} per batch).")
 
     start_index = 0
-    actual_n_batches = 0
     for batch_id in range(n_batches):
         batch_dir = variance_calculation_dir / f"batch_{batch_id}"
         batch_dir.mkdir(exist_ok=True)
-
-        end_index = start_index + structures_per_batch
-        if batch_id < remaining_structures:
-            end_index += 1
-
-        batch_atoms_list = selected_atoms_list[start_index:end_index]
-
-        # Skip creating batch if no structures assigned (can happen if n_batches > n_structures initially)
-        if not batch_atoms_list:
-             print(f"[DEBUG] Skipping batch {batch_id} as it has no structures.")
-             continue
-
-        actual_n_batches += 1 # Count only non-empty batches
+        # XYZ file saved inside the specific batch directory
         xyz_file_path = batch_dir / f"batch_{batch_id}.xyz"
 
-        # Assign structure names based on ID for consistency
-        for i, atoms in enumerate(batch_atoms_list):
-            structure_id = atoms.info.get('structure_id')
-            if structure_id:
-                atoms.info['structure_name'] = f"struct_{structure_id}" # Consistent naming
-            else:
-                # Fallback if ID somehow missing (shouldn't happen with db retrieval)
-                atoms.info['structure_name'] = f'batch_{batch_id}_index_{i}'
+        # Calculate number of structures for this batch
+        count = structures_per_batch + (1 if batch_id < remainder else 0)
+        end_index = start_index + count
 
-        # Write batch structures to XYZ file
-        ase.io.write(xyz_file_path, batch_atoms_list, format="extxyz") # Use extxyz for info dict
-        print(f"[INFO] Batch {batch_id}: Wrote {len(batch_atoms_list)} structures to {xyz_file_path}")
-
+        batch_atoms_list = selected_atoms_list[start_index:end_index]
         start_index = end_index
 
-    if actual_n_batches == 0:
-         print("[ERROR] No non-empty batches were created for variance calculation.")
-         # Return expected results dir, but it will remain empty
-         return variance_results_dir
+        # Assign structure_name based on structure_id in info (important for results matching)
+        for i, atoms in enumerate(batch_atoms_list):
+            struct_id = atoms.info.get('structure_id')
+            if struct_id is not None:
+                 # Use a consistent naming scheme, e.g., struct_id_XXX
+                 atoms.info['structure_name'] = f"struct_id_{struct_id}"
+            else:
+                 # Fallback if ID somehow missing (shouldn't happen with cleaned list)
+                 atoms.info['structure_name'] = f'batch_{batch_id}_index_{i}_noID'
+                 if debug: print(f"[DEBUG] Warning: Structure at index {i} in batch {batch_id} missing structure_id.")
 
-    # --- Generate SLURM array job script ---
+        # Write batch XYZ file
+        try:
+            ase.io.write(xyz_file_path, batch_atoms_list, format="extxyz") # Use extxyz to preserve info
+            print(f"[INFO] Batch {batch_id}: Wrote {len(batch_atoms_list)} structures to {xyz_file_path}")
+        except Exception as e:
+            print(f"[ERROR] Failed to write XYZ file {xyz_file_path}: {e}")
+            # Decide whether to continue or raise
+
+    # --- Load HPC Profile ---
+    print(f"[INFO] Loading HPC profile: {hpc_profile_name}")
+    try:
+        # Correct path assuming profiles are in standard location relative to setup.py
+        # Adjust based on actual project structure if needed
+        # Assuming workflow_setup.py is in forge/workflows/adversarial_attack/
+        hpc_profile_dir = Path(__file__).parent.parent / "hpc_profiles"
+        profile_manager = ProfileManager(profile_directory=hpc_profile_dir)
+        profile_manager.load_profile(hpc_profile_name)
+        hpc_profile = profile_manager.get_profile(hpc_profile_name)
+        hpc_profile['name'] = hpc_profile_name # Add name to dict for script header
+    except FileNotFoundError:
+        print(f"[ERROR] HPC profile '{hpc_profile_name}.json' not found in {hpc_profile_dir}")
+        raise
+    except Exception as e:
+        print(f"[ERROR] Failed to load HPC profile '{hpc_profile_name}': {e}")
+        raise
+
+    # --- Generate SLURM Array Job Script ---
     slurm_script_path = variance_calculation_dir / "variance_calculation_array.slurm"
 
-    # Define paths relative to the *execution directory* of the SLURM script,
-    # which we assume is the main workflow output directory `output_dir`.
-    # The script will cd into `output_dir` before running commands.
-    # TODO: The variance calculation script itself isn't implemented yet.
-    # Placeholder: assume a script exists or needs to be created at:
-    # forge.workflows.adversarial_attack.calculate_variance_script (or similar)
-    variance_command = "echo 'Variance calculation script not implemented yet'" # Placeholder
+    # Define paths relative to the workflow root directory (output_dir)
+    # These paths will be used *inside* the SLURM script, relative to where sbatch is run
+    output_dir_rel = variance_results_dir.relative_to(output_dir) # e.g., "variance_results"
+    log_dir_rel = slurm_logs_dir.relative_to(output_dir) # e.g., "variance_calculations/slurm_logs"
+    model_dir_rel = workflow_models_dir.relative_to(output_dir) # e.g., "models"
+    # Path template to the *input* XYZ file for each batch job
+    # Relative path from workflow root to the XYZ file within its batch dir
+    batch_script_rel_path = str(variance_calculation_dir.relative_to(output_dir) / "batch_${SLURM_ARRAY_TASK_ID}" / "batch_${SLURM_ARRAY_TASK_ID}.xyz")
+    # Example: "variance_calculations/batch_${SLURM_ARRAY_TASK_ID}/batch_${SLURM_ARRAY_TASK_ID}.xyz"
 
-    # TODO: Need to implement the actual variance calculation script/functionality.
-    # For now, the SLURM script generation is illustrative.
-    # Let's comment out SLURM script generation until the target script exists.
+    # Extract necessary SLURM parameters from the loaded profile
+    slurm_directives = hpc_profile.get("slurm_directives", {})
+    job_time = slurm_directives.get("time", "06:00:00") # Default time
+    cpus_per_task = int(slurm_directives.get("cpus-per-task", 1)) # Ensure int
+    gpus_per_task = 0 # Default to 0
 
-    # slurm_content = get_variance_calculation_script(
-    #     output_dir_rel="variance_results", # Relative path for results storage
-    #     log_dir_rel="variance_calculations/slurm_logs", # Relative path for logs
-    #     model_dir_rel="models", # Relative path to models dir
-    #     batch_script_rel_path="variance_calculations/batch_${SLURM_ARRAY_TASK_ID}/batch_${SLURM_ARRAY_TASK_ID}.xyz",
-    #     array_range=f"0-{actual_n_batches - 1}",
-    #     n_models=num_models_copied,
-    #     compute_forces=True, # Assuming variance is based on forces
-    #     # Add other SLURM params as needed: time, mem, cpus, gpus, account, partition
-    # )
+    # Handle different ways GPUs might be specified (gres or gpus key)
+    if "gpus" in slurm_directives:
+        try:
+            gpus_per_task = int(slurm_directives["gpus"])
+        except (ValueError, TypeError):
+            print(f"[WARN] Could not parse 'gpus' directive: {slurm_directives['gpus']}. Defaulting to 0.")
+    elif "gres" in slurm_directives and isinstance(slurm_directives["gres"], str) and "gpu" in slurm_directives["gres"]:
+         try:
+             # Attempt to parse standard gres format like "gpu:2" or "gpu:v100:1"
+             parts = slurm_directives["gres"].split(":")
+             gpus_per_task = int(parts[-1]) # Assume last part is the count
+         except (ValueError, TypeError, IndexError):
+             print(f"[WARN] Could not parse GPU count from 'gres' directive: {slurm_directives['gres']}. Defaulting to 0.")
 
-    # with open(slurm_script_path, "w") as f:
-    #     f.write(slurm_content)
-    # print(f"[INFO] Created SLURM array script for variance calculation (Placeholder): {slurm_script_path}")
-    print(f"[WARNING] SLURM script generation for variance calculation is currently disabled pending implementation of the calculation script.")
+    account = slurm_directives.get("account")
+    partition = slurm_directives.get("partition")
 
+    # Get the SLURM script content from the template function
+    slurm_content = get_variance_calculation_script(
+        output_dir_rel=str(output_dir_rel),
+        log_dir_rel=str(log_dir_rel),
+        model_dir_rel=str(model_dir_rel),
+        batch_script_rel_path=batch_script_rel_path,
+        array_range=f"0-{n_batches - 1}",
+        n_models=n_models_copied,
+        time=job_time,
+        cpus_per_task=cpus_per_task,
+        gpus_per_task=gpus_per_task, # Pass GPU count
+        hpc_profile=hpc_profile, # Pass the whole profile dict
+        account=account,
+        partition=partition,
+    )
 
-    # Return the path where results *should* appear
+    try:
+        with open(slurm_script_path, "w") as f:
+            f.write(slurm_content)
+        print(f"[INFO] Created SLURM array script: {slurm_script_path}")
+    except Exception as e:
+        print(f"[ERROR] Failed to write SLURM script {slurm_script_path}: {e}")
+        raise
+
+    # Return the path where results *will be* stored
     return variance_results_dir
 
 
 # --- combine_variance_results function ---
 # (Add/improve docstring)
-def combine_variance_results(variance_dir: Path, debug: bool = False) -> List[Tuple[str, float, int]]:
+def combine_variance_results(variance_dir: Path, debug: bool = False) -> List[Tuple[int, float]]: # Return (ID, variance)
     """
     Combine variance results from batch JSON files and sort by variance.
 
-    Reads '*_variances.json' files within the specified directory, extracts
-    structure names (expected format 'struct_ID') and their calculated variances,
-    and returns a list sorted from highest to lowest variance.
+    Reads '*_variances.json' files within the specified directory, expects
+    keys to be string representations of integer structure IDs, and returns
+    a list sorted from highest to lowest variance.
 
     Args:
         variance_dir: Directory containing the variance result JSON files
@@ -314,25 +415,26 @@ def combine_variance_results(variance_dir: Path, debug: bool = False) -> List[Tu
         debug: Enable debug output.
 
     Returns:
-        List of tuples: (structure_name, variance, structure_id), sorted by
+        List of tuples: (structure_id, variance), sorted by
         variance in descending order. Returns empty list if no results found.
     """
-    all_results = []
-    processed_struct_names = set()
+    all_results_dict = {} # Use dict to avoid duplicates if ID appears in multiple files
 
-    # Find all variance JSON files produced by the (hypothetical) variance calc script
     variance_files = list(variance_dir.glob("*_variances.json"))
     if not variance_files:
         print(f"[WARNING] No variance result files (*_variances.json) found in {variance_dir}")
         return []
 
-    print(f"[INFO] Found {len(variance_files)} variance result files in {variance_dir}")
+    print(f"[INFO] Found {len(variance_files)} variance result files in {variance_dir}. Combining...")
 
+    files_read = 0
+    total_entries = 0
     for json_file in variance_files:
         if debug: print(f"[DEBUG] Reading variance results from {json_file}")
         try:
             with open(json_file, 'r') as f:
-                batch_results = json.load(f) # Expected format: { "struct_ID": variance_value, ... }
+                batch_results = json.load(f) # Expected format: { "struct_ID_str": variance_value, ... }
+            files_read += 1
         except json.JSONDecodeError:
             print(f"[WARNING] Could not decode JSON from file: {json_file}. Skipping.")
             continue
@@ -340,48 +442,40 @@ def combine_variance_results(variance_dir: Path, debug: bool = False) -> List[Tu
             print(f"[WARNING] Error reading file {json_file}: {e}. Skipping.")
             continue
 
-        # Process results in the batch file
-        for struct_name, variance in batch_results.items():
-            if struct_name in processed_struct_names:
-                 print(f"[WARNING] Duplicate structure name '{struct_name}' found across batch results. Using first encountered value.")
-                 continue
-
-            # Attempt to extract structure ID from name
+        # Process results, converting keys to int IDs
+        for struct_id_str, variance in batch_results.items():
             try:
-                 if not struct_name.startswith("struct_"):
-                     raise ValueError("Name does not start with 'struct_'")
-                 structure_id = int(struct_name.split('_')[1])
-            except (IndexError, ValueError):
-                 print(f"[WARNING] Could not extract structure ID from name: '{struct_name}'. Skipping.")
-                 continue
+                structure_id = int(struct_id_str)
+                variance_float = float(variance) # Ensure variance is float
+                
+                # Store or update the variance for this ID
+                # If duplicate ID found, keep the one from the later processed file (no specific reason, just need a rule)
+                all_results_dict[structure_id] = variance_float
+                total_entries += 1
 
-            # Validate variance value
-            try:
-                variance_float = float(variance)
             except (ValueError, TypeError):
-                print(f"[WARNING] Invalid variance value '{variance}' for structure '{struct_name}'. Skipping.")
+                print(f"[WARNING] Invalid structure ID ('{struct_id_str}') or variance ('{variance}') found in {json_file}. Skipping entry.")
                 continue
-
-            all_results.append((struct_name, variance_float, structure_id))
-            processed_struct_names.add(struct_name)
-            if debug: print(f"[DEBUG] Added structure {struct_name} (ID: {structure_id}) with variance {variance_float:.6f}")
-
-    if not all_results:
-        print("[WARNING] No valid variance results could be extracted from the files.")
+                
+    if files_read == 0:
+        print(f"[WARNING] Could not read any variance data from files in {variance_dir}.")
+        return []
+        
+    if not all_results_dict:
+        print(f"[WARNING] No valid variance entries found across {files_read} files.")
         return []
 
-    # Sort by variance (highest first)
-    # Sort key: lambda x: x[1] (the variance value)
-    sorted_results = sorted(all_results, key=lambda x: x[1], reverse=True)
+    # Convert dict to list of tuples and sort by variance (descending)
+    sorted_results = sorted(all_results_dict.items(), key=lambda item: item[1], reverse=True)
 
-    print(f"[INFO] Combined and sorted {len(sorted_results)} structure variance results.")
+    print(f"[INFO] Combined {len(sorted_results)} unique variance results from {files_read} files.")
     if debug:
-        print(f"\n[DEBUG] Top 5 variance results:")
-        for name, var, sid in sorted_results[:5]:
-            print(f"  ID: {sid:<6} Name: {name:<15} Variance: {var:.6f}")
+        print(f"\n[DEBUG] Top 5 Variance Results:")
+        for sid, var in sorted_results[:5]:
+            print(f"  Structure ID {sid}: {var:.6f}")
 
-    # Return list of (name, variance, id) tuples
-    return sorted_results
+    # Return list of (structure_id, variance) tuples
+    return sorted_results 
 
 
 # --- prepare_gradient_aa_optimization function ---
@@ -391,220 +485,237 @@ def prepare_gradient_aa_optimization(
     model_dir: str, # Original model source dir (used for path in README)
     n_structures: int,
     n_batches: int = 1,
-    learning_rate: float = 0.01, # Pass through for summary/README
-    n_iterations: int = 60,   # Pass through for summary/README
-    min_distance: float = 1.5,    # Pass through for summary/README
-    include_probability: bool = False,# Pass through for summary/README
-    temperature: float = 0.86, # Pass through for summary/README
-    device: str = "cuda", # Device for SLURM request
-    # Removed use_autograd as it wasn't used
+    learning_rate: float = 0.01,
+    n_iterations: int = 60,
+    min_distance: float = 1.5,
+    include_probability: bool = False,
+    temperature: float = 0.86, # eV
+    # device: str = "cuda", # Device selected in SLURM script now
+    hpc_profile_name: str = "PSFC-GPU-AA",
     debug: bool = False,
-) -> None:
+) -> None: # Returns None, prepares files and script
     """
-    Prepares batch directories and SLURM script for Gradient-Based AA optimization.
+    Prepares SLURM array job for gradient-based AA optimization.
 
-    Reads combined variance results, selects the top N structures, retrieves
-    them from the database, creates new batch directories/XYZ files for the
-    optimization step, and generates the SLURM array job script to run the
-    gradient-based optimization engine.
+    Selects top N structures based on combined variance results, retrieves
+    them from the database, splits them into batches, copies models,
+    and generates the SLURM submission script.
 
     Args:
-        input_directory: Directory containing combined variance results JSON files.
-                         Typically 'variance_results'.
-        model_dir: Path to the original model directory (used for README).
-        n_structures: Number of highest-variance structures to select.
+        input_directory: Path to the directory containing combined variance results
+                         (typically 'variance_results').
+        model_dir: Path to the *original* directory containing MACE models (for copying).
+        n_structures: Number of highest-variance structures to select for optimization.
         n_batches: Number of batches (SLURM jobs) to split optimization into.
-        learning_rate: Learning rate parameter for the optimization engine.
-        n_iterations: Number of iterations parameter for the optimization engine.
-        min_distance: Minimum distance parameter for the optimization engine.
-        include_probability: Probability weighting flag for the optimization engine.
-        temperature: Temperature (eV) parameter for probability weighting.
-        device: Device to request for SLURM jobs ('cpu' or 'cuda').
+        learning_rate: Learning rate for gradient ascent steps.
+        n_iterations: Number of optimization iterations.
+        min_distance: Minimum allowed interatomic distance (Å).
+        include_probability: Whether to include probability weighting term.
+        temperature: Temperature (eV) for probability weighting.
+        hpc_profile_name: Name of the HPC profile for SLURM script generation.
         debug: Enable detailed debug output.
-
-    Raises:
-        ValueError: If input directory or models are not found, or no structures selected.
     """
-    print("[INFO] Preparing Gradient-Based Adversarial Attack optimization jobs...")
+    print("[INFO] Starting Gradient AA optimization job preparation...")
 
-    # --- Setup directories ---
+    # --- Setup Directories ---
     variance_results_path = Path(input_directory).resolve()
     if not variance_results_path.is_dir():
         raise ValueError(f"Variance results directory not found: {variance_results_path}")
 
-    # Parent directory is the main workflow dir
-    workflow_dir = variance_results_path.parent
-    aa_output_dir = workflow_dir / "gradient_aa_optimization"
+    # Create the main directory for this AA method
+    aa_output_dir = variance_results_path.parent / "gradient_aa_optimization"
     aa_output_dir.mkdir(parents=True, exist_ok=True)
-    slurm_log_dir = aa_output_dir / "slurm_logs" # Logs inside job dir
-    slurm_log_dir.mkdir(exist_ok=True)
+    slurm_logs_dir = aa_output_dir / "slurm_logs"
+    slurm_logs_dir.mkdir(exist_ok=True)
+    workflow_models_dir = aa_output_dir / "models" # Models copied inside AA dir
+    workflow_models_dir.mkdir(parents=True, exist_ok=True)
 
-    # Models should already be copied in the 'models' subdir of workflow_dir
-    models_path = workflow_dir / "models"
-    if not models_path.is_dir() or not any(models_path.glob("*.model")):
-         # Attempt to copy models if missing (e.g., if run out of order)
-         print(f"[WARNING] Models directory '{models_path}' not found or empty. Attempting to copy from '{model_dir}'...")
-         prepare_variance_calculation_jobs([], workflow_dir, Path(model_dir), 1) # Hacky way to trigger model copy
-         if not models_path.is_dir() or not any(models_path.glob("*.model")):
-              raise ValueError(f"Models directory '{models_path}' is still missing or empty after attempting copy.")
+    # --- Copy Models --- # Copy models specific to this step
+    print(f"[INFO] Copying models from {model_dir} to {workflow_models_dir}")
+    n_models_copied = 0
+    model_source_path = Path(model_dir).resolve()
+    if not model_source_path.is_dir():
+         raise ValueError(f"Model source directory not found: {model_source_path}")
+    for item in model_source_path.glob("*.model"):
+        if item.is_file():
+            try:
+                shutil.copy2(item, workflow_models_dir / item.name)
+                n_models_copied += 1
+            except Exception as e:
+                 print(f"[WARN] Failed to copy model {item.name}: {e}")
+    if n_models_copied == 0:
+         raise ValueError(f"No *.model files found or copied from {model_source_path}")
+    print(f"[INFO] Copied {n_models_copied} models.")
 
+    # --- Combine and Sort Variance Results --- # Use updated function
+    print(f"[INFO] Combining variance results from {variance_results_path}...")
+    # Expected return: List[Tuple[structure_id, variance]]
+    sorted_variance_results = combine_variance_results(variance_results_path, debug=debug)
 
-    # --- Combine and sort variance results ---
-    print("[INFO] Combining and sorting variance results...")
-    # Expects list of (name, variance, id)
-    sorted_results = combine_variance_results(variance_results_path, debug=debug)
-    if not sorted_results:
-        raise ValueError(f"No valid variance results found in {variance_results_path}.")
-    print(f"[INFO] Found {len(sorted_results)} structures with variance results.")
+    if not sorted_variance_results:
+        print("[ERROR] No variance results found or processed. Cannot prepare AA jobs.")
+        return
+    print(f"[INFO] Found {len(sorted_variance_results)} structures with variance results.")
 
-    # --- Select top N structures ---
-    if n_structures <= 0:
-        raise ValueError("Number of structures (n_structures) must be positive.")
-    selected_structures_info = sorted_results[:n_structures]
-    print(f"[INFO] Selected top {len(selected_structures_info)} structures for optimization.")
+    # --- Select Top N Structures --- # Select based on ID, variance tuples
+    if n_structures > len(sorted_variance_results):
+        print(f"[WARNING] Requested {n_structures} structures, but only {len(sorted_variance_results)} available. Using all available.")
+        n_structures = len(sorted_variance_results)
+    elif n_structures <= 0:
+        print("[ERROR] Number of structures for AA must be positive.")
+        return
+
+    # Get list of (ID, variance) tuples for the top N
+    selected_structures_info = sorted_variance_results[:n_structures]
+    selected_ids = [sid for sid, _ in selected_structures_info]
+    print(f"[INFO] Selected top {len(selected_ids)} structures for Gradient AA based on variance.")
     if debug:
-        print("[DEBUG] Selected structure IDs and variances:")
-        for name, var, sid in selected_structures_info:
-            print(f"  ID: {sid:<6} Variance: {var:.6f}")
+        print(f"[DEBUG] Selected IDs and Variances:")
+        for sid, var in selected_structures_info[:5]: # Print top 5
+             print(f"  ID: {sid}, Variance: {var:.6f}")
 
-    # Extract structure IDs to retrieve from database
-    structure_ids_to_retrieve = [sid for name, var, sid in selected_structures_info]
-    variance_map = {sid: var for name, var, sid in selected_structures_info} # Map ID to initial variance
+    # --- Prepare Batches --- #
+    # Ensure n_batches is valid
+    if n_batches > len(selected_ids):
+        print(f"[WARN] Number of batches ({n_batches}) > number of selected structures ({len(selected_ids)}). Setting n_batches = {len(selected_ids)}.")
+        n_batches = len(selected_ids)
+    elif n_batches <= 0:
+        print(f"[WARN] Invalid number of batches ({n_batches}). Setting n_batches = 1.")
+        n_batches = 1
 
-    # --- Retrieve selected structures from Database ---
-    print("[INFO] Retrieving selected structures from database...")
-    db_manager = DatabaseManager()
-    # Get structures, preferably with energy info if needed later by optimizer
-    # Although for gradient AA, energy is only used if include_probability=True
-    retrieved_atoms_list = db_manager.get_atoms_with_calculations(
-         structure_ids_to_retrieve,
-         calculator='vasp'
-    )
+    structures_per_batch, remainder = divmod(len(selected_ids), n_batches)
+    print(f"[INFO] Splitting {len(selected_ids)} structures into {n_batches} AA batches (~{structures_per_batch} per batch).")
 
-    # Filter and add initial variance info
-    final_atoms_for_batching = []
-    retrieved_ids = set()
-    for atoms in retrieved_atoms_list:
-        struct_id = atoms.info.get('structure_id')
-        if struct_id in variance_map:
-            atoms.info['initial_variance'] = variance_map[struct_id]
-            # Ensure consistent naming based on ID
-            atoms.info['structure_name'] = f"struct_{struct_id}"
-            final_atoms_for_batching.append(atoms)
-            retrieved_ids.add(struct_id)
-        elif debug:
-            print(f"[DEBUG] Structure ID {struct_id} retrieved but not in top variance list?")
+    # Need DB manager to fetch the actual structures for batching
+    db_manager = None
+    try:
+        db_manager = DatabaseManager(debug=debug)
 
-    # Check if all requested structures were retrieved
-    missing_ids = set(structure_ids_to_retrieve) - retrieved_ids
-    if missing_ids:
-        print(f"[WARNING] Could not retrieve the following selected structure IDs from database: {missing_ids}")
+        current_index = 0
+        for batch_id in range(n_batches):
+            batch_dir = aa_output_dir / f"batch_{batch_id}"
+            batch_dir.mkdir(exist_ok=True)
+            # Engine output goes into a subfolder named after the batch
+            engine_output_dir = batch_dir / f"aa_batch_{batch_id}_output" 
+            # We don't create engine_output_dir here; the engine itself should do that.
+            xyz_file_path = batch_dir / f"batch_{batch_id}_input.xyz" # Input XYZ for this batch
 
-    if not final_atoms_for_batching:
-        raise ValueError("Failed to retrieve any of the selected top-variance structures from the database.")
+            # Determine structure IDs and variances for this batch
+            count = structures_per_batch + (1 if batch_id < remainder else 0)
+            batch_structures_info = selected_structures_info[current_index : current_index + count]
+            batch_ids = [sid for sid, _ in batch_structures_info]
+            current_index += count
 
-    n_structures_for_aa = len(final_atoms_for_batching)
-    print(f"[INFO] Retrieved {n_structures_for_aa} structures for AA optimization.")
+            if not batch_ids:
+                 print(f"[WARN] Batch {batch_id} has no structures assigned. Skipping.")
+                 continue
 
+            # Fetch the actual Atoms objects for this batch (use cleaned atoms)
+            # We need the geometry and original metadata, so fetch without calculation data
+            batch_atoms_map = db_manager.get_structures_batch(batch_ids)
+            batch_atoms_list = [batch_atoms_map.get(sid) for sid in batch_ids if batch_atoms_map.get(sid) is not None]
 
-    # --- Create batches for AA optimization ---
-    n_aa_batches = n_batches # Use the provided n_batches for AA step
-    if n_aa_batches > n_structures_for_aa:
-        print(f"[WARNING] AA batches ({n_aa_batches}) > AA structures ({n_structures_for_aa}). Setting n_aa_batches = {n_structures_for_aa}.")
-        n_aa_batches = n_structures_for_aa
-    if n_aa_batches <= 0:
-        print(f"[WARNING] Invalid number of AA batches ({n_aa_batches}). Setting n_aa_batches = 1.")
-        n_aa_batches = 1
+            if len(batch_atoms_list) != len(batch_ids):
+                 print(f"[WARN] Batch {batch_id}: Could not retrieve all expected structures from DB ({len(batch_atoms_list)}/{len(batch_ids)} found).")
 
-    structures_per_aa_batch = n_structures_for_aa // n_aa_batches
-    remaining_aa_structures = n_structures_for_aa % n_aa_batches
+            if not batch_atoms_list:
+                 print(f"[WARN] Batch {batch_id}: No valid structures retrieved from DB. Skipping.")
+                 continue
 
-    start_index = 0
-    actual_n_aa_batches = 0
-    for batch_id in range(n_aa_batches):
-        batch_dir = aa_output_dir / f"batch_{batch_id}"
-        batch_dir.mkdir(exist_ok=True)
+            # Add initial variance info back to Atoms objects for the engine
+            variance_map = dict(batch_structures_info)
+            for atoms in batch_atoms_list:
+                struct_id = atoms.info.get('structure_id')
+                if struct_id in variance_map:
+                    atoms.info['initial_variance'] = variance_map[struct_id]
+                # Ensure structure_name is set using ID for consistency
+                atoms.info['structure_name'] = f"struct_id_{struct_id}"
 
-        end_index = start_index + structures_per_aa_batch
-        if batch_id < remaining_aa_structures:
-            end_index += 1
+            # Write batch XYZ file
+            try:
+                ase.io.write(xyz_file_path, batch_atoms_list, format="extxyz")
+                print(f"[INFO] Batch {batch_id}: Wrote {len(batch_atoms_list)} structures to {xyz_file_path}")
+            except Exception as e:
+                print(f"[ERROR] Failed to write XYZ file {xyz_file_path}: {e}")
 
-        batch_atoms_list = final_atoms_for_batching[start_index:end_index]
+    finally:
+         if db_manager: db_manager.close_connection()
 
-        if not batch_atoms_list:
-             if debug: print(f"[DEBUG] Skipping AA batch {batch_id} as it has no structures.")
-             continue
+    # --- Load HPC Profile --- # (Same logic as variance job prep)
+    print(f"[INFO] Loading HPC profile: {hpc_profile_name}")
+    try:
+        hpc_profile_dir = Path(__file__).parent.parent / "hpc_profiles"
+        profile_manager = ProfileManager(profile_directory=hpc_profile_dir)
+        profile_manager.load_profile(hpc_profile_name)
+        hpc_profile = profile_manager.get_profile(hpc_profile_name)
+        hpc_profile['name'] = hpc_profile_name
+    except FileNotFoundError: print(f"[ERROR] HPC profile '{hpc_profile_name}.json' not found."); return
+    except Exception as e: print(f"[ERROR] Failed to load HPC profile '{hpc_profile_name}': {e}"); return
 
-        actual_n_aa_batches += 1
-        batch_xyz = batch_dir / f"batch_{batch_id}.xyz"
-
-        # Write batch XYZ file (structures already have names and initial variance)
-        ase.io.write(batch_xyz, batch_atoms_list, format="extxyz")
-        print(f"[INFO] AA Batch {batch_id}: Wrote {len(batch_atoms_list)} structures to {batch_xyz}")
-
-        # Save batch metadata (optional but useful for tracking)
-        batch_meta = {
-            'batch_id': batch_id,
-            'structures': [
-                {
-                    'name': atoms.info['structure_name'],
-                    'id': atoms.info['structure_id'],
-                    'initial_variance': atoms.info['initial_variance'],
-                    'energy': atoms.info.get('energy') # Include energy if available
-                } for atoms in batch_atoms_list
-            ]
-        }
-        with open(batch_dir / 'batch_metadata.json', 'w') as f:
-            json.dump(batch_meta, f, indent=2)
-
-        start_index = end_index
-
-    if actual_n_aa_batches == 0:
-        raise ValueError("No non-empty AA optimization batches were created.")
-
-
-    # --- Generate SLURM array job script for AA optimization ---
+    # --- Generate SLURM Script --- #
     slurm_script_path = aa_output_dir / "gradient_aa_optimization_array.slurm"
 
-    # Define paths relative to the workflow root directory (where sbatch is run)
-    model_dir_rel = "models"
-    batch_base_rel = "gradient_aa_optimization" # Relative path to batch dirs
+    # Define paths relative to the AA output directory for use inside the script
+    # The script will be run from aa_output_dir
+    log_dir_rel = slurm_logs_dir.relative_to(aa_output_dir) # e.g., "slurm_logs"
+    model_dir_rel = workflow_models_dir.relative_to(aa_output_dir) # e.g., "models"
+    # Base path for batch directories relative to aa_output_dir
+    batch_base_rel = "." # Script runs from aa_output_dir
+    # Relative path from batch_base_rel to the input XYZ file
+    structure_file_rel_template = f"batch_${{BATCH_ID}}/batch_${{BATCH_ID}}_input.xyz"
+    # Relative path from batch_base_rel to where the engine should save output
+    engine_output_dir_rel_template = f"batch_${{BATCH_ID}}/aa_batch_${{BATCH_ID}}_output"
 
-    # Set GPU requirement based on device
-    gpus_per_task = 1 if device == "cuda" else 0
+    # Extract SLURM params
+    slurm_directives = hpc_profile.get("slurm_directives", {})
+    job_time = slurm_directives.get("time", "24:00:00")
+    cpus_per_task = int(slurm_directives.get("cpus-per-task", 1))
+    gpus_per_task = 0 # Default
+    if "gpus" in slurm_directives:
+         try: gpus_per_task = int(slurm_directives["gpus"]);
+         except (ValueError, TypeError): pass
+    elif "gres" in slurm_directives and isinstance(slurm_directives["gres"], str) and "gpu" in slurm_directives["gres"]:
+         try: parts = slurm_directives["gres"].split(":"); gpus_per_task = int(parts[-1]);
+         except (ValueError, TypeError, IndexError): pass
+    account = slurm_directives.get("account")
+    partition = slurm_directives.get("partition")
 
-    # Get the SLURM script content from the template
+    # Determine device based on GPU request for SLURM script args
+    device = "cuda" if gpus_per_task > 0 else "cpu"
+
     slurm_content = get_gradient_aa_script(
-        batch_base_rel=batch_base_rel, # Base dir for batch-specific files/output
-        log_dir_rel=f"{batch_base_rel}/slurm_logs",
-        model_dir_rel=model_dir_rel,
-        # Structure file path is now relative to batch_base_rel
-        structure_file_rel="batch_${SLURM_ARRAY_TASK_ID}/batch_${SLURM_ARRAY_TASK_ID}.xyz",
-        # Output dir for the engine script is the batch directory itself
-        engine_output_dir_rel="batch_${SLURM_ARRAY_TASK_ID}",
+        batch_base_rel=batch_base_rel,
+        log_dir_rel=str(log_dir_rel),
+        model_dir_rel=str(model_dir_rel),
+        structure_file_rel=structure_file_rel_template,
+        engine_output_dir_rel=engine_output_dir_rel_template,
+        array_range=f"0-{n_batches - 1}",
         n_iterations=n_iterations,
         learning_rate=learning_rate,
         min_distance=min_distance,
         include_probability=include_probability,
         temperature=temperature, # eV
-        device=device,
-        array_range=f"0-{actual_n_aa_batches - 1}",
-        # Add SLURM resource parameters (adjust defaults as needed)
-        time="24:00:00",
-        mem="32G",
-        cpus_per_task=8,
+        device=device, # Pass detected device
+        save_trajectory=True, # Hardcode saving trajectory for now
+        time=job_time,
+        cpus_per_task=cpus_per_task,
         gpus_per_task=gpus_per_task,
-        save_trajectory=True, # Assuming default behavior is to save
-        # database_id is not needed here, passed per structure inside engine if applicable
+        hpc_profile=hpc_profile,
+        account=account,
+        partition=partition,
     )
 
-    with open(slurm_script_path, 'w') as f:
-        f.write(slurm_content)
-    print(f"[INFO] Created Gradient AA SLURM array script: {slurm_script_path}")
-    print(f"[INFO] Submit the job from the workflow directory ('{workflow_dir.name}') using: sbatch {aa_output_dir.name}/{slurm_script_path.name}")
+    try:
+        with open(slurm_script_path, 'w') as f:
+            f.write(slurm_content)
+        print(f"[INFO] Created Gradient AA SLURM script: {slurm_script_path}")
+        print(f"[INFO] Run this script from the '{aa_output_dir}' directory.")
+    except Exception as e:
+        print(f"[ERROR] Failed to write SLURM script {slurm_script_path}: {e}")
 
 
-# --- Renamed prepare_aa_optimization -> prepare_monte_carlo_aa_optimization ---
+# --- prepare_monte_carlo_aa_optimization function ---
+# (Add/improve docstring)
 def prepare_monte_carlo_aa_optimization(
     input_directory: str, # Should be variance_results dir
     model_dir: str, # Original model source dir (used for path in README)
@@ -616,200 +727,233 @@ def prepare_monte_carlo_aa_optimization(
     min_distance: float = 2.0,
     max_displacement: float = 0.1, # Added
     mode: str = "all",
-    device: str = "cuda",
+    # device: str = "cuda", # Device selected in SLURM script now
+    hpc_profile_name: str = "default",
     debug: bool = False,
 ) -> None:
     """
-    Prepares batch directories and SLURM script for Monte Carlo AA optimization.
+    Prepares SLURM array job for Monte Carlo AA optimization.
 
-    Reads combined variance results, selects top N structures, retrieves them,
-    creates batch directories/XYZ files, and generates the SLURM array job
-    script to run the Monte Carlo optimization engine.
+    Selects top N structures based on combined variance results, retrieves
+    them from the database, splits them into batches, copies models,
+    and generates the SLURM submission script.
 
     Args:
-        input_directory: Directory containing combined variance results JSON files.
-        model_dir: Path to the original model directory.
-        n_structures: Number of highest-variance structures to select.
+        input_directory: Path to the directory containing combined variance results
+                         (typically 'variance_results').
+        model_dir: Path to the *original* directory containing MACE models (for copying).
+        n_structures: Number of highest-variance structures to select for optimization.
         n_batches: Number of batches (SLURM jobs) to split optimization into.
-        temperature: Temperature (K) for Metropolis acceptance criterion.
-        max_steps: Maximum number of Monte Carlo steps.
-        patience: Patience for stopping optimization.
+        temperature: Temperature (K) for Metropolis acceptance.
+        max_steps: Maximum number of MC steps.
+        patience: Stop if max variance doesn't improve for this many steps.
         min_distance: Minimum allowed interatomic distance (Å).
-        max_displacement: Maximum distance (Å) an atom can be moved per MC step.
+        max_displacement: Maximum distance an atom can be moved per step (Å).
         mode: Atom displacement mode ('all' or 'single').
-        device: Device to request for SLURM jobs ('cpu' or 'cuda').
+        hpc_profile_name: Name of the HPC profile for SLURM script generation.
         debug: Enable detailed debug output.
-
-    Raises:
-        ValueError: If inputs are invalid or structures cannot be retrieved.
     """
-    print("[INFO] Preparing Monte Carlo Adversarial Attack optimization jobs...")
+    print("[INFO] Starting Monte Carlo AA optimization job preparation...")
 
-    # --- Setup directories ---
+    # --- Setup Directories --- (Similar to Gradient AA)
     variance_results_path = Path(input_directory).resolve()
     if not variance_results_path.is_dir():
         raise ValueError(f"Variance results directory not found: {variance_results_path}")
 
-    workflow_dir = variance_results_path.parent
-    aa_output_dir = workflow_dir / "monte_carlo_aa_optimization" # Changed dir name
+    aa_output_dir = variance_results_path.parent / "monte_carlo_aa_optimization"
     aa_output_dir.mkdir(parents=True, exist_ok=True)
-    slurm_log_dir = aa_output_dir / "slurm_logs"
-    slurm_log_dir.mkdir(exist_ok=True)
+    slurm_logs_dir = aa_output_dir / "slurm_logs"
+    slurm_logs_dir.mkdir(exist_ok=True)
+    workflow_models_dir = aa_output_dir / "models"
+    workflow_models_dir.mkdir(parents=True, exist_ok=True)
 
-    # Ensure models exist
-    models_path = workflow_dir / "models"
-    if not models_path.is_dir() or not any(models_path.glob("*.model")):
-         print(f"[WARNING] Models directory '{models_path}' not found or empty. Attempting to copy from '{model_dir}'...")
-         prepare_variance_calculation_jobs([], workflow_dir, Path(model_dir), 1)
-         if not models_path.is_dir() or not any(models_path.glob("*.model")):
-              raise ValueError(f"Models directory '{models_path}' is still missing or empty after attempting copy.")
+    # --- Copy Models --- (Identical to Gradient AA)
+    print(f"[INFO] Copying models from {model_dir} to {workflow_models_dir}")
+    n_models_copied = 0
+    model_source_path = Path(model_dir).resolve()
+    if not model_source_path.is_dir():
+         raise ValueError(f"Model source directory not found: {model_source_path}")
+    for item in model_source_path.glob("*.model"):
+        if item.is_file():
+            try:
+                shutil.copy2(item, workflow_models_dir / item.name)
+                n_models_copied += 1
+            except Exception as e:
+                 print(f"[WARN] Failed to copy model {item.name}: {e}")
+    if n_models_copied == 0:
+         raise ValueError(f"No *.model files found or copied from {model_source_path}")
+    print(f"[INFO] Copied {n_models_copied} models.")
 
-    # --- Combine and sort variance results ---
-    print("[INFO] Combining and sorting variance results...")
-    sorted_results = combine_variance_results(variance_results_path, debug=debug)
-    if not sorted_results:
-        raise ValueError(f"No valid variance results found in {variance_results_path}.")
-    print(f"[INFO] Found {len(sorted_results)} structures with variance results.")
 
-    # --- Select top N structures ---
-    if n_structures <= 0:
-        raise ValueError("Number of structures (n_structures) must be positive.")
-    selected_structures_info = sorted_results[:n_structures]
-    print(f"[INFO] Selected top {len(selected_structures_info)} structures for optimization.")
+    # --- Combine and Sort Variance Results --- (Identical to Gradient AA)
+    print(f"[INFO] Combining variance results from {variance_results_path}...")
+    sorted_variance_results = combine_variance_results(variance_results_path, debug=debug)
+    if not sorted_variance_results:
+        print("[ERROR] No variance results found or processed. Cannot prepare AA jobs.")
+        return
+    print(f"[INFO] Found {len(sorted_variance_results)} structures with variance results.")
 
-    structure_ids_to_retrieve = [sid for name, var, sid in selected_structures_info]
-    variance_map = {sid: var for name, var, sid in selected_structures_info}
+    # --- Select Top N Structures --- (Identical to Gradient AA)
+    if n_structures > len(sorted_variance_results):
+        print(f"[WARNING] Requested {n_structures} structures, but only {len(sorted_variance_results)} available. Using all available.")
+        n_structures = len(sorted_variance_results)
+    elif n_structures <= 0:
+        print("[ERROR] Number of structures for AA must be positive.")
+        return
+    selected_structures_info = sorted_variance_results[:n_structures]
+    selected_ids = [sid for sid, _ in selected_structures_info]
+    print(f"[INFO] Selected top {len(selected_ids)} structures for Monte Carlo AA based on variance.")
+    if debug:
+        print(f"[DEBUG] Selected IDs and Variances:")
+        for sid, var in selected_structures_info[:5]:
+             print(f"  ID: {sid}, Variance: {var:.6f}")
 
-    # --- Retrieve selected structures from Database ---
-    print("[INFO] Retrieving selected structures from database...")
-    db_manager = DatabaseManager()
-    retrieved_atoms_list = db_manager.get_atoms_with_calculations(
-         structure_ids_to_retrieve, model_type='vasp-static' # Get energy if possible
-    )
+    # --- Prepare Batches --- (Identical to Gradient AA)
+    if n_batches > len(selected_ids):
+        print(f"[WARN] Number of batches ({n_batches}) > number of selected structures ({len(selected_ids)}). Setting n_batches = {len(selected_ids)}.")
+        n_batches = len(selected_ids)
+    elif n_batches <= 0:
+        print(f"[WARN] Invalid number of batches ({n_batches}). Setting n_batches = 1.")
+        n_batches = 1
+    structures_per_batch, remainder = divmod(len(selected_ids), n_batches)
+    print(f"[INFO] Splitting {len(selected_ids)} structures into {n_batches} AA batches (~{structures_per_batch} per batch).")
 
-    final_atoms_for_batching = []
-    retrieved_ids = set()
-    for atoms in retrieved_atoms_list:
-        struct_id = atoms.info.get('structure_id')
-        if struct_id in variance_map:
-            atoms.info['initial_variance'] = variance_map[struct_id]
-            atoms.info['structure_name'] = f"struct_{struct_id}"
-            final_atoms_for_batching.append(atoms)
-            retrieved_ids.add(struct_id)
+    db_manager = None
+    try:
+        db_manager = DatabaseManager(debug=debug)
+        current_index = 0
+        for batch_id in range(n_batches):
+            batch_dir = aa_output_dir / f"batch_{batch_id}"
+            batch_dir.mkdir(exist_ok=True)
+            engine_output_dir = batch_dir / f"aa_batch_{batch_id}_output" 
+            xyz_file_path = batch_dir / f"batch_{batch_id}_input.xyz"
 
-    missing_ids = set(structure_ids_to_retrieve) - retrieved_ids
-    if missing_ids:
-        print(f"[WARNING] Could not retrieve the following selected structure IDs from database: {missing_ids}")
+            count = structures_per_batch + (1 if batch_id < remainder else 0)
+            batch_structures_info = selected_structures_info[current_index : current_index + count]
+            batch_ids = [sid for sid, _ in batch_structures_info]
+            current_index += count
 
-    if not final_atoms_for_batching:
-        raise ValueError("Failed to retrieve any of the selected top-variance structures from the database.")
+            if not batch_ids: continue # Skip empty batch
 
-    n_structures_for_aa = len(final_atoms_for_batching)
-    print(f"[INFO] Retrieved {n_structures_for_aa} structures for AA optimization.")
+            batch_atoms_map = db_manager.get_structures_batch(batch_ids)
+            batch_atoms_list = [batch_atoms_map.get(sid) for sid in batch_ids if batch_atoms_map.get(sid) is not None]
+            if len(batch_atoms_list) != len(batch_ids): print(f"[WARN] Batch {batch_id}: DB retrieval mismatch.")
+            if not batch_atoms_list: continue # Skip if no atoms retrieved
 
-    # --- Create batches for AA optimization ---
-    n_aa_batches = n_batches
-    if n_aa_batches > n_structures_for_aa:
-        print(f"[WARNING] AA batches ({n_aa_batches}) > AA structures ({n_structures_for_aa}). Setting n_aa_batches = {n_structures_for_aa}.")
-        n_aa_batches = n_structures_for_aa
-    if n_aa_batches <= 0: n_aa_batches = 1
+            variance_map = dict(batch_structures_info)
+            for atoms in batch_atoms_list:
+                struct_id = atoms.info.get('structure_id')
+                if struct_id in variance_map: atoms.info['initial_variance'] = variance_map[struct_id]
+                # Ensure structure_name is set using ID for consistency
+                atoms.info['structure_name'] = f"struct_id_{struct_id}"
 
-    structures_per_aa_batch = n_structures_for_aa // n_aa_batches
-    remaining_aa_structures = n_structures_for_aa % n_aa_batches
+            try:
+                ase.io.write(xyz_file_path, batch_atoms_list, format="extxyz")
+                print(f"[INFO] Batch {batch_id}: Wrote {len(batch_atoms_list)} structures to {xyz_file_path}")
+            except Exception as e: print(f"[ERROR] Failed to write XYZ file {xyz_file_path}: {e}")
+    finally:
+         if db_manager: db_manager.close_connection()
 
-    start_index = 0
-    actual_n_aa_batches = 0
-    for batch_id in range(n_aa_batches):
-        batch_dir = aa_output_dir / f"batch_{batch_id}"
-        batch_dir.mkdir(exist_ok=True)
+    # --- Load HPC Profile --- (Identical to Gradient AA)
+    print(f"[INFO] Loading HPC profile: {hpc_profile_name}")
+    try:
+        hpc_profile_dir = Path(__file__).parent.parent / "hpc_profiles"
+        profile_manager = ProfileManager(profile_directory=hpc_profile_dir)
+        profile_manager.load_profile(hpc_profile_name)
+        hpc_profile = profile_manager.get_profile(hpc_profile_name)
+        hpc_profile['name'] = hpc_profile_name
+    except FileNotFoundError: print(f"[ERROR] HPC profile '{hpc_profile_name}.json' not found."); return
+    except Exception as e: print(f"[ERROR] Failed to load HPC profile '{hpc_profile_name}': {e}"); return
 
-        end_index = start_index + structures_per_aa_batch
-        if batch_id < remaining_aa_structures: end_index += 1
-
-        batch_atoms_list = final_atoms_for_batching[start_index:end_index]
-
-        if not batch_atoms_list: continue
-
-        actual_n_aa_batches += 1
-        batch_xyz = batch_dir / f"batch_{batch_id}.xyz"
-        ase.io.write(batch_xyz, batch_atoms_list, format="extxyz")
-        print(f"[INFO] MC AA Batch {batch_id}: Wrote {len(batch_atoms_list)} structures to {batch_xyz}")
-
-        batch_meta = {
-            'batch_id': batch_id,
-            'structures': [{'name': a.info['structure_name'], 'id': a.info['structure_id'], 'initial_variance': a.info['initial_variance']} for a in batch_atoms_list]
-        }
-        with open(batch_dir / 'batch_metadata.json', 'w') as f:
-            json.dump(batch_meta, f, indent=2)
-
-        start_index = end_index
-
-    if actual_n_aa_batches == 0:
-        raise ValueError("No non-empty Monte Carlo AA optimization batches were created.")
-
-    # --- Generate SLURM array job script ---
+    # --- Generate SLURM Script --- # (Similar path logic to Gradient AA)
     slurm_script_path = aa_output_dir / "monte_carlo_aa_optimization_array.slurm"
 
-    model_dir_rel = "models"
-    batch_base_rel = "monte_carlo_aa_optimization" # Relative path
+    log_dir_rel = slurm_logs_dir.relative_to(aa_output_dir)
+    model_dir_rel = workflow_models_dir.relative_to(aa_output_dir)
+    batch_base_rel = "."
+    structure_file_rel_template = f"batch_${{BATCH_ID}}/batch_${{BATCH_ID}}_input.xyz"
+    engine_output_dir_rel_template = f"batch_${{BATCH_ID}}/aa_batch_${{BATCH_ID}}_output"
 
-    gpus_per_task = 1 if device == "cuda" else 0
+    # Extract SLURM params (Identical to Gradient AA)
+    slurm_directives = hpc_profile.get("slurm_directives", {})
+    job_time = slurm_directives.get("time", "24:00:00")
+    cpus_per_task = int(slurm_directives.get("cpus-per-task", 1))
+    gpus_per_task = 0
+    if "gpus" in slurm_directives:
+         try: gpus_per_task = int(slurm_directives["gpus"]);
+         except (ValueError, TypeError): pass
+    elif "gres" in slurm_directives and isinstance(slurm_directives["gres"], str) and "gpu" in slurm_directives["gres"]:
+         try: parts = slurm_directives["gres"].split(":"); gpus_per_task = int(parts[-1]);
+         except (ValueError, TypeError, IndexError): pass
+    account = slurm_directives.get("account")
+    partition = slurm_directives.get("partition")
+    device = "cuda" if gpus_per_task > 0 else "cpu"
 
     slurm_content = get_monte_carlo_aa_script(
         batch_base_rel=batch_base_rel,
-        log_dir_rel=f"{batch_base_rel}/slurm_logs",
-        model_dir_rel=model_dir_rel,
-        structure_file_rel="batch_${SLURM_ARRAY_TASK_ID}/batch_${SLURM_ARRAY_TASK_ID}.xyz",
-        engine_output_dir_rel="batch_${SLURM_ARRAY_TASK_ID}",
+        log_dir_rel=str(log_dir_rel),
+        model_dir_rel=str(model_dir_rel),
+        structure_file_rel=structure_file_rel_template,
+        engine_output_dir_rel=engine_output_dir_rel_template,
+        array_range=f"0-{n_batches - 1}",
         max_steps=max_steps,
         patience=patience,
         temperature=temperature, # K
         min_distance=min_distance,
-        max_displacement=max_displacement, # Pass arg
+        max_displacement=max_displacement,
         mode=mode,
         device=device,
-        array_range=f"0-{actual_n_aa_batches - 1}",
-        time="24:00:00",
-        mem="32G",
-        cpus_per_task=8,
+        save_trajectory=True,
+        time=job_time,
+        cpus_per_task=cpus_per_task,
         gpus_per_task=gpus_per_task,
-        save_trajectory=True, # Assuming default behavior
+        hpc_profile=hpc_profile,
+        account=account,
+        partition=partition,
     )
 
-    with open(slurm_script_path, 'w') as f:
-        f.write(slurm_content)
-    print(f"[INFO] Created Monte Carlo AA SLURM array script: {slurm_script_path}")
-    print(f"[INFO] Submit the job from the workflow directory ('{workflow_dir.name}') using: sbatch {aa_output_dir.name}/{slurm_script_path.name}")
+    try:
+        with open(slurm_script_path, 'w') as f:
+            f.write(slurm_content)
+        print(f"[INFO] Created Monte Carlo AA SLURM script: {slurm_script_path}")
+        print(f"[INFO] Run this script from the '{aa_output_dir}' directory.")
+    except Exception as e:
+        print(f"[ERROR] Failed to write SLURM script {slurm_script_path}: {e}")
 
 
 # --- select_structures_from_trajectory function ---
 # (Add/improve docstring)
 def select_structures_from_trajectory(
     trajectory_file: Path,
-    n_structures: int,
+    # n_structures: int, # Replaced by selection_mode and value
+    selection_mode: str = 'total', # 'total' or 'every_n'
+    selection_value: int = 1,
     optimization_summary: Optional[dict] = None, # Pass summary dict directly
     struct_name_filter: Optional[str] = None, # Filter for specific structure in summary
-) -> List[Tuple[Atoms, int, float]]:
+    debug: bool = False,
+) -> List[Tuple[Atoms, int, Optional[float]]]: # Variance can be None
     """
     Selects structures from an AA optimization trajectory file (XYZ).
 
-    Reads an XYZ trajectory, selects N structures evenly spaced working
-    backwards from the final frame, and attempts to associate variance values
+    Reads an XYZ trajectory, selects structures based on the chosen mode,
+    always including the final structure, and attempts to associate variance values
     from the provided optimization summary data.
 
     Args:
         trajectory_file: Path to the XYZ trajectory file (e.g., *_adversarial.xyz).
-        n_structures: Number of structures to select from the trajectory.
+        selection_mode: How to select structures from trajectories ('total' or 'every_n').
+        selection_value: N value for the chosen selection mode.
         optimization_summary: Loaded JSON data from 'optimization_summary.json'.
         struct_name_filter: The 'structure_name' to look for within the summary's
                             'results' list to find the correct variance history.
+        debug: Enable debug output.
 
     Returns:
         List of tuples: (atoms, step_number, variance). Variance may be None
         if not found in the summary. Returns empty list on failure.
 
     Raises:
-        ValueError: If trajectory is empty or fewer structures than requested exist.
+        ValueError: If trajectory is empty or selection parameters are invalid.
     """
     if not trajectory_file.exists():
         print(f"[WARNING] Trajectory file not found: {trajectory_file}")
@@ -824,7 +968,8 @@ def select_structures_from_trajectory(
         print(f"[WARNING] Failed to read trajectory file {trajectory_file}: {e}")
         return []
 
-    n_total_steps = len(trajectory) # Total number of frames
+    n_total_steps = len(trajectory) # Total number of frames (indices 0 to n-1)
+    final_index = n_total_steps - 1
 
     # --- Extract step variances and parameters from summary ---
     step_variances = {} # Map: step_index -> variance
@@ -832,88 +977,91 @@ def select_structures_from_trajectory(
     initial_variance_from_summary = None
 
     if optimization_summary and struct_name_filter:
-        # Find the specific structure's result in the summary
         struct_result = None
         for res in optimization_summary.get('results', []):
             if res.get('structure_name') == struct_name_filter:
                 struct_result = res
                 break
-
         if struct_result:
-            # Try getting step variances (MC saves this, gradient saves loss_history)
-            if 'step_variances' in struct_result: # MC format
+            if 'step_variances' in struct_result:
                 step_variances = {i: v for i, v in enumerate(struct_result['step_variances'])}
-            elif 'loss_history' in struct_result: # Gradient format (loss=variance)
+            elif 'loss_history' in struct_result:
                  step_variances = {i: v for i, v in enumerate(struct_result['loss_history'])}
-
             initial_variance_from_summary = struct_result.get('initial_variance')
-
-            # Get AA temperature from parameters block
             method = optimization_summary.get('parameters', {}).get('method')
             aa_temperature = optimization_summary.get('parameters', {}).get('temperature')
-            # Note: Temp has different units (K vs eV) depending on method, store raw value.
 
+    # --- Select structure indices based on mode ---
+    indices = set() # Use a set to avoid duplicates
 
-    # --- Select structure indices ---
-    # We want N structures, including the last one.
-    if n_structures <= 0:
-        print("[WARNING] Number of structures per trajectory must be positive.")
-        return []
-    if n_structures > n_total_steps:
-         print(f"[WARNING] Requested {n_structures} structures, but trajectory only has {n_total_steps}. Selecting all.")
-         n_structures = n_total_steps
+    # Always include the final structure
+    if final_index >= 0:
+        indices.add(final_index)
 
-    # Calculate indices: include last frame (n_total_steps - 1), then space out
-    # the remaining N-1 structures over the first n_total_steps - 1 frames.
-    # Example: 10 steps (indices 0-9), n_structures = 3
-    # Indices: 9, (9 - 1*(8 // 2)) = 5, (9 - 2*(8 // 2)) = 1. Indices: [9, 5, 1]
-    # Example: 10 steps, n_structures = 1. Indices: [9]
-    # Example: 10 steps, n_structures = 10. Indices: [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+    if selection_mode == 'total':
+        n_structures_to_select = selection_value
+        if n_structures_to_select <= 0:
+            print("[WARNING] 'total' selection requires a positive value. Selecting only final structure.")
+            n_structures_to_select = 1
+        if n_structures_to_select > n_total_steps:
+             print(f"[WARNING] Requested total {n_structures_to_select} structures, but trajectory only has {n_total_steps}. Selecting all available.")
+             n_structures_to_select = n_total_steps
 
-    if n_structures == 1:
-         indices = [n_total_steps - 1]
+        # Select n_structures_to_select, including the last one (already added)
+        if n_structures_to_select > 1:
+             # Select remaining N-1 structures from indices 0 to N-2
+             num_remaining_to_select = n_structures_to_select - 1
+             available_indices_range = final_index # Indices 0 to final_index - 1
+
+             if available_indices_range > 0:
+                 # Calculate spacing across the available earlier indices
+                 step_interval = available_indices_range / num_remaining_to_select
+                 for i in range(num_remaining_to_select):
+                     # Calculate index by spacing back from the second-to-last index
+                     idx = round((final_index - 1) - i * step_interval)
+                     indices.add(max(0, int(idx))) # Ensure non-negative integer index
+             else:
+                 # Not enough earlier structures, just add index 0 if it exists and isn't final
+                 if final_index > 0:
+                     indices.add(0)
+
+    elif selection_mode == 'every_n':
+        step = selection_value
+        if step <= 0:
+            print("[WARNING] 'every_n' selection requires a positive step value. Selecting only final structure.")
+            step = n_total_steps # Effectively only selects the last one
+
+        # Add every Nth structure counting backwards from the end
+        current_index = final_index
+        while current_index >= 0:
+            indices.add(current_index)
+            current_index -= step
+
     else:
-        # Ensure division by zero doesn't occur if n_structures=1 was handled above
-        step_interval = (n_total_steps - 1) // (n_structures - 1) if n_structures > 1 else 0
-        # Handle potential floating point issues with linspace, manual calculation is safer
-        indices = []
-        for i in range(n_structures):
-             # Calculate index relative to the end
-             idx = (n_total_steps - 1) - i * step_interval
-             # Ensure index is non-negative (can happen if interval is large)
-             indices.append(max(0, idx))
-        # Ensure indices are unique and sorted (descending for "backwards")
-        indices = sorted(list(set(indices)), reverse=True)
+        raise ValueError(f"Invalid selection_mode: '{selection_mode}'. Choose 'total' or 'every_n'.")
 
+    # Convert set to sorted list (descending indices)
+    sorted_indices = sorted(list(indices), reverse=True)
 
     # --- Get selected Atoms objects and add metadata ---
     selected_tuples = []
-    for step_index in indices:
+    for step_index in sorted_indices:
         try:
             atoms = trajectory[step_index].copy() # Get a copy
-            step_variance = step_variances.get(step_index) # Get variance for this step if available
+            step_variance: Optional[float] = step_variances.get(step_index) # Variance might be None
 
-            # --- Populate atoms.info for VASP job creation ---
-            # Keep original info if present
+            # Populate atoms.info for VASP job creation
             original_info = trajectory[step_index].info
-
-            # Add AA-specific metadata
             atoms.info['aa_step'] = step_index
             atoms.info['aa_step_variance'] = step_variance
-            atoms.info['aa_temperature'] = aa_temperature # Temp used during AA run
-            # Keep initial variance from summary if available
+            atoms.info['aa_temperature'] = aa_temperature
             atoms.info['initial_variance'] = initial_variance_from_summary
-
-            # Crucially, try to preserve parent ID if present in original info
             if 'parent_structure_id' in original_info:
                 atoms.info['parent_structure_id'] = original_info['parent_structure_id']
-            elif 'structure_id' in original_info: # Fallback if only original ID is there
+            elif 'structure_id' in original_info:
                  atoms.info['parent_structure_id'] = original_info['structure_id']
-
-            # Preserve original config type if available
             if 'config_type' in original_info:
                  atoms.info['parent_config_type'] = original_info['config_type']
-
 
             selected_tuples.append((atoms, step_index, step_variance))
         except IndexError:
@@ -922,7 +1070,7 @@ def select_structures_from_trajectory(
             print(f"[WARNING] Error processing step {step_index} from {trajectory_file}: {e}")
 
     if debug:
-        print(f"[DEBUG] Selected {len(selected_tuples)} structures from {trajectory_file} at steps: {indices}")
+        print(f"[DEBUG] Selected {len(selected_tuples)} structures from {trajectory_file} at steps: {sorted_indices}")
 
     return selected_tuples
 
@@ -934,25 +1082,29 @@ def prepare_vasp_jobs(
     output_directory: str, # Dir to create VASP jobs in
     vasp_profile: str = "static",
     hpc_profile: str = "default",
-    structures_per_traj: int = 1,
+    selection_mode: str = 'total', # Default to selecting N total
+    selection_value: int = 1,      # Default to selecting only the final structure
+    generation: Optional[int] = None, # ADD generation parameter
     debug: bool = False,
 ) -> None:
     """
     Creates VASP jobs for structures resulting from AA optimization.
 
     Scans the AA results directory for trajectories, selects structures based on
-    'structures_per_traj', adds them to the database with appropriate metadata,
-    and prepares VASP calculation directories using specified profiles.
+    `selection_mode` and `selection_value`, adds them to the database with
+    appropriate metadata, and prepares VASP calculation directories using
+    specified profiles.
 
     Args:
         input_directory: Directory containing AA optimization results (e.g.,
                          'gradient_aa_optimization' or 'monte_carlo_aa_optimization').
-                         Expected to contain batch_*/aa_results subdirectories.
+                         Expected to contain batch_*/aa_results subdirectories or results directly.
         output_directory: Directory where the VASP job subdirectories will be created.
         vasp_profile: Name of the VASP settings profile (defined in forge config).
         hpc_profile: Name of the HPC profile for job scripts (defined in forge config).
-        structures_per_traj: Number of structures to select from each trajectory
-                             (e.g., 1 for final, >1 for intermediates).
+        selection_mode: How to select structures from trajectories ('total' or 'every_n').
+        selection_value: N value for the chosen selection mode.
+        generation: Optional integer to assign as the generation number in metadata.
         debug: Enable detailed debug output.
     """
     print("[INFO] Starting VASP job preparation from AA results...")
@@ -969,10 +1121,11 @@ def prepare_vasp_jobs(
     if not aa_results_dirs:
         print(f"[WARNING] No 'aa_results' subdirectories found within {input_path}/batch_*")
         # Maybe check for results directly in input_directory? (If not batched)
-        if any(input_path.glob("*_adversarial.xyz")):
-             print(f"[INFO] Found trajectory files directly in {input_path}. Processing...")
+        if any(input_path.glob("*_adversarial.xyz")) or any(input_path.glob("*_optimized.xyz")):
+             print(f"[INFO] Found trajectory/optimized files directly in {input_path}. Processing...")
              aa_results_dirs = [input_path] # Process input dir itself
         else:
+             print(f"[INFO] No AA result files found in {input_path}. Exiting VASP prep.")
              return # Exit if no results found anywhere
 
     print(f"[INFO] Found {len(aa_results_dirs)} AA result locations to process.")
@@ -996,45 +1149,45 @@ def prepare_vasp_jobs(
             except Exception as e:
                 print(f"[WARNING] Could not load optimization summary {summary_file}: {e}")
         else:
-            print(f"[WARNING] Optimization summary not found for results in {results_dir}")
+            print(f"[WARNING] Optimization summary not found for results in {results_dir}. Variance info might be missing.")
 
 
-        # Find trajectories in the results directory
-        trajectory_files = list(results_dir.glob("*_adversarial.xyz"))
-        if not trajectory_files and optimization_summary:
-             # Maybe only optimized files were saved, not trajectory
-             trajectory_files = list(results_dir.glob("*_optimized.xyz"))
+        # Find trajectories or optimized files in the results directory
+        # Prioritize trajectory files if they exist
+        result_files = list(results_dir.glob("*_adversarial.xyz"))
+        if not result_files:
+             result_files = list(results_dir.glob("*_optimized.xyz"))
 
-
-        if not trajectory_files:
+        if not result_files:
              print(f"[INFO] No trajectory or optimized structure files found in {results_dir}. Skipping.")
              continue
 
-        print(f"[INFO] Processing {len(trajectory_files)} trajectories/structures in {results_dir}...")
+        print(f"[INFO] Processing {len(result_files)} trajectories/structures in {results_dir}...")
 
         # Process each trajectory/optimized structure file
-        for traj_file in trajectory_files:
+        for result_file in result_files:
             # Extract base name to identify structure in summary
-            # Assumes traj filename is like 'struct_ID_adversarial.xyz' or 'struct_ID_optimized.xyz'
-            if traj_file.name.endswith("_adversarial.xyz"):
-                 struct_name_filter = traj_file.stem.replace('_adversarial', '')
-            elif traj_file.name.endswith("_optimized.xyz"):
-                 struct_name_filter = traj_file.stem.replace('_optimized', '')
-            else: # Fallback if naming convention differs
-                 struct_name_filter = traj_file.stem
-            if debug: print(f"[DEBUG] Processing file: {traj_file.name}, Base name: {struct_name_filter}")
+            if result_file.name.endswith("_adversarial.xyz"):
+                 struct_name_filter = result_file.stem.replace('_adversarial', '')
+            elif result_file.name.endswith("_optimized.xyz"):
+                 struct_name_filter = result_file.stem.replace('_optimized', '')
+            else:
+                 struct_name_filter = result_file.stem
+            if debug: print(f"[DEBUG] Processing file: {result_file.name}, Base name: {struct_name_filter}")
 
             try:
-                # Select structures using the helper function
+                # Select structures using the updated helper function
                 selected_structures = select_structures_from_trajectory(
-                    traj_file,
-                    structures_per_traj,
-                    optimization_summary, # Pass loaded summary
-                    struct_name_filter   # Pass name to filter summary data
+                    result_file,
+                    selection_mode=selection_mode,
+                    selection_value=selection_value,
+                    optimization_summary=optimization_summary,
+                    struct_name_filter=struct_name_filter,
+                    debug=debug # Pass debug flag
                 )
 
                 if not selected_structures:
-                    print(f"[INFO] No structures selected from {traj_file.name}. Skipping.")
+                    print(f"[INFO] No structures selected from {result_file.name}. Skipping.")
                     continue
 
                 # Process each selected structure (Atoms, step_index, variance)
@@ -1042,12 +1195,13 @@ def prepare_vasp_jobs(
                     # --- Prepare metadata for database and VASP job ---
                     parent_id = atoms.info.get('parent_structure_id')
                     parent_config_type = atoms.info.get('parent_config_type', 'unknown')
+                    optimization_method = atoms.info.get('optimization_method', 'aa') # Get method if saved
 
-                    # Define new config type based on parent
+                    # Define new config type based on parent and step
                     if parent_config_type and parent_config_type != 'unknown':
-                        config_type = f"{parent_config_type}_aa_s{step}"
+                        config_type = f"{parent_config_type}_{optimization_method}" # Removed step number
                     else:
-                        config_type = f"aa_s{step}" # Fallback
+                        config_type = f"{optimization_method}" # Fallback, removed step number
 
                     # Construct metadata dictionary
                     structure_meta = {
@@ -1058,9 +1212,14 @@ def prepare_vasp_jobs(
                         "aa_step_variance": variance,
                         "aa_temperature": atoms.info.get('aa_temperature'), # Temp used during AA
                         "initial_variance": atoms.info.get('initial_variance'), # From original structure
+                        "optimization_method": optimization_method,
                         # Add batch ID if possible (how to get this reliably?)
                         # 'batch_id': batch_id # Needs passing down or extracting from path
                     }
+                    # Add generation if provided
+                    if generation is not None:
+                        structure_meta["generation"] = generation
+
                     # Clean up None values for cleaner JSON/DB entry
                     structure_meta = {k: v for k, v in structure_meta.items() if v is not None}
 
@@ -1070,7 +1229,7 @@ def prepare_vasp_jobs(
                         # Add the selected structure (potentially intermediate frame)
                         new_id = db_manager.add_structure(
                             atoms,
-                            metadata=structure_meta
+                            metadata=structure_meta,
                         )
                         print(f"[INFO] Added AA structure step {step} from {struct_name_filter} to DB with ID: {new_id}")
                     except Exception as e:
@@ -1116,7 +1275,7 @@ def prepare_vasp_jobs(
                         continue
 
             except Exception as e:
-                print(f"[ERROR] Failed to process trajectory file {traj_file}: {e}")
+                print(f"[ERROR] Failed to process trajectory file {result_file}: {e}")
                 if debug: raise
                 continue # Move to next trajectory file
 
@@ -1133,7 +1292,9 @@ def generate_workflow_readme(
     n_structures_selected: int, # Number of structures selected for AA
     hpc_profile_vasp: str, # Example HPC profile for VASP step
     example_aa_n_batches: int = 1, # Example N batches for AA step in README
-    example_structures_per_traj: int = 1, # Example for VASP step
+    # example_structures_per_traj: int = 1, # Replaced by selection mode/value
+    example_selection_mode: str = 'total',
+    example_selection_value: int = 1,
     # Include args that were passed to create-aa-jobs for the record
     structure_type: Optional[str] = None,
     composition_constraints: Optional[str] = None,
@@ -1152,7 +1313,8 @@ def generate_workflow_readme(
         n_structures_selected: Number of structures selected for AA optimization (used in example).
         hpc_profile_vasp: Example HPC profile name for the VASP job creation command.
         example_aa_n_batches: Example number of batches for AA optimization step in README.
-        example_structures_per_traj: Example number of structures per trajectory for VASP step.
+        example_selection_mode: Example trajectory selection mode for VASP step.
+        example_selection_value: Example N value for trajectory selection.
         structure_type: Original filter argument.
         composition_constraints: Original filter argument.
         debug: Original debug flag.
@@ -1196,29 +1358,29 @@ This directory contains an Adversarial Attack (AA) workflow generated by `forge`
 
 Follow these steps to execute the workflow:
 
-**1. (Implement &) Run Initial Variance Calculation**
+**1. Run Initial Variance Calculation**
 
-   *   **(TODO)** The SLURM script `{variance_calc_dir}/variance_calculation_array.slurm` is currently a **placeholder**. You need to implement the actual variance calculation logic it calls, which should process the XYZ files in `{variance_calc_dir}/batch_*/` and write variance results (e.g., `{{ "struct_ID": variance, ... }}`) to JSON files in `{variance_results_dir}/`.
-   *   Once implemented, submit the job from this directory (`{workflow_dir_name}/`):
+   *   Submit the SLURM job to calculate initial force variances:
        ```bash
+       # Run from this directory ({workflow_dir_name}/)
        sbatch {variance_calc_dir}/variance_calculation_array.slurm
        ```
-   *   Wait for the jobs to complete.
+   *   Wait for the jobs to complete. Results (JSON files) will be saved in `{variance_results_dir}/`.
 
 **2. Prepare Adversarial Attack Optimization Jobs**
 
-   *   After variance calculations are complete and results are in `{variance_results_dir}/`, choose **one** of the following methods:
+   *   After variance calculations are complete, choose **one** of the following methods:
 
    *   **Option A: Gradient-Based AA**
        ```bash
        # Run from this directory ({workflow_dir_name}/)
        forge run-gradient-aa-jobs \\
-           --input_directory {variance_results_dir} \\
-           --model_dir {model_dir_rel} \\
-           --n_structures {n_structures_selected} `# Number of top variance structures` \\
-           --n_batches {example_aa_n_batches} `# Number of optimization jobs` \\
-           --learning_rate 0.01 \\
-           --n_iterations 60 \\
+           --input-directory {variance_results_dir} \\
+           --model-dir {models_dir} \\
+           --n-structures {n_structures_selected} `# Number of top variance structures` \\
+           --n-batches {example_aa_n_batches} `# Number of optimization jobs` \\
+           --learning-rate 0.01 \\
+           --n-iterations 60 \\
            --device cuda `# or cpu`
        ```
        This creates job setup in `{gradient_aa_dir}/` and the SLURM script `{gradient_aa_dir}/gradient_aa_optimization_array.slurm`.
@@ -1227,13 +1389,13 @@ Follow these steps to execute the workflow:
        ```bash
        # Run from this directory ({workflow_dir_name}/)
        forge run-aa-jobs \\
-           --input_directory {variance_results_dir} \\
-           --model_dir {model_dir_rel} \\
-           --n_structures {n_structures_selected} `# Number of top variance structures` \\
-           --n_batches {example_aa_n_batches} `# Number of optimization jobs` \\
+           --input-directory {variance_results_dir} \\
+           --model-dir {models_dir} \\
+           --n-structures {n_structures_selected} `# Number of top variance structures` \\
+           --n-batches {example_aa_n_batches} `# Number of optimization jobs` \\
            --temperature 1200 `# Metropolis temp (K)` \\
-           --max_steps 50 \\
-           --max_displacement 0.1 \\
+           --max-steps 50 \\
+           --max-displacement 0.1 \\
            --device cuda `# or cpu`
        ```
        This creates job setup in `{mc_aa_dir}/` and the SLURM script `{mc_aa_dir}/monte_carlo_aa_optimization_array.slurm`.
@@ -1257,23 +1419,25 @@ Follow these steps to execute the workflow:
        # Run from this directory ({workflow_dir_name}/)
        # Adjust --input_directory based on method used in step 2/3
        forge create-aa-vasp-jobs \\
-           --input_directory {gradient_aa_dir} `# or {mc_aa_dir}` \\
-           --output_directory {vasp_jobs_dir} \\
-           --vasp_profile static `# Your desired VASP profile` \\
-           --hpc_profile {hpc_profile_vasp} `# Your HPC profile` \\
-           --structures_per_traj {example_structures_per_traj} `# Select final (1) or more structures`
+           --input-directory {gradient_aa_dir} `# or {mc_aa_dir}` \\
+           --output-directory {vasp_jobs_dir} \\
+           --vasp-profile static `# Your desired VASP profile` \\
+           --hpc-profile {hpc_profile_vasp} `# Your HPC profile` \\
+           --selection-mode {example_selection_mode} \\
+           --selection-value {example_selection_value} `# Select structures from trajectory`
        ```
-   *   This creates VASP job directories in `{vasp_jobs_dir}/`.
+   *   This creates VASP job directories in `{vasp_jobs_dir}/` and adds the selected structures to the database.
 
 **5. Submit VASP Jobs**
 
    *   Navigate into the individual job directories within `{vasp_jobs_dir}/` and submit them according to your cluster's procedures (usually involves running `sbatch job_script.slurm` inside each job folder).
+   *   Alternatively, if you want to run VASP on a different machine, you can later query the database for structures with `config_type` like `*_aa_s*` that don't have VASP calculations and generate jobs there.
 
 ## Directory Structure
 
 *   `{models_dir}/`: Copied MACE model ensemble files.
 *   `{variance_calc_dir}/`: Batch files and SLURM script for initial variance calculation.
-*   `{variance_results_dir}/`: Expected location for variance calculation results (JSON files).
+*   `{variance_results_dir}/`: Results from variance calculations (JSON files).
 *   `{gradient_aa_dir}/` (if used): Batch files, SLURM script, and results for Gradient-Based AA.
 *   `{mc_aa_dir}/` (if used): Batch files, SLURM script, and results for Monte Carlo AA.
 *   `{vasp_jobs_dir}/`: Generated VASP job directories.
@@ -1298,111 +1462,142 @@ This workflow was generated using the following command:
         print(f"[ERROR] Failed to write README.md: {e}")
 
 
-# --- prepare_aa_workflow function ---
-# (Add/improve docstring)
+# --- Main Workflow Preparation Function ---
+
+# UPDATED function: Orchestrates the initial workflow setup
 def prepare_aa_workflow(
-    output_dir: str,
-    model_dir: str,
+    output_dir: str, # Changed to string for CLI compatibility, convert to Path internally
+    model_dir: str, # Changed to string for CLI compatibility, convert to Path internally
     elements: Optional[List[str]] = None,
-    n_batches: int = 1,
+    n_batches_variance: int = 1,
     structure_type: Optional[str] = None,
     composition_constraints: Optional[str] = None,
     structure_ids: Optional[List[int]] = None,
+    hpc_profile_name: str = "default", # Added hpc_profile_name
     debug: bool = False,
+    # --- Add parameters needed for README generation --- #
+    # These might come from the CLI command or have defaults
+    n_structures_aa: int = 10, # Example: number of structures to select for AA later
+    hpc_profile_vasp: str = "default", # Example VASP HPC profile for README
+    example_aa_n_batches: int = 1, # Example N batches for AA step in README
+    example_selection_mode: str = 'total',
+    example_selection_value: int = 1,
 ) -> None:
     """
-    Prepares the initial adversarial attack workflow directory structure and
-    variance calculation jobs.
+    Prepares the initial adversarial attack workflow directory.
 
-    This is the entry point for the 'create-aa-jobs' command. It selects
-    structures from the database, sets up the main output directory, copies
-    models, prepares the first stage (variance calculation batches and
-    a placeholder SLURM script), and generates a README file.
+    This involves selecting structures, saving reference data, preparing
+    variance calculation jobs (including copying models and generating SLURM script),
+    and generating a README file with instructions.
 
     Args:
-        output_dir: Path to the directory where the workflow will be created.
-        model_dir: Path to the directory containing the MACE model ensemble.
-        elements: List of elements to select structures by (if structure_ids is None).
-        n_batches: Number of batches for the variance calculation step.
-        structure_type: Optional structure type filter for database query.
+        output_dir: Directory path to create the workflow in.
+        model_dir: Path to the directory containing MACE models.
+        elements: List of elements to filter structures by.
+        n_batches_variance: Number of batches for the initial variance calculation.
+        structure_type: Optional structure type filter.
         composition_constraints: Optional JSON string for composition constraints.
         structure_ids: Optional list of specific structure IDs to use.
+        hpc_profile_name: Name of the HPC profile for variance calculation SLURM script.
         debug: Enable detailed debug output.
+        n_structures_aa: Number of structures planned for subsequent AA step (for README).
+        hpc_profile_vasp: Name of HPC profile typically used for VASP (for README).
+        example_aa_n_batches: Example number of batches for AA step (for README).
+        example_selection_mode: Example trajectory selection mode for VASP step.
+        example_selection_value: Example N value for trajectory selection.
     """
-    print("[INFO] Preparing Adversarial Attack workflow directory...")
+    print("[INFO] Starting adversarial attack workflow preparation...")
     output_path = Path(output_dir).resolve()
+    model_path = Path(model_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
-    print(f"[INFO] Workflow directory: {output_path}")
 
-    # --- Step 1: Select structures from database ---
-    print("[INFO] Selecting initial structures from database...")
+    # --- Step 1: Select Structures, Save References, Get Cleaned List ---
+    print("[INFO] Step 1: Selecting structures and saving reference data...")
     try:
-        selected_atoms_list, energies = select_structures_from_db(
+        # Pass output_path to select_structures_from_db for saving references
+        cleaned_atoms_list = select_structures_from_db(
+            output_dir=output_path,
             elements=elements,
-            structure_type=structure_type,
+            config_type=structure_type,
             composition_constraints=composition_constraints,
             structure_ids=structure_ids,
+            # db_manager=None, # Let it initialize its own
             debug=debug
         )
     except ValueError as e:
         print(f"[ERROR] Structure selection failed: {e}")
-        # Potentially exit or raise here depending on desired behavior
-        return # Exit gracefully if selection fails
-    if not selected_atoms_list:
-        print("[ERROR] No structures were selected. Exiting workflow preparation.")
+        return # Stop workflow if selection fails
+    except Exception as e:
+        print(f"[ERROR] An unexpected error occurred during structure selection: {e}")
+        # Optionally re-raise or log traceback if debug is True
+        if debug: import traceback; traceback.print_exc()
         return
-    n_structures_initial = len(selected_atoms_list) # Get number selected
-    print(f"[INFO] Selected {n_structures_initial} structures for the workflow.")
 
+    if not cleaned_atoms_list:
+        print("[ERROR] No valid structures were selected or processed. Aborting workflow preparation.")
+        return
 
-    # --- Step 2: Prepare variance calculation jobs ---
-    print("[INFO] Preparing variance calculation jobs...")
+    num_selected_structures = len(cleaned_atoms_list)
+    print(f"[INFO] Successfully selected and cleaned {num_selected_structures} structures.")
+
+    # --- Step 2: Prepare Variance Calculation Jobs ---
+    print("[INFO] Step 2: Preparing variance calculation jobs...")
     try:
         variance_results_dir = prepare_variance_calculation_jobs(
-            selected_atoms_list=selected_atoms_list,
+            selected_atoms_list=cleaned_atoms_list,
             output_dir=output_path,
-            model_dir=Path(model_dir),
-            n_batches=n_batches,
+            model_dir=model_path,
+            n_batches=n_batches_variance,
+            hpc_profile_name=hpc_profile_name,
+            debug=debug
         )
-    except ValueError as e:
-         print(f"[ERROR] Failed to prepare variance calculation jobs: {e}")
-         return
+    except (ValueError, FileNotFoundError, IOError) as e:
+        print(f"[ERROR] Failed to prepare variance calculation jobs: {e}")
+        return # Stop workflow if job prep fails
     except Exception as e:
-         print(f"[ERROR] An unexpected error occurred during variance job prep: {e}")
-         if debug: raise
-         return
+        print(f"[ERROR] An unexpected error occurred during variance job preparation: {e}")
+        if debug: import traceback; traceback.print_exc()
+        return
 
-    # --- Step 3: Generate Workflow README.md ---
-    # Use relative path for model_dir in README for portability
+    print(f"[INFO] Variance calculation jobs prepared. Results will appear in: {variance_results_dir}")
+
+    # --- Step 3: Generate README ---
+    print("[INFO] Step 3: Generating workflow README.md...")
     try:
-         model_dir_rel = os.path.relpath(model_dir, start=output_path.parent)
-    except ValueError: # Handle case where paths are on different drives (Windows)
-         model_dir_rel = str(Path(model_dir).resolve()) # Use absolute path as fallback
+        # Use relative paths for README clarity
+        try:
+            model_dir_rel = os.path.relpath(model_path, output_path)
+        except ValueError:
+            # Handle cases where paths are on different drives (Windows)
+            print(f"[WARN] Cannot determine relative path for model directory '{model_path}' from '{output_path}'. Using absolute path in README.")
+            model_dir_rel = str(model_path)
 
+        # Determine if structure IDs were the primary selection method
+        used_structure_ids = bool(structure_ids)
 
-    generate_workflow_readme(
-         output_dir=output_path,
-         model_dir_rel=model_dir_rel,
-         elements=elements,
-         structure_ids=structure_ids,
-         n_batches_variance=n_batches, # Actual batches used for variance
-         n_structures_selected=min(20, n_structures_initial), # Example for README, maybe 20 or total
-         hpc_profile_vasp="default", # Example profile name
-         example_aa_n_batches=max(1, n_batches // 2), # Example for README
-         example_structures_per_traj=1, # Example for README
-         structure_type=structure_type,
-         composition_constraints=composition_constraints,
-         debug=debug
-    )
+        generate_workflow_readme(
+            output_dir=output_path,
+            model_dir_rel=model_dir_rel,
+            elements=elements if not used_structure_ids else None, # Pass elements only if IDs weren't primary
+            structure_ids=structure_ids if used_structure_ids else None, # Pass IDs if they were used
+            n_batches_variance=n_batches_variance,
+            n_structures_selected=n_structures_aa, # Number actually selected
+            hpc_profile_vasp=hpc_profile_vasp, # Example VASP profile
+            example_aa_n_batches=example_aa_n_batches,
+            example_selection_mode=example_selection_mode,
+            example_selection_value=example_selection_value,
+            # Pass filters used for selection (relevant if IDs weren't used)
+            structure_type=structure_type if not used_structure_ids else None,
+            composition_constraints=composition_constraints if not used_structure_ids else None,
+            debug=debug # Pass debug flag to README generator if it uses it
+        )
+        print(f"[INFO] Generated README.md in {output_path}")
+    except Exception as e:
+        print(f"[ERROR] Failed to generate README.md: {e}")
+        if debug: import traceback; traceback.print_exc()
+        # Workflow is mostly setup, maybe don't abort just for README failure?
+        print("[WARN] README generation failed, but workflow setup might be partially complete.")
 
+    print("[INFO] Adversarial attack workflow preparation completed successfully.")
+    print(f"[INFO] Next steps: Submit the SLURM script at {output_path / 'variance_calculations' / 'variance_calculation_array.slurm'}")
 
-    print(f"\n[INFO] Workflow setup complete in: {output_path}")
-    print(f"[INFO] Initial structures batched in: {output_path / 'variance_calculations'}")
-    print(f"[INFO] Models copied to: {output_path / 'models'}")
-    print(f"[INFO] Variance results will be stored in: {variance_results_dir.relative_to(output_path)}")
-    print(f"[INFO] Instructions saved in: {output_path / 'README.md'}") # Added this line
-    print("[INFO] Next steps:")
-    print("  1. Implement and run the variance calculation (e.g., using the generated SLURM script - currently placeholder).")
-    print(f"  2. Run 'forge run-gradient-aa-jobs --input_directory {variance_results_dir.relative_to(output_path)} ...' or 'forge run-aa-jobs ...'")
-    print(f"  3. Submit the generated AA optimization SLURM script.")
-    print(f"  4. Run 'forge create-aa-vasp-jobs ...' to generate VASP calculations.")

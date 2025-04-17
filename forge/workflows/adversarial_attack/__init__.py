@@ -19,13 +19,19 @@ def create_aa_jobs(
     structure_type: Optional[str] = None,
     composition_constraints: Optional[str] = None,
     structure_ids: Optional[List[int]] = None,
+    hpc_profile: str = "default",
     debug: bool = False,
+    n_structures_aa: int = 10,
+    hpc_profile_vasp: str = "default",
+    example_aa_n_batches: int = 1,
+    example_selection_mode: str = 'total',
+    example_selection_value: int = 1,
 ):
     """Create adversarial attack workflow directory and initial variance calculation jobs.
     
     This command sets up the initial structure files, model ensemble copies,
-    and SLURM scripts needed to calculate the initial force variance across
-    the selected structures using the model ensemble.
+    and a SLURM script (using the specified HPC profile) needed to calculate
+    the initial force variance across the selected structures using the model ensemble.
 
     Requires either 'elements' or 'structure_ids' to select input structures.
 
@@ -42,7 +48,14 @@ def create_aa_jobs(
                                  querying the database with 'elements'.
         structure_ids: Optional list of specific structure IDs from the database
                        to use as input, bypassing element/type/composition search.
+        hpc_profile: Name of the HPC profile to use for SLURM script generation
+                     for the *variance calculation* step.
         debug: Enable detailed debug output during setup.
+        n_structures_aa: Number of structures planned for AA step (for README).
+        hpc_profile_vasp: Name of HPC profile for VASP jobs (for README).
+        example_aa_n_batches: Example number of AA batches (for README).
+        example_selection_mode: Example selection mode for VASP jobs (for README).
+        example_selection_value: Example selection value for VASP jobs (for README).
     """
     from .workflow_setup import prepare_aa_workflow
     if not elements and not structure_ids:
@@ -51,15 +64,21 @@ def create_aa_jobs(
         output_dir=output_dir,
         model_dir=model_dir,
         elements=elements,
-        n_batches=n_batches,
+        n_batches_variance=n_batches,
         structure_type=structure_type,
         composition_constraints=composition_constraints,
         structure_ids=structure_ids,
-        debug=debug
+        hpc_profile_name=hpc_profile,
+        debug=debug,
+        n_structures_aa=n_structures_aa,
+        hpc_profile_vasp=hpc_profile_vasp,
+        example_aa_n_batches=example_aa_n_batches,
+        example_selection_mode=example_selection_mode,
+        example_selection_value=example_selection_value,
     )
 
-@register_workflow_command("run-aa-jobs")
-def run_aa_jobs(
+@register_workflow_command("run-monte-carlo-aa-jobs")
+def run_monte_carlo_aa_jobs(
     input_directory: str,
     model_dir: str,
     n_structures: int,
@@ -71,13 +90,15 @@ def run_aa_jobs(
     max_displacement: float = 0.1,
     mode: str = "all",
     device: str = "cuda",
+    hpc_profile: str = "default",
     debug: bool = False,
 ):
     """Prepare Monte Carlo adversarial attack optimization jobs.
 
     This command takes the results from the variance calculation step, selects
     the top N structures with the highest variance, and prepares batch files
-    and a SLURM script to run the Monte Carlo AA optimization engine on them.
+    and a SLURM script (using the specified HPC profile) to run the
+    Monte Carlo AA optimization engine on them.
 
     Args:
         input_directory: Directory containing variance calculation results
@@ -92,6 +113,7 @@ def run_aa_jobs(
         max_displacement: Maximum distance (Å) an atom can be moved per MC step.
         mode: Atom displacement mode for MC ('all' or 'single').
         device: Device to request for computation ('cpu' or 'cuda').
+        hpc_profile: Name of the HPC profile to use for SLURM script generation.
         debug: Enable detailed debug output during setup.
     """
     from .workflow_setup import prepare_monte_carlo_aa_optimization
@@ -107,6 +129,7 @@ def run_aa_jobs(
         max_displacement=max_displacement,
         mode=mode,
         device=device,
+        hpc_profile_name=hpc_profile,
         debug=debug
     )
 
@@ -116,15 +139,18 @@ def create_aa_vasp_jobs(
     output_directory: str,
     vasp_profile: str = "static",
     hpc_profile: str = "default",
-    structures_per_traj: int = 1,
+    selection_mode: str = 'total',
+    selection_value: int = 1,
+    generation: Optional[int] = None,
     debug: bool = False,
 ):
     """Create VASP jobs for structures resulting from AA optimization.
 
     This command processes the results from the AA optimization step
-    (gradient-based or Monte Carlo), selects structures (e.g., final structure,
-    or multiple steps from trajectory), adds them to the database (if not already
-    present), and prepares VASP calculation directories using specified profiles.
+    (gradient-based or Monte Carlo), selects structures based on the chosen mode
+    (e.g., final structure, or multiple steps from trajectory), adds them to the
+    database (if not already present), and prepares VASP calculation directories
+    using specified profiles.
 
     Args:
         input_directory: Directory containing AA optimization results (e.g.,
@@ -133,8 +159,9 @@ def create_aa_vasp_jobs(
         vasp_profile: Name of the VASP settings profile to use (defined in forge config).
         hpc_profile: Name of the HPC profile to use for job submission scripts
                      (defined in forge config).
-        structures_per_traj: How many structures to select from each AA optimization
-                             trajectory (e.g., 1 for final, 5 for final and intermediates).
+        selection_mode: How to select structures from trajectories ('total' or 'every_n').
+        selection_value: N value for the chosen selection mode.
+        generation: Optional integer to assign as the generation number in metadata.
         debug: Enable detailed debug output during VASP job setup.
     """
     from .workflow_setup import prepare_vasp_jobs
@@ -143,7 +170,9 @@ def create_aa_vasp_jobs(
         output_directory=output_directory,
         vasp_profile=vasp_profile,
         hpc_profile=hpc_profile,
-        structures_per_traj=structures_per_traj,
+        selection_mode=selection_mode,
+        selection_value=selection_value,
+        generation=generation,
         debug=debug
     )
 
@@ -159,13 +188,15 @@ def run_gradient_aa_jobs(
     include_probability: bool = False,
     temperature: float = 0.86,
     device: str = "cuda",
+    hpc_profile: str = "PSFC-GPU-AA",
     debug: bool = False,
 ):
     """Prepare Gradient-Based adversarial attack optimization jobs.
 
      This command takes the results from the variance calculation step, selects
      the top N structures with the highest variance, and prepares batch files
-     and a SLURM script to run the Gradient-Based AA optimization engine on them.
+     and a SLURM script (using the specified HPC profile) to run the
+     Gradient-Based AA optimization engine on them.
 
     Args:
         input_directory: Directory containing variance calculation results
@@ -180,6 +211,7 @@ def run_gradient_aa_jobs(
                              Requires 'temperature'.
         temperature: Temperature (in eV) for probability weighting term.
         device: Device to request for computation ('cpu' or 'cuda').
+        hpc_profile: Name of the HPC profile to use for SLURM script generation.
         debug: Enable detailed debug output during setup.
     """
     from .workflow_setup import prepare_gradient_aa_optimization
@@ -193,7 +225,7 @@ def run_gradient_aa_jobs(
         min_distance=min_distance,
         include_probability=include_probability,
         temperature=temperature,
-        device=device,
+        hpc_profile_name=hpc_profile,
         debug=debug
     )
 

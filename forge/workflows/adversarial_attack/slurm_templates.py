@@ -10,87 +10,136 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 
 
-# --- Variance Calculation Template (Placeholder) ---
+# --- Variance Calculation Template (Updated) ---
 def get_variance_calculation_script(
-    output_dir_rel: str, # Relative path for variance results
-    log_dir_rel: str, # Relative path for slurm logs
-    model_dir_rel: str, # Relative path to models dir
-    batch_script_rel_path: str, # Relative path template to batch xyz file
+    output_dir_rel: str, # Relative path for variance results (e.g., variance_results)
+    log_dir_rel: str, # Relative path for slurm logs (e.g., variance_calculations/slurm_logs)
+    model_dir_rel: str, # Relative path to models dir (e.g., models)
+    batch_script_rel_path: str, # Relative path template to batch xyz file (e.g., variance_calculations/batch_${SLURM_ARRAY_TASK_ID}/batch_${SLURM_ARRAY_TASK_ID}.xyz)
     array_range: str,
-    n_models: int,
-    compute_forces: bool = True, # Example parameter
-    time: str = "12:00:00",
-    cpus_per_task: int = 4,
-    gpus_per_task: int = 1,
+    n_models: int, # Keep for info/logging if needed, not directly used by engine
+    hpc_profile: dict, # Pass loaded profile dict
+    time: str = "01:00:00",
+    cpus_per_task: int = 1,
+    gpus_per_task: int = 0,
     account: Optional[str] = None,
     partition: Optional[str] = None,
 ) -> str:
     """
-    Generate a SLURM script for variance calculation (PLACEHOLDER).
+    Generate a SLURM script for variance calculation using optimization_engine.py.
 
     Args:
-        output_dir_rel: Relative path from workflow root to save variance results JSON.
+        output_dir_rel: Relative path from workflow root where result JSONs will be stored.
         log_dir_rel: Relative path from workflow root for SLURM log files.
         model_dir_rel: Relative path from workflow root to the copied models directory.
-        batch_script_rel_path: Relative path template (using ${...}) to the input XYZ file.
+        batch_script_rel_path: Relative path template (using ${{SLURM_ARRAY_TASK_ID}}) to the input XYZ file.
         array_range: SLURM array range string (e.g., "0-9").
-        n_models: Number of models in the ensemble.
-        compute_forces: Flag (example).
-        time: Job time limit.
-        cpus_per_task: CPUs per task.
-        gpus_per_task: GPUs per task.
-        account: SLURM account.
-        partition: SLURM partition.
+        n_models: Number of models in the ensemble (for logging).
+        hpc_profile: Dictionary containing HPC profile settings (including slurm_directives
+                     and environment_setup). Keys like 'time', 'cpus-per-task', 'gpus',
+                     'account', 'partition' will be extracted from 'slurm_directives'.
+        time: Job time limit (extracted from HPC profile).
+        cpus_per_task: CPUs per task (extracted from HPC profile).
+        gpus_per_task: GPUs per task (extracted from HPC profile).
+        account: SLURM account (extracted from HPC profile).
+        partition: SLURM partition (extracted from HPC profile).
 
     Returns:
         SLURM script content as a string.
     """
-    # TODO: Replace placeholder command with actual variance calculation script call
-    #       when implemented. Arguments need to be defined for that script.
-    variance_command = f"""
-echo "--- Variance Calculation Placeholder ---"
-echo "Job ID: $SLURM_JOB_ID, Task ID: $SLURM_ARRAY_TASK_ID"
-echo "Input XYZ: {batch_script_rel_path}"
-echo "Model Dir: {model_dir_rel}"
-echo "Output Dir: {output_dir_rel}"
-echo "Num Models: {n_models}"
-# Example: Create dummy output file
-touch "{output_dir_rel}/batch_${SLURM_ARRAY_TASK_ID}_variances.json"
-echo "{{\\"struct_placeholder_1\\": 0.1, \\"struct_placeholder_2\\": 0.2}}" > "{output_dir_rel}/batch_${SLURM_ARRAY_TASK_ID}_variances.json"
-echo "--- End Placeholder ---"
-"""
+    slurm_directives = hpc_profile.get("slurm_directives", {})
+    job_time = slurm_directives.get("time", time)
+    job_cpus = int(slurm_directives.get("cpus-per-task", cpus_per_task)) # Ensure int
 
-    account_line = f"#SBATCH --account={account}" if account else ""
-    partition_line = f"#SBATCH --partition={partition}" if partition else ""
+    job_gpus = gpus_per_task # Start with default
+    if "gpus" in slurm_directives:
+         try:
+             job_gpus = int(slurm_directives["gpus"])
+         except (ValueError, TypeError): pass # Keep default if parse fails
+    elif "gres" in slurm_directives and isinstance(slurm_directives["gres"], str) and "gpu" in slurm_directives["gres"]:
+         try:
+             parts = slurm_directives["gres"].split(":")
+             job_gpus = int(parts[-1])
+         except (ValueError, TypeError, IndexError): pass # Keep default if parse fails
 
-    # Assuming the script is run from the main workflow directory
+    job_account = slurm_directives.get("account", account)
+    job_partition = slurm_directives.get("partition", partition)
+
+    account_line = f"#SBATCH --account={job_account}" if job_account else ""
+    partition_line = f"#SBATCH --partition={job_partition}" if job_partition else ""
+    gpu_line = f"#SBATCH --gpus-per-task={job_gpus}" if job_gpus > 0 else "#SBATCH --gpus-per-task=0" # Explicitly set 0 if no GPUs
+
+    env_setup_lines = hpc_profile.get('environment_setup', [])
+    if isinstance(env_setup_lines, str):
+         env_setup_lines = env_setup_lines.strip().split('\n')
+    elif not isinstance(env_setup_lines, list):
+         print(f"[WARN] Unexpected type for environment_setup in profile: {type(env_setup_lines)}. Expected list or string.")
+         env_setup_lines = [] # Default to empty list
+
+    env_setup_block = '\n'.join([line for line in env_setup_lines if isinstance(line, str)])
+
     script = f"""#!/bin/bash
 #SBATCH --job-name=aa_var_calc
 #SBATCH --output={log_dir_rel}/var_calc_%A_%a.out
 #SBATCH --error={log_dir_rel}/var_calc_%A_%a.err
 #SBATCH --array={array_range}
-#SBATCH --time={time}
-#SBATCH --mem={mem}
-#SBATCH --cpus-per-task={cpus_per_task}
-#SBATCH --gpus-per-task={gpus_per_task}
+#SBATCH --time={job_time}
+#SBATCH --cpus-per-task={job_cpus}
+{gpu_line}
 {account_line}
 {partition_line}
 
-# --- Environment Setup (adjust as needed) ---
-echo "Loading modules..."
-module purge
-module load anaconda3/2023.09 # Example module loading
-echo "Activating environment..."
-source activate forge # Example environment activation
-echo "Environment activated."
+# --- Environment Setup (from HPC Profile: {hpc_profile.get('name', 'unknown')}) ---
+{env_setup_block}
 # --- End Environment Setup ---
 
-echo "Running Variance Calculation (Placeholder) Task $SLURM_ARRAY_TASK_ID..."
+# Define SLURM variables for clarity in paths
+export BATCH_ID=$SLURM_ARRAY_TASK_ID
 
-# Execute the placeholder command
-{variance_command}
+# Construct paths within the script - use bash variables
+# Use printf to handle potential spaces in paths safely
+printf -v INPUT_XYZ_PATH %q "{batch_script_rel_path}" # Use template directly
+printf -v MODEL_DIR_PATH %q "{model_dir_rel}"
+# Output JSON path needs to use the relative output dir
+printf -v OUTPUT_JSON_PATH %q "{output_dir_rel}/batch_${{BATCH_ID}}_variances.json"
 
-echo "Task $SLURM_ARRAY_TASK_ID finished."
+echo "Running Variance Calculation Task $BATCH_ID..."
+echo "Input XYZ: $INPUT_XYZ_PATH"
+echo "Model Dir: $MODEL_DIR_PATH"
+echo "Output JSON: $OUTPUT_JSON_PATH"
+echo "Num Models: {n_models}"
+
+# Determine device based on GPU request
+DEVICE="cpu"
+if [ {job_gpus} -gt 0 ]; then
+    # Basic check if CUDA is available (heuristic, might need refinement)
+    if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+        DEVICE="cuda"
+    else
+        echo "[WARNING] GPUs requested ({job_gpus}), but CUDA/nvidia-smi not detected. Falling back to CPU."
+    fi
+fi
+echo "Using device: $DEVICE"
+
+# Execute the optimization engine script in variance mode using bash variables
+# Use eval to correctly handle the quoted paths from printf -v
+eval python -m forge.workflows.adversarial_attack.optimization_engine \
+    "$INPUT_XYZ_PATH" \
+    --calculate_variance \
+    --output_json "$OUTPUT_JSON_PATH" \
+    --model_dir "$MODEL_DIR_PATH" \
+    --device "$DEVICE"
+    # Add --debug if needed
+
+echo "Task $BATCH_ID finished."
+
+# Check exit code
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "Error occurred in Task $BATCH_ID (Exit Code: $EXIT_CODE)." >&2
+  # Potentially add cleanup or notification here
+  exit $EXIT_CODE
+fi
 """
     return script
 
@@ -100,8 +149,8 @@ def get_gradient_aa_script(
     batch_base_rel: str, # Relative path to base dir of batches (e.g., gradient_aa_optimization)
     log_dir_rel: str, # Relative path for slurm logs
     model_dir_rel: str, # Relative path to models dir
-    structure_file_rel: str, # Relative path template to batch xyz file from batch_base_rel
-    engine_output_dir_rel: str, # Relative path template for engine output (batch dir)
+    structure_file_rel: str, # Relative path template to batch xyz file from batch_base_rel, uses ${BATCH_ID}
+    engine_output_dir_rel: str, # Relative path template for engine output (batch dir), uses ${BATCH_ID}
     array_range: str,
     n_iterations: int,
     learning_rate: float,
@@ -109,13 +158,13 @@ def get_gradient_aa_script(
     include_probability: bool,
     temperature: float, # eV
     device: str,
-    save_trajectory: bool = True,
-    database_id: Optional[int] = None, # Pass parent ID if optimizing single known structure
-    time: str = "12:00:00",
-    cpus_per_task: int = 8,
-    gpus_per_task: int = 1, # Should match device='cuda'
-    account: Optional[str] = None,
-    partition: Optional[str] = None,
+    save_trajectory: bool,
+    time: str, # Pass from profile
+    cpus_per_task: int, # Pass from profile
+    gpus_per_task: int, # Pass from profile
+    hpc_profile: dict, # Pass loaded profile dict
+    account: Optional[str] = None, # Pass from profile
+    partition: Optional[str] = None, # Pass from profile
 ) -> str:
     """
     Generate a SLURM script for gradient-based adversarial attack optimization.
@@ -124,9 +173,9 @@ def get_gradient_aa_script(
         batch_base_rel: Relative path from workflow root to the AA batch base directory.
         log_dir_rel: Relative path from workflow root for SLURM log files.
         model_dir_rel: Relative path from workflow root to the copied models directory.
-        structure_file_rel: Relative path template from batch_base_rel to the input XYZ file.
+        structure_file_rel: Relative path template from batch_base_rel to the input XYZ file (uses ${{BATCH_ID}}).
         engine_output_dir_rel: Relative path template from batch_base_rel where the
-                               optimization engine should save its results.
+                               optimization engine should save its results (uses ${{BATCH_ID}}).
         array_range: SLURM array range string.
         n_iterations: Number of optimization iterations.
         learning_rate: Gradient step size.
@@ -135,13 +184,12 @@ def get_gradient_aa_script(
         temperature: Temperature (eV) for probability weighting.
         device: Device ('cpu' or 'cuda').
         save_trajectory: Whether the engine should save trajectories.
-        database_id: Optional parent structure ID (for single structure optimization).
-        time: Job time limit.
-        mem: Memory allocation.
-        cpus_per_task: CPUs per task.
-        gpus_per_task: GPUs per task (should be >0 if device='cuda').
-        account: SLURM account.
-        partition: SLURM partition.
+        time: Job time limit (from HPC profile).
+        cpus_per_task: CPUs per task (from HPC profile).
+        gpus_per_task: GPUs per task (from HPC profile).
+        hpc_profile: Dictionary containing HPC profile settings (including environment_setup).
+        account: SLURM account (from HPC profile).
+        partition: SLURM partition (from HPC profile).
 
     Returns:
         SLURM script content as string.
@@ -149,15 +197,12 @@ def get_gradient_aa_script(
     account_line = f"#SBATCH --account={account}" if account else ""
     partition_line = f"#SBATCH --partition={partition}" if partition else ""
 
-    # Construct paths relative to workflow root where script is launched
-    xyz_input_path = f"{batch_base_rel}/{structure_file_rel}"
-    output_path = f"{batch_base_rel}/{engine_output_dir_rel}"
+    # Get environment setup lines from profile
+    env_setup_lines = hpc_profile.get('environment_setup', [])
+    env_setup_block = '\n'.join(env_setup_lines)
 
-    # Build the command line arguments for optimization_engine.py
-    cmd_args = [
-        f'"{xyz_input_path}"', # Positional arg 1
-        f'"{output_path}"',   # Positional arg 2
-        f'--model_dir "{model_dir_rel}"',
+    # Build the command line arguments for optimization_engine.py flags
+    cmd_flags = [
         "--gradient", # Flag to select gradient method
         f"--n_iterations {n_iterations}",
         f"--learning_rate {learning_rate}",
@@ -166,18 +211,17 @@ def get_gradient_aa_script(
         f"--device {device}",
     ]
     if include_probability:
-        cmd_args.append("--include_probability")
+        cmd_flags.append("--include_probability")
     if save_trajectory:
-        cmd_args.append("--save-trajectory")
+        cmd_flags.append("--save-trajectory")
     else:
-         cmd_args.append("--no-save-trajectory") # Use the BooleanOptionalAction
-    if database_id is not None:
-        cmd_args.append(f"--database_id {database_id}")
-    # Add flags for database saving if needed, e.g. --save_to_database
+         cmd_flags.append("--no-save-trajectory") # Use the BooleanOptionalAction
+    # Add flags for database saving if needed (removed)
+    # if database_id is not None:
+    #     cmd_flags.append(f"--database_id {database_id}")
 
-    # Join arguments, handling spaces in paths with quotes
-    engine_command = f"python -m forge.workflows.adversarial_attack.optimization_engine \\\n    " + " \\\n    ".join(cmd_args)
-
+    # Join flags
+    flags_str = " \\\n    ".join(cmd_flags)
 
     script = f"""#!/bin/bash
 #SBATCH --job-name=aa_grad
@@ -190,30 +234,41 @@ def get_gradient_aa_script(
 {account_line}
 {partition_line}
 
-# --- Environment Setup (adjust as needed) ---
-echo "Loading modules..."
-module purge
-module load anaconda3/2023.09 # Example
-echo "Activating environment..."
-source activate forge # Example
-echo "Environment activated."
+# --- Environment Setup (from HPC Profile: {hpc_profile.get('name', 'unknown')}) ---
+{env_setup_block}
 # --- End Environment Setup ---
 
-echo "Running Gradient AA Engine Task $SLURM_ARRAY_TASK_ID..."
-echo "Input XYZ: {xyz_input_path}"
-echo "Output Dir: {output_path}"
-echo "Models: {model_dir_rel}"
+# Define SLURM variables for clarity in paths
+export BATCH_ID=$SLURM_ARRAY_TASK_ID
 
-# Execute the optimization engine script
-{engine_command}
+# Construct paths using bash variables
+printf -v BASE_DIR %q "{batch_base_rel}"
+printf -v MODEL_DIR_PATH %q "{model_dir_rel}"
+printf -v INPUT_XYZ_PATH %q "${{BASE_DIR}}/{structure_file_rel.replace('${BATCH_ID}', '${BATCH_ID}')}"
+printf -v OUTPUT_DIR_PATH %q "${{BASE_DIR}}/{engine_output_dir_rel.replace('${BATCH_ID}', '${BATCH_ID}')}"
 
-echo "Task $SLURM_ARRAY_TASK_ID finished."
+echo "Running Gradient AA Engine Task $BATCH_ID..."
+echo "Input XYZ: $INPUT_XYZ_PATH"
+echo "Output Dir: $OUTPUT_DIR_PATH"
+echo "Models: $MODEL_DIR_PATH"
+
+# Execute the optimization engine script using bash variables
+# Use eval to handle quoted paths correctly
+eval python -m forge.workflows.adversarial_attack.optimization_engine \\
+    "$INPUT_XYZ_PATH" \\
+    "$OUTPUT_DIR_PATH" \\
+    --model_dir "$MODEL_DIR_PATH" \\
+    {flags_str}
+    # Add --debug if needed
+
+echo "Task $BATCH_ID finished."
 
 # Check exit code
-if [ $? -ne 0 ]; then
-  echo "Error occurred in Task $SLURM_ARRAY_TASK_ID." >&2
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "Error occurred in Task $BATCH_ID (Exit Code: $EXIT_CODE)." >&2
   # Potentially add cleanup or notification here
-  exit 1
+  exit $EXIT_CODE
 fi
 """
     return script
@@ -224,8 +279,8 @@ def get_monte_carlo_aa_script(
     batch_base_rel: str, # Relative path to base dir of batches (e.g., monte_carlo_aa_optimization)
     log_dir_rel: str, # Relative path for slurm logs
     model_dir_rel: str, # Relative path to models dir
-    structure_file_rel: str, # Relative path template to batch xyz file from batch_base_rel
-    engine_output_dir_rel: str, # Relative path template for engine output (batch dir)
+    structure_file_rel: str, # Relative path template to batch xyz file from batch_base_rel, uses ${BATCH_ID}
+    engine_output_dir_rel: str, # Relative path template for engine output (batch dir), uses ${BATCH_ID}
     array_range: str,
     max_steps: int,
     patience: int,
@@ -234,13 +289,13 @@ def get_monte_carlo_aa_script(
     max_displacement: float, # Added
     mode: str,
     device: str,
-    save_trajectory: bool = True,
-    database_id: Optional[int] = None,
-    time: str = "12:00:00",
-    cpus_per_task: int = 8,
-    gpus_per_task: int = 1, # Should match device='cuda'
-    account: Optional[str] = None,
-    partition: Optional[str] = None,
+    save_trajectory: bool,
+    time: str, # Pass from profile
+    cpus_per_task: int, # Pass from profile
+    gpus_per_task: int, # Pass from profile
+    hpc_profile: dict, # Pass loaded profile dict
+    account: Optional[str] = None, # Pass from profile
+    partition: Optional[str] = None, # Pass from profile
 ) -> str:
     """
     Generate a SLURM script for Monte Carlo adversarial attack optimization.
@@ -249,9 +304,9 @@ def get_monte_carlo_aa_script(
         batch_base_rel: Relative path from workflow root to the AA batch base directory.
         log_dir_rel: Relative path from workflow root for SLURM log files.
         model_dir_rel: Relative path from workflow root to the copied models directory.
-        structure_file_rel: Relative path template from batch_base_rel to the input XYZ file.
+        structure_file_rel: Relative path template from batch_base_rel to the input XYZ file (uses ${{BATCH_ID}}).
         engine_output_dir_rel: Relative path template from batch_base_rel where the
-                               optimization engine should save its results.
+                               optimization engine should save its results (uses ${{BATCH_ID}}).
         array_range: SLURM array range string.
         max_steps: Maximum number of MC steps.
         patience: Patience parameter for MC stopping.
@@ -261,12 +316,12 @@ def get_monte_carlo_aa_script(
         mode: MC displacement mode ('all' or 'single').
         device: Device ('cpu' or 'cuda').
         save_trajectory: Whether the engine should save trajectories.
-        database_id: Optional parent structure ID.
-        time: Job time limit.
-        cpus_per_task: CPUs per task.
-        gpus_per_task: GPUs per task.
-        account: SLURM account.
-        partition: SLURM partition.
+        time: Job time limit (from HPC profile).
+        cpus_per_task: CPUs per task (from HPC profile).
+        gpus_per_task: GPUs per task (from HPC profile).
+        hpc_profile: Dictionary containing HPC profile settings (including environment_setup).
+        account: SLURM account (from HPC profile).
+        partition: SLURM partition (from HPC profile).
 
     Returns:
         SLURM script content as string.
@@ -274,15 +329,12 @@ def get_monte_carlo_aa_script(
     account_line = f"#SBATCH --account={account}" if account else ""
     partition_line = f"#SBATCH --partition={partition}" if partition else ""
 
-    xyz_input_path = f"{batch_base_rel}/{structure_file_rel}"
-    output_path = f"{batch_base_rel}/{engine_output_dir_rel}"
+    # Get environment setup lines from profile
+    env_setup_lines = hpc_profile.get('environment_setup', [])
+    env_setup_block = '\n'.join(env_setup_lines)
 
-    # Build the command line arguments for optimization_engine.py (NO --gradient flag)
-    cmd_args = [
-        f'"{xyz_input_path}"', # Positional arg 1
-        f'"{output_path}"',   # Positional arg 2
-        f'--model_dir "{model_dir_rel}"',
-        # No --gradient flag here
+    # Build the command line arguments for optimization_engine.py flags (NO --gradient flag)
+    cmd_flags = [
         f"--max_steps {max_steps}",
         f"--patience {patience}",
         f"--temperature {temperature}", # Pass temp (K)
@@ -293,14 +345,13 @@ def get_monte_carlo_aa_script(
     ]
     # BooleanOptionalAction flag for trajectory
     if save_trajectory:
-        cmd_args.append("--save-trajectory")
+        cmd_flags.append("--save-trajectory")
     else:
-        cmd_args.append("--no-save-trajectory")
-    if database_id is not None:
-        cmd_args.append(f"--database_id {database_id}")
-    # Add flags for database saving if needed, e.g. --save_to_database
+        cmd_flags.append("--no-save-trajectory")
+    # if database_id is not None: # Removed
+    #     cmd_flags.append(f"--database_id {database_id}")
 
-    engine_command = f"python -m forge.workflows.adversarial_attack.optimization_engine \\\n    " + " \\\n    ".join(cmd_args)
+    flags_str = " \\\n    ".join(cmd_flags)
 
     script = f"""#!/bin/bash
 #SBATCH --job-name=aa_mc
@@ -313,29 +364,40 @@ def get_monte_carlo_aa_script(
 {account_line}
 {partition_line}
 
-# --- Environment Setup (adjust as needed) ---
-echo "Loading modules..."
-module purge
-module load anaconda3/2023.09 # Example
-echo "Activating environment..."
-source activate forge # Example
-echo "Environment activated."
+# --- Environment Setup (from HPC Profile: {hpc_profile.get('name', 'unknown')}) ---
+{env_setup_block}
 # --- End Environment Setup ---
 
-echo "Running Monte Carlo AA Engine Task $SLURM_ARRAY_TASK_ID..."
-echo "Input XYZ: {xyz_input_path}"
-echo "Output Dir: {output_path}"
-echo "Models: {model_dir_rel}"
+# Define SLURM variables for clarity in paths
+export BATCH_ID=$SLURM_ARRAY_TASK_ID
 
-# Execute the optimization engine script
-{engine_command}
+# Construct paths using bash variables
+printf -v BASE_DIR %q "{batch_base_rel}"
+printf -v MODEL_DIR_PATH %q "{model_dir_rel}"
+printf -v INPUT_XYZ_PATH %q "${{BASE_DIR}}/{structure_file_rel.replace('${BATCH_ID}', '${BATCH_ID}')}"
+printf -v OUTPUT_DIR_PATH %q "${{BASE_DIR}}/{engine_output_dir_rel.replace('${BATCH_ID}', '${BATCH_ID}')}"
 
-echo "Task $SLURM_ARRAY_TASK_ID finished."
+echo "Running Monte Carlo AA Engine Task $BATCH_ID..."
+echo "Input XYZ: $INPUT_XYZ_PATH"
+echo "Output Dir: $OUTPUT_DIR_PATH"
+echo "Models: $MODEL_DIR_PATH"
+
+# Execute the optimization engine script using bash variables
+# Use eval to handle quoted paths correctly
+eval python -m forge.workflows.adversarial_attack.optimization_engine \\
+    "$INPUT_XYZ_PATH" \\
+    "$OUTPUT_DIR_PATH" \\
+    --model_dir "$MODEL_DIR_PATH" \\
+    {flags_str}
+    # Add --debug if needed
+
+echo "Task $BATCH_ID finished."
 
 # Check exit code
-if [ $? -ne 0 ]; then
-  echo "Error occurred in Task $SLURM_ARRAY_TASK_ID." >&2
-  exit 1
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+  echo "Error occurred in Task $BATCH_ID (Exit Code: $EXIT_CODE)." >&2
+  exit $EXIT_CODE
 fi
 """
     return script

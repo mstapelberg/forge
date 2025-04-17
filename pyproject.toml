@@ -33,6 +33,9 @@ dependencies = [
     "tqdm"
 ]
 
+[project.scripts]
+forge-aa = "forge.cli:main"
+
 [tool.setuptools]
 packages = ["forge"]
 

@@ -14,6 +14,7 @@ import json
 import torch
 import time
 import matplotlib.pyplot as plt
+import copy # Import the copy module
 
 class Timer:
     """Simple timer for performance debugging."""
@@ -96,11 +97,16 @@ class GradientAdversarialOptimizer:
         # Calculate normalization constant based on flag
         self.normalization_constant = 1.0
         if self.include_probability and self.energy_list is not None and len(self.energy_list) > 0:
-             self.normalization_constant = self._calculate_normalization_constant(
-                 self.energy_list, self.temperature, use_energy_per_atom=self.use_energy_per_atom
-             )
-             if self.debug:
-                 print(f"[DEBUG] Normalization constant (Q): {self.normalization_constant:.6f} (using {'energy/atom' if self.use_energy_per_atom else 'total energy'})")
+            energies_for_Q = self.energy_list # Assume energy_list matches use_energy_per_atom flag
+            try:
+                 Q, _ = self._calculate_normalization_constant(energies_for_Q, self.temperature)
+                 self.normalization_constant = Q
+                 if self.debug:
+                     print(f"[DEBUG] Normalization constant (Q): {self.normalization_constant:.6f} (based on {'energy/atom' if self.use_energy_per_atom else 'total energy'})")
+            except Exception as e:
+                 print(f"[WARN] Failed to calculate normalization constant: {e}. Using Q=1.0")
+                 self.normalization_constant = 1.0
+
         elif self.include_probability:
              if self.debug:
                  print("[DEBUG] No energy list provided or empty, using default normalization constant Q=1.0")
@@ -150,16 +156,45 @@ class GradientAdversarialOptimizer:
         return Q, shifted_energies
 
     def _calculate_probability(self, energy, temperature, normalization_constant=1.0):
-        """Calculate Boltzmann probability for a structure."""
-        k_B = 8.617e-5 #eV/K
-        probability = np.exp(-energy / (k_B*temperature)) / normalization_constant
-        # I want to check if probability is nan or inf
+        """Calculate Boltzmann probability for a structure.
+        
+        Args:
+            energy: Energy per atom in eV
+            temperature: Temperature in Kelvin
+            normalization_constant: Partition function value (default: 1.0)
+            
+        Returns:
+            float: Boltzmann probability (e^(-E/kT)/Q) for the structure
+                  Returns 1.0 in case of invalid inputs or numerical errors
+        """
+        if temperature <= 0:
+             print(f"[WARN] Temperature is non-positive ({temperature} K). Probability calculation is invalid. Returning 1.0.")
+             return 1.0
+        if normalization_constant <= 0:
+             print(f"[WARN] Normalization constant Q is non-positive ({normalization_constant}). Probability calculation is invalid. Returning 1.0.")
+             return 1.0
+
+        k_B = 8.617e-5  # Boltzmann constant in eV/K
+        exponent = -energy / (k_B * temperature)  # Convert temperature from K to energy units
+        # Add safeguard against large positive exponent leading to overflow
+        if exponent > 700: # Corresponds to exp(700), roughly float limit
+             print(f"[WARN] Exponent {exponent:.2f} too large in probability calculation (Energy: {energy:.4f} eV, Temp: {temperature:.4f} K). Clamping probability.")
+             probability = torch.finfo(self.dtype).max # Assign a large finite number instead of inf
+        else:
+            try:
+                 probability = np.exp(exponent) / normalization_constant
+            except FloatingPointError:
+                 print(f"[WARN] Floating point error during probability calculation (Exponent: {exponent:.2f}). Returning 0.0.")
+                 probability = 0.0
+
+        # Check for NaN or Inf (should be less likely with checks above)
         if np.isnan(probability) or np.isinf(probability):
-            print(f"[WARNING] Probability is nan or inf for energy {energy} and temperature {temperature}. Setting probability to 1.0 and running in deterministic mode.")
-            return 1.0
+            print(f"[WARNING] Probability is nan or inf (E={energy:.4f} eV, T={temperature:.4f} K, Q={normalization_constant:.4f}). Setting probability to 1.0 (deterministic)." )
+            return 1.0 # Fallback to deterministic if something unexpected happens
         return probability
 
-    def optimize(self, atoms, generation: int, n_iterations=60, min_distance=1.5, output_dir='.'):
+    def optimize(self, atoms, generation: int, n_iterations=60, min_distance=1.5, output_dir='.',
+                 patience: int = 20, shake_std: float = 0.05):
         """Run gradient-based adversarial attack optimization.
 
         Args:
@@ -168,6 +203,8 @@ class GradientAdversarialOptimizer:
             n_iterations: Maximum number of iterations
             min_distance: Minimum allowed distance between atoms
             output_dir: Directory to save plots
+            patience: Number of steps without loss improvement before shaking (default: 10).
+            shake_std: Standard deviation (in Angstrom) for random shake (default: 0.05).
 
         Returns:
             List[Atoms]: Trajectory of Atoms objects, each with detailed info and mean forces.
@@ -188,20 +225,10 @@ class GradientAdversarialOptimizer:
         else:
             new_config_type = f"{original_config_type}_aa"
 
-        # --- Calculate normalization constant ---
-        normalization_constant = 1.0
-        if self.include_probability and self.energy_list is not None and len(self.energy_list) > 0:
-            normalization_constant, _ = self._calculate_normalization_constant(
-                self.energy_list, self.temperature) # Shifted energies not needed here
-            if self.debug:
-                print(f"[DEBUG] Normalization constant: {normalization_constant:.6f}")
-        elif self.include_probability and self.debug:
-            print("[DEBUG] No energy list provided or energy list empty, using default normalization constant Q=1.0")
-
         # Initialize tracking variables
         original_positions = atoms.positions.copy()
         best_loss = -float('inf') # Still track best loss for potential future use/logging
-        # best_positions = original_positions.copy() # No longer need to track best_positions separately
+        steps_without_improvement = 0 # Counter for patience
         trajectory = [] # Store Atoms objects for each step
 
         # Initialize displacement tensor with gradient tracking
@@ -215,11 +242,23 @@ class GradientAdversarialOptimizer:
         # Create optimizer
         optimizer = torch.optim.Adam([displacement], lr=self.learning_rate)
 
-        print(f"[INFO] Starting optimization for parent ID: {parent_id}, generation: {generation}")
+        print(f"[INFO] Starting optimization for parent ID: {parent_id}, generation: {generation}, patience={patience}, shake_std={shake_std}")
 
         # --- Optimization loop ---
         for step in tqdm(range(n_iterations), desc=f"Optimizing {struct_name}"):
             self.timer.start(f"step_{step}")
+
+            # --- Check for patience ---
+            if steps_without_improvement >= patience:
+                 print(f"\n[INFO] Step {step}: No improvement for {patience} steps. Applying random shake (std={shake_std} Å).")
+                 noise = np.random.normal(0, shake_std, size=original_positions.shape)
+                 # --- Apply shake to the *base* positions --- 
+                 original_positions += noise
+                 # --- Reset learned displacement and optimizer state --- 
+                 displacement.data.zero_()
+                 optimizer = torch.optim.Adam([displacement], lr=self.learning_rate) # Reinitialize optimizer
+                 steps_without_improvement = 0 # Reset counter after shake
+                 # NOTE: The next step will calculate loss based on the *shaken* structure
 
             # Zero gradients
             optimizer.zero_grad()
@@ -263,20 +302,21 @@ class GradientAdversarialOptimizer:
             if self.include_probability:
                 self.timer.start("probability_calculation")
                 probability = self._calculate_probability(
-                    energy, self.temperature, normalization_constant
+                    energy, self.temperature, self.normalization_constant
                 )
                 self.timer.stop("probability_calculation")
 
             # Calculate loss
             loss = probability * variance if self.include_probability else variance
 
-            # Update best loss tracking
+            # Update best loss tracking and patience counter
             if loss > best_loss:
                 best_loss = loss
-                # No need to save best_positions, best structure is just the one in the trajectory with highest loss
+                steps_without_improvement = 0 # Reset patience counter
                 if self.debug:
                      print(f"[DEBUG] Step {step}: New best loss: {loss:.6f}")
-
+            else:
+                steps_without_improvement += 1 # Increment patience counter
 
             # --- Store step results in trajectory ---
             self.timer.start("store_trajectory_step")
@@ -299,7 +339,8 @@ class GradientAdversarialOptimizer:
             # Store mean forces in arrays
             step_atoms.arrays['forces'] = mean_forces # Store mean forces
 
-            trajectory.append(step_atoms)
+            # --- Use deepcopy to ensure independence --- 
+            trajectory.append(copy.deepcopy(step_atoms))
             self.timer.stop("store_trajectory_step")
 
             # --- Compute gradient using numerical approximation ---
@@ -328,7 +369,7 @@ class GradientAdversarialOptimizer:
                     if self.include_probability:
                         forward_energy = self._calculate_energy(temp_atoms_for_grad)
                         forward_probability = self._calculate_probability(
-                            forward_energy, self.temperature, normalization_constant
+                            forward_energy, self.temperature, self.normalization_constant
                         )
                         forward_loss = forward_probability * forward_variance
                     else:
@@ -349,7 +390,6 @@ class GradientAdversarialOptimizer:
             else:
                  displacement.grad.copy_(-grad_tensor) # Use copy_ for in-place update if grad already exists
 
-
             # Step optimizer
             self.timer.start("optimizer_step")
             optimizer.step()
@@ -363,7 +403,6 @@ class GradientAdversarialOptimizer:
             elif not self.debug and (step % 10 == 0 or step == n_iterations - 1):
                  print(f"Step {step}: Variance={variance:.6f}, Probability={probability:.6f}, Loss={loss:.6f}")
 
-
         # --- Finalization ---
         print(f"[INFO] Optimization finished for parent ID: {parent_id}. Total steps: {len(trajectory)}")
 
@@ -372,7 +411,6 @@ class GradientAdversarialOptimizer:
              self._create_plots(output_path, trajectory)
         else:
              print("[WARN] No trajectory generated, skipping plot creation.")
-
 
         # Print performance summary
         self.timer.summary()

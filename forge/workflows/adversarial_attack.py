@@ -7,8 +7,10 @@ import argparse
 import os
 import time
 from tqdm import tqdm
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Union
 from pathlib import Path
+from ase import Atoms
+from ase.io import write
 
 # --- Core Forge Imports ---
 # Assume forge is installed or PYTHONPATH is set correctly
@@ -63,7 +65,9 @@ def run_adversarial_attacks(
     use_energy_per_atom: bool = True,
     device: Optional[str] = None,
     debug: bool = False,
-) -> List[int]:
+    output_dir: str = '.',
+    save_output: bool = False # Added save_output flag back
+) -> Union[Dict[int, List[Atoms]], None]:
     """
     Runs the gradient-based adversarial attack workflow using a provided DatabaseManager.
 
@@ -72,7 +76,7 @@ def run_adversarial_attacks(
         structure_ids: List of initial structure IDs from the database.
         model_paths: List of paths to MACE model files for the ensemble.
         top_n: Number of top variance structures to select and optimize.
-        generation: Generation tag for the new structures.
+        generation: Generation tag for the new structures (used in metadata).
         n_iterations: Number of optimization steps.
         learning_rate: Optimizer learning rate.
         temperature: Temperature (in eV) for Boltzmann weighting.
@@ -81,9 +85,15 @@ def run_adversarial_attacks(
         use_energy_per_atom: Use energy per atom for probability calculations.
         device: Compute device ('cuda', 'cpu', or None for auto-detect).
         debug: Enable verbose debug printing.
+        output_dir: Directory to save output files.
+        save_output: If True, save trajectories and plots to output_dir and return None.
+                      If False, return the dictionary of trajectories.
 
     Returns:
-        List of newly added structure IDs to the database (simulated if db_manager is in dry_run mode).
+        If save_output is False (default): Returns a dictionary where keys are parent IDs
+        and values are lists of Atoms objects representing the optimization trajectory.
+        If save_output is True: Saves each trajectory to `output_dir/structure_{parent_id}.xyz`
+        and plots to `output_dir/plots/`, then returns None.
     """
     wf_timer = Timer(debug=debug)
     wf_timer.start("total_workflow")
@@ -113,7 +123,7 @@ def run_adversarial_attacks(
         )
     except Exception as e:
         print(f"[ERROR] Failed to initialize AdversarialCalculator: {e}")
-        return []
+        return {}
     wf_timer.stop("init")
 
     # --- Fetch Initial Structures & Data ---
@@ -126,7 +136,7 @@ def run_adversarial_attacks(
 
     if not initial_atoms_list:
         print("[ERROR] No valid structures found for the given IDs in the database.")
-        return []
+        return {}
 
     print(f"Successfully fetched {len(initial_atoms_list)} structures.")
 
@@ -172,7 +182,7 @@ def run_adversarial_attacks(
 
     if not structures_to_process:
         print("[ERROR] No structures eligible for processing after initial fetch.")
-        return []
+        return {}
 
     if include_probability and not initial_energies_for_norm:
         print("[WARNING] `include_probability` is True, but no valid initial energies found for normalization. Proceeding deterministically (Q=1.0).")
@@ -207,7 +217,7 @@ def run_adversarial_attacks(
     valid_variances = [v for v in initial_variances if v['variance'] >= 0]
     if not valid_variances:
         print("[ERROR] No valid initial variances calculated. Exiting.")
-        return []
+        return {}
 
     # Sort by variance descending
     valid_variances.sort(key=lambda x: x['variance'], reverse=True)
@@ -246,15 +256,15 @@ def run_adversarial_attacks(
     # --- Run Optimization Loop ---
     wf_timer.start("optimization_loop")
     print("\nStarting optimization runs...")
-    all_generated_atoms = []
+    # --- Store trajectories in a dictionary ---
+    all_trajectories: Dict[int, List[Atoms]] = {} # Changed from list to dict
     model_source_str = ",".join(model_paths) # Simple way to store model paths identifier
 
-    # Define output directory for plots (can be based on generation or a fixed path)
-    # Example: Create a directory based on the generation number
-    # Ensure this happens *before* the loop calling optimize
-    plot_output_dir = Path(f'./adversarial_attack_gen_{generation}_plots')
-    plot_output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[INFO] Saving plots to: {plot_output_dir.resolve()}")
+    # Define plot directory relative to main output_dir
+    # Create it only if saving output is intended, optimizer creates its own dir
+    plot_save_dir = Path(output_dir) / 'plots'
+    # Optimizer will create this directory if needed, no need to mkdir here
+    print(f"[INFO] Plots will be saved within: {plot_save_dir.resolve()}")
 
 
     for data in tqdm(selected_structures_data, desc="Adversarial Attacks"):
@@ -272,11 +282,12 @@ def run_adversarial_attacks(
                 generation=generation, # Pass generation explicitly
                 n_iterations=n_iterations,
                 min_distance=min_distance,
-                output_dir=str(plot_output_dir) # Pass directory for plots
+                output_dir=str(plot_save_dir) # Pass plot directory to optimizer
                 # Removed parent_id, original_config_type, model_source_path, save_interval
             )
             # Extend the main list with all atoms from the returned trajectory
-            all_generated_atoms.extend(generated_trajectory_for_parent)
+            # --- Store trajectory by parent ID ---
+            all_trajectories[parent_id] = generated_trajectory_for_parent # Store list of Atoms
             if debug:
                  print(f"Finished optimization for {parent_id}. Generated trajectory with {len(generated_trajectory_for_parent)} steps.")
 
@@ -286,122 +297,47 @@ def run_adversarial_attacks(
 
     wf_timer.stop("optimization_loop")
 
-
-    # --- Add Generated Structures to Database ---
-    wf_timer.start("db_add")
-    added_structure_ids = []
-    if all_generated_atoms:
-        print(f"\nAdding {len(all_generated_atoms)} generated structures to the database...")
-        # Use add_structure in a loop. Consider a batch method if performance is critical.
-        for atoms_to_add in tqdm(all_generated_atoms, desc="Adding to DB"):
-             try:
-                  # Metadata is already in atoms_to_add.info
-                  # source_type could indicate the origin, e.g., 'adversarial_gradient'
-                  new_id = db_manager.add_structure(atoms_to_add, source_type='adversarial_gradient')
-                  added_structure_ids.append(new_id)
-             except Exception as e:
-                  parent = atoms_to_add.info.get('parent_id', 'unknown')
-                  step = atoms_to_add.info.get('step', 'unknown')
-                  print(f"\n[ERROR] Failed to add generated structure (parent {parent}, step {step}) to database: {e}")
-
-        print(f"Successfully added {len(added_structure_ids)} structures to the database.")
-        if db_manager.dry_run:
-             print("[INFO] (Dry Run Mode - IDs are simulated)")
-    else:
-        print("\nNo structures were generated during the optimization process.")
-    wf_timer.stop("db_add")
-
     wf_timer.stop("total_workflow")
     print("\n--- Adversarial Attack Workflow Finished ---")
     if debug or True: # Always print summary for now
          wf_timer.summary()
 
-    return added_structure_ids
+    # --- Save trajectories to file or return dictionary --- 
+    if save_output:
+        save_path = Path(output_dir)
+        save_path.mkdir(parents=True, exist_ok=True)
+        print(f"\nSaving trajectories to: {save_path.resolve()}")
+
+        saved_files_count = 0
+        # Need initial atoms to prepend to the trajectory
+        # Create a quick lookup map from the data we used for selection
+        initial_atoms_map = {data['id']: data['atoms'] for data in selected_structures_data}
+
+        for parent_id, generated_trajectory in tqdm(all_trajectories.items(), desc="Saving Trajectories"):
+            if parent_id in initial_atoms_map:
+                atoms_initial = initial_atoms_map[parent_id]
+                # Prepend initial structure to the trajectory
+                full_trajectory_to_save = [atoms_initial] + generated_trajectory
+                # --- Ensure calculator is detached before writing --- 
+                for atom in full_trajectory_to_save:
+                    atom.calc = None
+                filename = save_path / f"structure_{parent_id}.xyz"
+                # --- Add verification print --- 
+                print(f"[VERIFY SAVE] Writing {len(full_trajectory_to_save)} frames for parent ID {parent_id} to {filename}")
+                try:
+                    write(filename, full_trajectory_to_save, format='extxyz')
+                    saved_files_count += 1
+                except Exception as e:
+                    print(f"\n[ERROR] Failed to save trajectory for parent ID {parent_id} to {filename}: {e}")
+            else:
+                 print(f"\n[WARN] Could not find initial atoms for parent ID {parent_id}. Skipping trajectory save.")
+
+        print(f"\nSuccessfully saved {saved_files_count} trajectory files.")
+        return None # Return None when saving
+    else:
+        # Return the collected trajectories dictionary
+        return all_trajectories
 
 
 # --- Command-Line Interface ---
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run gradient-based adversarial attacks workflow.")
-
-    # Inputs
-    parser.add_argument('--structure_ids', type=int, nargs='+', required=True, help='List of initial structure IDs from the database.')
-    parser.add_argument('--model_paths', nargs='+', required=True, help='List of paths to MACE model files.')
-    parser.add_argument('--db_path', type=str, required=True, help='Path to the database file or connection string.')
-    parser.add_argument('--top_n', type=int, default=10, help='Number of top variance structures to optimize.')
-    parser.add_argument('--generation', type=int, required=True, help='Generation identifier for the output structures.')
-
-    # Optimization Parameters
-    parser.add_argument('--n_iterations', type=int, default=50, help='Number of optimization iterations.')
-    parser.add_argument('--learning_rate', type=float, default=0.005, help='Learning rate for Adam optimizer.')
-    parser.add_argument('--temperature', type=float, default=0.1, help='Temperature (in eV) for Boltzmann probability weighting.')
-    parser.add_argument('--include_probability', action='store_true', help='Weight loss by Boltzmann probability (uses energy/atom by default).')
-    parser.add_argument('--deterministic', action='store_true', help='Force deterministic mode (ignore probability). Overrides --include_probability.')
-    # parser.add_argument('--use_total_energy', action='store_true', help='Use total energy instead of energy/atom for probability (if probability included).') # Option if needed
-    parser.add_argument('--min_distance', type=float, default=1.5, help='Minimum allowed interatomic distance (Angstrom).')
-
-    # Other Options
-    parser.add_argument('--cpu', action='store_true', help='Force computation on CPU.')
-    parser.add_argument('--debug', action='store_true', help='Enable debug printing.')
-    parser.add_argument('--dry_run_db', action='store_true', help='Simulate database writes without actual changes.')
-
-
-    args = parser.parse_args()
-
-    # --- Basic Input Validation ---
-    if args.top_n <= 0: args.top_n = 1 # Ensure at least 1
-    if args.generation < 0: raise ValueError("--generation must be non-negative.")
-    if args.n_iterations <= 0: raise ValueError("--n_iterations must be positive.")
-    if args.learning_rate <= 0: raise ValueError("--learning_rate must be positive.")
-    if args.temperature <= 0: raise ValueError("--temperature must be positive.")
-    if args.min_distance <= 0: raise ValueError("--min_distance must be positive.")
-    if not all(os.path.exists(p) for p in args.model_paths):
-        missing = [p for p in args.model_paths if not os.path.exists(p)]
-        raise FileNotFoundError(f"One or more model paths do not exist: {missing}")
-    # DB path check can be complex (file vs connection string), handled by DatabaseManager
-
-    # Handle deterministic flag
-    final_include_probability = args.include_probability and not args.deterministic
-
-    # --- Initialize DatabaseManager for CLI execution ---
-    db_manager_instance = None
-    new_ids = []
-    try:
-        print(f"Initializing DatabaseManager (Dry Run: {args.dry_run_db})...")
-        db_manager_instance = DatabaseManager(
-            config_path=args.db_path,
-            dry_run=args.dry_run_db,
-            debug=args.debug
-        )
-        print("DatabaseManager initialized.")
-
-        # --- Run the main workflow function ---
-        new_ids = run_adversarial_attacks(
-            db_manager=db_manager_instance, # Pass the instance
-            structure_ids=args.structure_ids,
-            model_paths=args.model_paths,
-            top_n=args.top_n,
-            generation=args.generation,
-            n_iterations=args.n_iterations,
-            learning_rate=args.learning_rate,
-            temperature=args.temperature,
-            include_probability=final_include_probability,
-            min_distance=args.min_distance,
-            use_energy_per_atom=True,
-            device='cpu' if args.cpu else None,
-            debug=args.debug,
-        )
-
-    except Exception as e:
-        print(f"\n[ERROR] Workflow execution failed: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        # --- Ensure DB connection is closed ---
-        if db_manager_instance:
-            print("\nClosing database connection...")
-            db_manager_instance.close_connection()
-            print("Database connection closed.")
-
-    print(f"\nWorkflow complete. Added {len(new_ids)} new structures.")
-    if args.debug and new_ids:
-         print(f"New structure IDs: {new_ids}") 
+# REMOVED CLI section 

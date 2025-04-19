@@ -19,11 +19,11 @@ conda create -n forge python=3.11
 
 # for cuda 12.6
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-pip3 install cuequivariance==0.1.0 cuequivariance-torch==0.1.0 cuequivariance-ops-torch-cu12==0.1.0
+pip3 install cuequivariance cuequivariance-torch cuequivariance-ops-torch-cu12
 
 # for cuda 11.8
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip3 install cuequivariance==0.1.0 cuequivariance-torch==0.1.0 cuequivariance-ops-torch-cu11==0.1.0
+pip3 install cuequivariance cuequivariance-torch cuequivariance-ops-torch-cu11
 
 # Optional for WANDB logging during training
 pip3 install wandb

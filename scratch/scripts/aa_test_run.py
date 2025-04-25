@@ -42,7 +42,9 @@ trajectories = run_adversarial_attacks(
     debug=False,
     top_n=100,
     save_output=True,
-    output_dir='../data/adversarial_attacks/gen_8'
+    output_dir='../data/adversarial_attacks/gen_8_no_shake',
+    patience=25,
+    shake=False,
 )
 
 # --- Handle None return value when saving --- 

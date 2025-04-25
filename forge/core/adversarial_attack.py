@@ -194,7 +194,7 @@ class GradientAdversarialOptimizer:
         return probability
 
     def optimize(self, atoms, generation: int, n_iterations=60, min_distance=1.5, output_dir='.',
-                 patience: int = 20, shake_std: float = 0.05):
+                 patience: int = 20, shake_std: float = 0.05, shake: bool = False):
         """Run gradient-based adversarial attack optimization.
 
         Args:
@@ -203,8 +203,9 @@ class GradientAdversarialOptimizer:
             n_iterations: Maximum number of iterations
             min_distance: Minimum allowed distance between atoms
             output_dir: Directory to save plots
-            patience: Number of steps without loss improvement before shaking (default: 10).
-            shake_std: Standard deviation (in Angstrom) for random shake (default: 0.05).
+            patience: Number of steps without loss improvement before action (shake or stop).
+            shake_std: Standard deviation (in Angstrom) for random shake (if shake=True).
+            shake: If True, apply random shake when patience is reached. If False, stop optimization.
 
         Returns:
             List[Atoms]: Trajectory of Atoms objects, each with detailed info and mean forces.
@@ -242,7 +243,7 @@ class GradientAdversarialOptimizer:
         # Create optimizer
         optimizer = torch.optim.Adam([displacement], lr=self.learning_rate)
 
-        print(f"[INFO] Starting optimization for parent ID: {parent_id}, generation: {generation}, patience={patience}, shake_std={shake_std}")
+        print(f"[INFO] Starting optimization for parent ID: {parent_id}, generation: {generation}, patience={patience}, shake={shake}, shake_std={shake_std}")
 
         # --- Optimization loop ---
         for step in tqdm(range(n_iterations), desc=f"Optimizing {struct_name}"):
@@ -250,15 +251,19 @@ class GradientAdversarialOptimizer:
 
             # --- Check for patience ---
             if steps_without_improvement >= patience:
-                 print(f"\n[INFO] Step {step}: No improvement for {patience} steps. Applying random shake (std={shake_std} Å).")
-                 noise = np.random.normal(0, shake_std, size=original_positions.shape)
-                 # --- Apply shake to the *base* positions --- 
-                 original_positions += noise
-                 # --- Reset learned displacement and optimizer state --- 
-                 displacement.data.zero_()
-                 optimizer = torch.optim.Adam([displacement], lr=self.learning_rate) # Reinitialize optimizer
-                 steps_without_improvement = 0 # Reset counter after shake
-                 # NOTE: The next step will calculate loss based on the *shaken* structure
+                 if shake:
+                     print(f"\n[INFO] Step {step}: No improvement for {patience} steps. Applying random shake (std={shake_std} Å).")
+                     noise = np.random.normal(0, shake_std, size=original_positions.shape)
+                     # --- Apply shake to the *base* positions ---
+                     original_positions += noise
+                     # --- Reset learned displacement and optimizer state ---
+                     displacement.data.zero_()
+                     optimizer = torch.optim.Adam([displacement], lr=self.learning_rate) # Reinitialize optimizer
+                     steps_without_improvement = 0 # Reset counter after shake
+                     # NOTE: The next step will calculate loss based on the *shaken* structure
+                 else:
+                     print(f"\n[INFO] Step {step}: No improvement for {patience} steps and shake=False. Stopping optimization.")
+                     break # Stop the optimization loop
 
             # Zero gradients
             optimizer.zero_grad()

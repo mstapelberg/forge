@@ -66,7 +66,10 @@ def run_adversarial_attacks(
     device: Optional[str] = None,
     debug: bool = False,
     output_dir: str = '.',
-    save_output: bool = False # Added save_output flag back
+    save_output: bool = False, # Added save_output flag back
+    patience: int = 25, # Add patience parameter
+    shake: bool = False, # Add shake parameter
+    shake_std: float = 0.05 # Add shake_std for consistency
 ) -> Union[Dict[int, List[Atoms]], None]:
     """
     Runs the gradient-based adversarial attack workflow using a provided DatabaseManager.
@@ -88,6 +91,8 @@ def run_adversarial_attacks(
         output_dir: Directory to save output files.
         save_output: If True, save trajectories and plots to output_dir and return None.
                       If False, return the dictionary of trajectories.
+        shake: If True, apply random shake when optimizer patience is reached. If False, stop.
+        shake_std: Standard deviation for the random shake if shake is True.
 
     Returns:
         If save_output is False (default): Returns a dictionary where keys are parent IDs
@@ -282,8 +287,10 @@ def run_adversarial_attacks(
                 generation=generation, # Pass generation explicitly
                 n_iterations=n_iterations,
                 min_distance=min_distance,
-                output_dir=str(plot_save_dir) # Pass plot directory to optimizer
-                # Removed parent_id, original_config_type, model_source_path, save_interval
+                output_dir=str(plot_save_dir), # Pass plot directory to optimizer
+                patience=patience, # Pass patience
+                shake=shake, # Pass shake flag
+                shake_std=shake_std # Pass shake_std
             )
             # Extend the main list with all atoms from the returned trajectory
             # --- Store trajectory by parent ID ---

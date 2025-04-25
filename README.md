@@ -44,28 +44,26 @@ pip install -e .
 ```
 
 # Quick Usage
-Examples of CLI usage or minimal code:
-```bash
-forge calculate-variance --xyz_file data/structures.xyz --output_dir results ...
-forge create-aa-jobs ...
-forge run-aa-jobs ...
-forge create-aa-vasp-jobs ...
-```
+Refer to the scripts in `forge/scratch/scripts` or notebooks in `forge/scratch/notebooks` for examples. 
 
 # Repository Layout
 - `analysis/` - analysis scripts, e.g. Warren-Cowley
 - `core/` - database manager, calculators
 - `workflows/` - HPC job generation scripts, templates
 - `tests/` - test suite
-- `config/` - example database config, HPC profiles
+- `config/` - example database config
+- `scratch/` - current scratch work repository 
 
 ## HPC Profiles
-Describe usage of HPC JSON templates.
+You can create profiles for clusters that you use. An example is put together for Perlmutter-CPU and Perlmutter-GPU. 
+It is advised to have different types of profiles for jobs on different clusters.
+In the future we will implement folders for each cluster that you can save your job templates to. 
 
 ## Adversarial Attack Workflow
 1. **Calculate variance**: ...
 2. **Run optimization**: ...
-3. **Generate VASP jobs**: ...
+3. **Generate Structures**: ...
+4. **Pick Structures for VASP**: ...
 
 ## Configuration
 The central tenant of FORGE is using AWS relational databases. Configuration of your database is done in `config/database.yaml`. This allows you to just call DatabaseManager() without passing in a config file.

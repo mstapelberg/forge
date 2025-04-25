@@ -1286,6 +1286,66 @@ class DatabaseManager:
             print("[INFO] Transaction rolled back.")
             raise
 
+    def remove_structures_batch(self, structure_ids: List[int], dry_run_override: Optional[bool] = None) -> None:
+        """
+        Remove a batch of structures and their associated calculations from the database.
+
+        Associated calculations are removed due to the ON DELETE CASCADE constraint.
+
+        Args:
+            structure_ids: A list of structure IDs to remove.
+            dry_run_override: If provided, overrides the instance's dry_run setting for this operation.
+
+        Raises:
+            ValueError: If the list of structure_ids is empty.
+            Exception: Propagates database errors during deletion.
+        """
+        is_dry_run = self.dry_run if dry_run_override is None else dry_run_override
+
+        if not structure_ids:
+            print("[WARN] remove_structures_batch called with an empty list. No action taken.")
+            return
+
+        if is_dry_run:
+            print(f"[DRY RUN] Would attempt to remove {len(structure_ids)} structures:")
+            print(f"[DRY RUN] Structure IDs: {structure_ids}")
+            print("[DRY RUN] Associated calculations would also be removed due to CASCADE.")
+            return
+
+        if not self.conn:
+            print("[ERROR] Database connection is not available (likely due to dry_run during init). Cannot remove structures.")
+            return
+
+        try:
+            with self.conn.cursor() as cur:
+                # Use ANY() for efficient deletion of multiple rows
+                # RETURNING structure_id tells us which ones were actually found and deleted
+                cur.execute(
+                    """
+                    DELETE FROM structures
+                    WHERE structure_id = ANY(%s)
+                    RETURNING structure_id;
+                    """,
+                    (structure_ids,) # Pass the list as a tuple for the parameter
+                )
+                deleted_ids = [row[0] for row in cur.fetchall()]
+                
+                if len(deleted_ids) < len(structure_ids):
+                    missing_ids = set(structure_ids) - set(deleted_ids)
+                    print(f"[WARN] Some requested structure IDs were not found or not deleted: {list(missing_ids)}")
+
+                if deleted_ids:
+                    print(f"[INFO] Successfully removed {len(deleted_ids)} structures (and associated calculations): {deleted_ids}")
+                else:
+                    print("[INFO] No structures were removed (possibly none of the provided IDs existed).")
+                
+                self.conn.commit()
+
+        except Exception as e:
+            self.conn.rollback()
+            print(f"[ERROR] Error during batch removal of structures {structure_ids}: {e}")
+            raise
+
     def add_mlip_model(
         self,
         model_generation: int,

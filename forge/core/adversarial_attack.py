@@ -341,6 +341,14 @@ class GradientAdversarialOptimizer:
             if self.include_probability:
                 step_atoms.info['probability'] = probability
 
+            # Remove structure_id if it exists (inherited from original atoms)
+            if 'structure_id' in step_atoms.info:
+                del step_atoms.info['structure_id']
+
+            # Remove calculation_info if it exists (inherited from original atoms)
+            if 'calculation_info' in step_atoms.info:
+                del step_atoms.info['calculation_info']
+
             # Store mean forces in arrays
             step_atoms.arrays['forces'] = mean_forces # Store mean forces
 

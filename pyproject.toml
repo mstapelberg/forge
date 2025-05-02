@@ -47,6 +47,15 @@ test = [
     "umap-learn",
     "wandb"
 ]
+analysis = [
+    "scikit-learn>=1.0",  # For KMeans, StandardScaler
+    "umap-learn>=0.5",   # For UMAP
+    "matplotlib>=3.5",  # For plotting
+]
+dev = [
+    "forge[analysis]", # Also add analysis tools to dev dependencies
+    "forge[test]",
+]
 
 [project.urls]
 "Source Code" = "https://github.com/mstapelberg/forge"

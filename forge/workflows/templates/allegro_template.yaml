@@ -1,0 +1,126 @@
+run: [val, test, train, val, test]
+
+cutoff_radius: ${R_MAX}
+chemical_symbols: ${CHEMICAL_SYMBOLS}
+model_type_names: ${CHEMICAL_SYMBOLS}
+seed: ${SEED}
+job_name: ${JOB_NAME}
+
+data:
+  _target_: nequip.data.datamodule.ASEDataModule
+  train_file_path: data/${JOB_NAME}_train.xyz
+  val_file_path:   data/${JOB_NAME}_val.xyz
+  test_file_path:  data/${JOB_NAME}_test.xyz
+
+  ase_args:
+    format: extxyz
+
+  key_mapping:
+    REF_energy: total_energy
+    REF_force:  forces
+    REF_stress: stress
+
+  transforms:
+    - _target_: nequip.data.transforms.NeighborListTransform
+      r_max: ${R_MAX}
+    - _target_: nequip.data.transforms.ChemicalSpeciesToAtomTypeMapper
+      chemical_symbols: ${CHEMICAL_SYMBOLS}
+
+  seed: ${SEED}
+
+  train_dataloader:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 4
+  val_dataloader:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 4
+  test_dataloader: ${data.val_dataloader}
+
+  stats_manager:
+    _target_: nequip.data.CommonDataStatisticsManager
+    type_names: ${CHEMICAL_SYMBOLS}
+
+trainer:
+  _target_: lightning.Trainer
+  accelerator: gpu
+  devices: ${GPU_COUNT}
+  num_nodes: ${NUM_NODES}
+  max_epochs: ${MAX_EPOCHS}
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 5
+
+  callbacks:
+    - _target_: lightning.pytorch.callbacks.ModelCheckpoint
+      dirpath: results/${JOB_NAME}
+      save_last: true
+
+    - _target_: nequip.train.callbacks.LossCoefficientScheduler
+      schedule:
+        ${START_EPOCH}:
+          per_atom_energy_mse: ${SCHEDULE_ENERGY}
+          forces_mse:         ${SCHEDULE_FORCES}
+          stress_mse:         ${SCHEDULE_STRESS}
+
+  logger:
+    _target_: lightning.pytorch.loggers.wandb.WandbLogger
+    project: ${PROJECT}
+    name: ${JOB_NAME}
+    save_dir: ${SAVE_DIR}
+
+training_module:
+  _target_: nequip.train.EMALightningModule
+
+  loss:
+    _target_: nequip.train.EnergyForceStressLoss
+    per_atom_energy: true
+    coeffs:
+      total_energy: ${LOSS_ENERGY}
+      forces:       ${LOSS_FORCES}
+      stress:       ${LOSS_STRESS}
+
+  val_metrics:
+    _target_: nequip.train.EnergyForceStressMetrics
+    coeffs:
+      per_atom_energy_mae: ${LOSS_ENERGY}
+      forces_mae:           ${LOSS_FORCES}
+      stress_mae:           ${LOSS_STRESS}
+
+  test_metrics: ${training_module.val_metrics}
+
+  optimizer:
+    _target_: torch.optim.Adam
+    lr: ${LR}
+
+  model:
+    _target_: allegro.model.AllegroModel
+
+    seed: ${SEED}
+    model_dtype: float32
+    type_names: ${CHEMICAL_SYMBOLS}
+    r_max: ${R_MAX}
+
+    l_max: ${L_MAX}
+    parity_setting: o3_full
+    num_layers: ${NUM_LAYERS}
+    num_scalar_features: ${NUM_SCALAR}
+    num_tensor_features: ${NUM_TENSOR}
+    tp_path_channel_coupling: false
+    allegro_mlp_hidden_layers_depth: ${MLP_DEPTH}
+    allegro_mlp_hidden_layers_width: ${MLP_WIDTH}
+
+    # average number of neighbors for edge sum normalization
+    avg_num_neighbors: ${training_data_stats:num_neighbors_mean}
+
+    # == per-type per-atom scales and shifts ==
+    per_type_energy_shifts: ${training_data_stats:per_atom_energy_mean}
+    per_type_energy_scales: ${training_data_stats:forces_rms}
+    per_type_energy_scales_trainable: false
+    per_type_energy_shifts_trainable: false
+
+    pair_potential:
+      _target_: nequip.nn.pair_potential.ZBL
+      units: metal
+      chemical_species: ${CHEMICAL_SYMBOLS}
+
+global_options:
+  allow_tf32: false

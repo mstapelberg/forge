@@ -172,13 +172,13 @@ def _get_vasp_structures(db_manager) -> List[int]:
             SELECT DISTINCT s.structure_id 
             FROM structures s
             JOIN calculations c ON s.structure_id = c.structure_id
-            WHERE c.model_type LIKE 'vasp%'
+            WHERE c.calculator LIKE 'vasp%'
             AND c.energy IS NOT NULL
             AND c.forces IS NOT NULL
             AND c.stress IS NOT NULL
         """
         # AND c.metadata->>'status' = 'completed'
-        print(f"Executing query: {query}")  # Debug
+        #print(f"Executing query: {query}")  # Debug
         cur.execute(query)
         structures = [row[0] for row in cur.fetchall()]
         print(f"Found {len(structures)} structures")  # Debug

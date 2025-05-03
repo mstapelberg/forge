@@ -973,6 +973,8 @@ class DatabaseManager:
         except Exception as e:
             print(f"[ERROR] Failed to retrieve structures batch: {e}")
             # Optionally re-raise or return partial results depending on desired behavior
+            if self.conn: # Check if connection exists before rolling back
+                 self.conn.rollback()
             raise # Re-raise by default
 
         return atoms_map
@@ -1203,6 +1205,8 @@ class DatabaseManager:
                 results = [row[0] for row in cur.fetchall()]
         except psycopg2.Error as e:
             print(f"[ERROR] Failed to find structures by metadata: {e}")
+            if self.conn: # Check if connection exists before rolling back
+                 self.conn.rollback()
             raise
 
         if debug:

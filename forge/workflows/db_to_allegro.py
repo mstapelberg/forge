@@ -324,7 +324,7 @@ def prepare_allegro_job(
     if chemical_symbols is None or not chemical_symbols: # Final check
         logger.error(f"[{job_name}] Chemical symbols could not be determined. Cannot generate valid Allegro config.")
         # Return structure IDs if generated, otherwise empty dict
-        return saved_structure_ids if not is_hpo_mode else {}
+        raise ValueError(f"[{job_name}] Chemical symbols could not be determined. Cannot generate valid Allegro config.")
 
     # Defaults for schedule and loss
     effective_schedule = schedule if schedule is not None else {

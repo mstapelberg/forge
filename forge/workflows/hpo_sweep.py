@@ -17,7 +17,7 @@ from forge.workflows.db_to_mace import _get_vasp_structures, _save_structures_to
 from forge.workflows.db_to_allegro import prepare_allegro_job # Keep this import for now
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+#logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # --- REMOVED Helper function to guess training command ---
@@ -409,6 +409,7 @@ def run_hpo_sweep(
                 run_params_specific.pop('slurm_cpus_per_gpu', None)
                 run_params_specific.pop('slurm_output', None)
                 run_params_specific.pop('slurm_error', None)
+                run_params_specific.pop('gpu_config', None)
                 # Need to keep gpu_config for resource allocation in SLURM script
 
                 # --- Call prepare_job function ---

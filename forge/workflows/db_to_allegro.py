@@ -175,6 +175,7 @@ def prepare_allegro_job(
         ValueError: If invalid arguments are provided for the chosen mode.
         FileNotFoundError: If data files/dirs are missing in HPO mode.
     """
+    logger.debug(f"[{job_name}] Entered prepare_allegro_job")
     job_dir = Path(job_dir)
     job_data_dir = job_dir / "data" # Target directory for data if splitting internally
     job_dir.mkdir(parents=True, exist_ok=True) # Ensure job_dir exists for config.yaml

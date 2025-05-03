@@ -8,9 +8,9 @@ job_name: ${JOB_NAME}
 
 data:
   _target_: nequip.data.datamodule.ASEDataModule
-  train_file_path: data/${JOB_NAME}_train.xyz
-  val_file_path:   data/${JOB_NAME}_val.xyz
-  test_file_path:  data/${JOB_NAME}_test.xyz
+  train_file_path: data/${DATA_PREFIX}_train.xyz
+  val_file_path:   data/${DATA_PREFIX}_val.xyz
+  test_file_path:  data/${DATA_PREFIX}_test.xyz
 
   ase_args:
     format: extxyz
@@ -98,6 +98,17 @@ training_module:
     model_dtype: float32
     type_names: ${CHEMICAL_SYMBOLS}
     r_max: ${R_MAX}
+
+    scalar_embed:
+      # classic option is the Bessel scalar embedding module
+      _target_: allegro.nn.TwoBodyBesselScalarEmbed
+      num_bessels: 8
+      bessel_trainable: false
+      polynomial_cutoff_p: 6
+      two_body_embedding_dim: 32
+      two_body_mlp_hidden_layers_depth: 2
+      two_body_mlp_hidden_layers_width: 64
+      two_body_mlp_nonlinearity: silu
 
     l_max: ${L_MAX}
     parity_setting: o3_full

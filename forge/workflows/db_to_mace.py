@@ -8,73 +8,29 @@ from ase.io import write
 import shutil
 import math
 import logging # Add logging
+import yaml # <-- Add PyYAML import
 from forge.core.database import DatabaseManager  # Add this import
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-class GPUConfig(TypedDict):
-    count: int
-    type: str
-
-def _create_symlink_if_needed(link_name: Path, target_file: Path):
-    """Creates or corrects a relative symlink.
-
-    Args:
-        link_name: The path where the symlink should be created.
-        target_file: The path to the actual data file.
-    """
-    target_file = target_file.resolve()
-    link_name = link_name.resolve() # Resolve link path itself
-    link_dir = link_name.parent
-
-    if not target_file.exists():
-        raise FileNotFoundError(f"Symlink target does not exist: {target_file}")
-
-    try:
-        rel_path = os.path.relpath(target_file, link_dir)
-    except ValueError:
-        # Fallback for different drives (Windows)
-        rel_path = str(target_file)
-
-    link_exists = link_name.exists()
-    is_correct_link = False
-    if link_name.is_symlink():
-        try:
-            current_target_str = os.readlink(link_name)
-            # Resolve current target relative to link directory
-            current_target_path = (link_dir / current_target_str).resolve()
-            if current_target_path == target_file:
-                is_correct_link = True
-            else:
-                logger.warning(f"Symlink {link_name.name} points incorrectly. Target: {current_target_path}, Expected: {target_file}")
-        except OSError as e:
-            logger.warning(f"Could not read existing symlink {link_name.name}: {e}")
-
-    if not is_correct_link:
-        if link_exists:
-            logger.warning(f"Removing existing file/link at {link_name.name} to create correct symlink.")
-            link_name.unlink(missing_ok=True)
-        try:
-            os.symlink(rel_path, link_name, target_is_directory=False)
-            logger.info(f"  Created symlink: {link_name.name} -> {rel_path}")
-        except OSError as e:
-            logger.error(f"Failed to create symlink {link_name.name}: {e}", exc_info=True)
-            raise # Re-raise after logging
-
 def prepare_mace_job(
     db_manager: DatabaseManager,
-    job_name: str,
+    job_name: str, # Unique name for this run, also used as base for file names
     job_dir: Union[str, Path],
-    gpu_config: GPUConfig = {"count": 1, "type": "rtx6000"},
+    # --- Arguments for HPO/Pre-split Mode ---
+    data_train_path: Optional[Union[str, Path]] = None,
+    data_val_path: Optional[Union[str, Path]] = None,
+    data_test_path: Optional[Union[str, Path]] = None,
+    # --- Arguments for Standalone Mode (ignored if data paths provided) ---
     structure_ids: Optional[List[int]] = None,
     num_structures: Optional[int] = None,
-    train_ratio: Optional[float] = None, # Made optional for pre-split case
-    val_ratio: Optional[float] = None,   # Made optional for pre-split case
-    test_ratio: Optional[float] = None,  # Made optional for pre-split case
-    e0s: str = "default",
+    train_ratio: Optional[float] = None,
+    val_ratio: Optional[float] = None,
+    test_ratio: Optional[float] = None,
+    # --- MACE Hyperparameters (used in config.yaml) ---
+    e0s: str = "default", # E0s mode ("default", "average") or JSON string
     seed: int = 42,
-    num_ensemble: Optional[int] = None,
     num_interactions: int = 2,
     num_channels: int = 128,
     max_L: int = 0,
@@ -83,131 +39,124 @@ def prepare_mace_job(
     forces_weight: float = 50.0,
     energy_weight: float = 1.0,
     stress_weight: float = 25.0,
-    base_name: Optional[str] = None, # DEPRECATED? MACE script uses base_name for data paths
-    external_data_source_dir: Optional[Union[str, Path]] = None # New parameter
+    # --- Removed Parameters ---
+    # gpu_config removed (handled by runner/SLURM)
+    # num_ensemble removed (handled by HPO script)
+    # base_name removed (using job_name)
+    # external_data_source_dir removed
 ) -> Dict[str, List[int]]:
     """
-    Prepare a MACE training job from database structures.
-    Handles standard splitting, using pre-split data found in job_dir/data,
-    or using externally prepared data (via symlinks).
+    Prepare MACE training config (config.yaml) from database or pre-split data.
+
+    Operates in two modes:
+    1. HPO Mode: If `data_train_path` is provided, uses the given absolute paths
+       to generate `config.yaml`. Ignores `seed`, `num_structures`,
+       `structure_ids`, `*_ratio`.
+    2. Standalone Mode: If `data_train_path` is None, performs structure
+       selection, splitting, saving to `job_dir/data/`, and property replacement.
+       Uses relative paths in `config.yaml`. Requires `num_structures` or
+       `structure_ids`, and `*_ratio`.
 
     Args:
         db_manager: DatabaseManager instance for accessing structure data
-        job_name: Name for the training job (used as unique identifier for this run)
-        job_dir: Directory to create job in
-        gpu_config: GPU configuration with count and type
-        structure_ids: Optional list of specific structure IDs to use (if not pre-split)
-        num_structures: Optional number of random structures to select (if not pre-split)
-        train_ratio: Fraction for training (required if not pre-split and no external source)
-        val_ratio: Fraction for validation (required if not pre-split and no external source)
-        test_ratio: Fraction for testing (required if not pre-split and no external source)
-        e0s: "default" or "average" for E0 configuration.
-        seed: Random seed for structure selection/splitting (if not pre-split) and training.
-        num_ensemble: Optional number of ensemble models to create (uses job_name as base)
-        num_interactions: MACE num_interactions parameter
-        num_channels: MACE num_channels parameter
-        max_L: MACE max_L parameter
-        r_max: MACE r_max parameter
-        lr: MACE learning rate
-        forces_weight: MACE forces_weight parameter
-        energy_weight: MACE energy_weight parameter
-        stress_weight: MACE stress_weight parameter
-        base_name: Base name for generated MACE data files IF splitting internally.
-                   If None, defaults to job_name.
-                   If external_data_source_dir is used, this is ignored for file splitting
-                   but is still used in the generated training script (template needs ${BASE_NAME}).
-        external_data_source_dir: Optional path to a directory containing pre-split
-                                  'train.xyz', 'val.xyz', 'test.xyz', and
-                                  'structure_splits.json'. If provided, symlinks
-                                  will be created in job_dir/data.
+        job_name: Name for the training job (used as unique identifier and file base name)
+        job_dir: Directory to create job in (config.yaml is saved here).
+        data_train_path: Absolute path to pre-generated training data (HPO mode).
+        data_val_path: Absolute path to pre-generated validation data (HPO mode).
+        data_test_path: Absolute path to pre-generated test data (HPO mode).
+        structure_ids: Optional list of specific structure IDs to use (standalone mode).
+        num_structures: Optional number of random structures to select (standalone mode).
+        train_ratio: Fraction for training (standalone mode).
+        val_ratio: Fraction for validation (standalone mode).
+        test_ratio: Fraction for testing (standalone mode).
+        e0s: "default", "average", or a JSON string representing the E0s dictionary.
+        seed: Random seed for standalone structure selection/splitting and training.
+        num_interactions: MACE num_interactions parameter.
+        num_channels: MACE num_channels parameter.
+        max_L: MACE max_L parameter.
+        r_max: MACE r_max parameter.
+        lr: MACE learning rate.
+        forces_weight: MACE forces_weight parameter.
+        energy_weight: MACE energy_weight parameter.
+        stress_weight: MACE stress_weight parameter.
 
     Returns:
         Dict mapping 'train', 'val', 'test' to lists of structure_ids used.
-        Returns IDs from pre-split file if data exists, otherwise from new split.
+        Returns IDs from `structure_splits.json` if run in standalone mode.
+        Returns empty dict if run in HPO mode (IDs are handled by HPO script).
 
     Raises:
-        ValueError: If invalid arguments are provided
-        FileNotFoundError: If external_data_source_dir or its contents are missing.
+        ValueError: If invalid arguments are provided for the chosen mode.
+        FileNotFoundError: If data files/dirs are missing in HPO mode.
+        IOError: If config.yaml generation fails.
     """
     job_dir = Path(job_dir)
-    job_data_dir = job_dir / "data" # Target directory for data/symlinks for this run
-    job_data_dir.mkdir(parents=True, exist_ok=True)
+    job_data_dir = job_dir / "data" # Target directory for data if splitting internally
+    job_dir.mkdir(parents=True, exist_ok=True) # Ensure job_dir exists for config.yaml
 
-    # Determine base name for internal splitting / script generation
-    script_base_name = base_name if base_name is not None else job_name
+    # Use job_name as the base name for files generated in standalone mode
+    file_base_name = job_name
 
     saved_structure_ids: Dict[str, List[int]] = {'train': [], 'val': [], 'test': []}
-    data_prep_skipped = False
+    config_data_train_path: str = ""
+    config_data_val_path: str = ""
+    config_data_test_path: str = ""
+    is_hpo_mode = data_train_path is not None
 
-    # --- Data Handling Strategy ---
-    if external_data_source_dir:
-        # Strategy 1: Use externally provided data via symlinks
-        external_data_path = Path(external_data_source_dir)
-        logger.info(f"[{job_name}] Using external data source: {external_data_path}")
-        if not external_data_path.is_dir():
-            raise FileNotFoundError(f"External data source directory not found: {external_data_path}")
+    if is_hpo_mode:
+        # --- HPO Mode ---
+        logger.info(f"[{job_name}] Running in HPO mode. Using provided data paths.")
+        if not data_val_path or not data_test_path:
+            raise ValueError("In HPO mode, data_train_path, data_val_path, and data_test_path must all be provided.")
 
-        external_splits_json = external_data_path / "structure_splits.json"
-        if not external_splits_json.exists():
-             raise FileNotFoundError(f"structure_splits.json not found in external source: {external_splits_json}")
+        data_train_path = Path(data_train_path)
+        data_val_path = Path(data_val_path)
+        data_test_path = Path(data_test_path)
 
-        try:
-            with open(external_splits_json, 'r') as f:
-                saved_structure_ids = json.load(f)
-            logger.info(f"[{job_name}] Loaded structure IDs from {external_splits_json}")
-        except Exception as e:
-            raise IOError(f"Failed to read {external_splits_json}: {e}") from e
+        if not data_train_path.exists(): raise FileNotFoundError(f"Provided train data not found: {data_train_path}")
+        if not data_val_path.exists(): raise FileNotFoundError(f"Provided validation data not found: {data_val_path}")
+        if not data_test_path.exists() and data_test_path.stat().st_size > 0:
+            logger.warning(f"Provided test data not found: {data_test_path}")
 
-        # Create relative symlinks in job_data_dir pointing to external files
-        # MACE script template uses ${BASE_NAME} for data files, so links need that name.
-        for split in ["train", "val", "test"]:
-            src_file = external_data_path / f"{split}.xyz" # Generic name in source dir
-            link_name = job_data_dir / f"{script_base_name}_{split}.xyz" # Name expected by script
-            _create_symlink_if_needed(link_name, src_file)
+        # Use absolute paths in config for HPO mode
+        config_data_train_path = str(data_train_path.resolve())
+        config_data_val_path = str(data_val_path.resolve())
+        config_data_test_path = str(data_test_path.resolve())
 
-        data_prep_skipped = True
+        # No data splitting or property replacement needed in HPO mode
 
     else:
-        # Strategy 2: Check for pre-existing data in job_data_dir (standard HPO non-kfold)
-        # Check for files named according to script_base_name
-        train_file = job_data_dir / f"{script_base_name}_train.xyz"
-        val_file = job_data_dir / f"{script_base_name}_val.xyz"
-        test_file = job_data_dir / f"{script_base_name}_test.xyz"
-        splits_json_file = job_dir / "structure_splits.json" # JSON is always in job_dir
+        # --- Standalone Mode ---
+        logger.info(f"[{job_name}] Running in Standalone mode. Preparing data in {job_dir}.")
+        job_data_dir.mkdir(parents=True, exist_ok=True) # Ensure data subdir exists
 
-        if train_file.exists() and val_file.exists() and test_file.exists():
-            logger.info(f"[{job_name}] Found existing data files (named {script_base_name}_...) in {job_data_dir}. Skipping data preparation.")
-            data_prep_skipped = True
-            if splits_json_file.exists():
-                try:
-                    with open(splits_json_file, 'r') as f:
-                        saved_structure_ids = json.load(f)
-                    logger.info(f"[{job_name}] Loaded structure IDs from {splits_json_file}")
-                except Exception as e:
-                    logger.warning(f"Failed to load {splits_json_file}: {e}. Returning empty dict.")
-                    saved_structure_ids = {'train': [], 'val': [], 'test': []}
-            else:
-                 logger.warning(f"Pre-split data files found, but {splits_json_file} is missing. Cannot return structure IDs.")
-                 saved_structure_ids = {'train': [], 'val': [], 'test': []}
-
-    # Strategy 3: If no external source and no pre-existing files, perform splitting
-    if not data_prep_skipped:
-        logger.info(f"[{job_name}] Data not found. Proceeding with standard data preparation.")
-        # --- Original Data Prep Logic ---
         # Validate input arguments for splitting
-        assert isinstance(job_name, str), "job_name must be a string"
         if train_ratio is None or val_ratio is None or test_ratio is None:
-            raise ValueError("train_ratio, val_ratio, and test_ratio must be provided when data is not pre-split and no external source is given.")
-        assert isinstance(train_ratio + val_ratio + test_ratio, float), "Ratios must be floats"
-        assert 0.99 <= train_ratio + val_ratio + test_ratio <= 1.01, "Ratios must sum to ~1"
-        assert all(0 <= r <= 1 for r in [train_ratio, val_ratio, test_ratio]), "Ratios must be between 0 and 1"
-        assert e0s in ["default", "average"], "e0s must be 'default' or 'average'"
+            raise ValueError("train_ratio, val_ratio, and test_ratio must be provided in standalone mode.")
+        if not isinstance(train_ratio + val_ratio + test_ratio, float):
+             raise ValueError("Ratios must be floats")
+        if not (0.99 <= train_ratio + val_ratio + test_ratio <= 1.01):
+            # Normalize ratios if they don't sum to 1
+            logger.warning(f"Provided train/val/test ratios sum to {train_ratio + val_ratio + test_ratio}. Normalizing.")
+            total_ratio = train_ratio + val_ratio + test_ratio
+            train_ratio /= total_ratio
+            val_ratio /= total_ratio
+            test_ratio /= total_ratio
+
+        if e0s not in ["default", "average"]:
+            try:
+                # Check if it's a valid JSON string representing a dictionary
+                e0s_dict = json.loads(e0s)
+                if not isinstance(e0s_dict, dict):
+                     raise ValueError("e0s string must be a valid JSON dictionary if not 'default' or 'average'.")
+            except json.JSONDecodeError:
+                 raise ValueError("e0s string must be 'default', 'average', or a valid JSON dictionary string.")
 
         # Validate structure selection arguments
         if structure_ids is not None and num_structures is not None:
             raise ValueError("Cannot specify both structure_ids and num_structures")
         if structure_ids is None and num_structures is None:
-            raise ValueError("Must specify either structure_ids or num_structures when data is not pre-split")
+            raise ValueError("Must specify either structure_ids or num_structures in standalone mode")
 
         # Get structure IDs
         final_structure_ids: List[int]
@@ -215,21 +164,26 @@ def prepare_mace_job(
             final_structure_ids = structure_ids
         else:
             assert num_structures is not None  # Help type checker
+            logger.info(f"Fetching up to {num_structures} structures...")
             all_structures = _get_vasp_structures(db_manager)
             if len(all_structures) < num_structures:
-                raise ValueError(
-                    f"Not enough structures in database. "
-                    f"Requested {num_structures}, but only found {len(all_structures)}"
-                )
-            random.seed(seed) # Use provided seed for sampling
-            final_structure_ids = random.sample(all_structures, num_structures)
+                 logger.warning(f"Requested {num_structures} structures, but only {len(all_structures)} found. Using all available.")
+                 final_structure_ids = all_structures
+            else:
+                 random.seed(seed) # Use provided seed for sampling
+                 final_structure_ids = random.sample(all_structures, num_structures)
+            logger.info(f"Selected {len(final_structure_ids)} structures.")
 
-        # Prepare data splits (using script_base_name for filenames)
+        if not final_structure_ids:
+             raise ValueError("No structures selected for standalone run. Cannot proceed.")
+
+        # Prepare data splits (using file_base_name for filenames)
         # Saves xyz into job_data_dir and json into job_dir
+        # _prepare_structure_splits also handles _replace_properties now
         saved_structure_ids = _prepare_structure_splits(
             db_manager=db_manager,
             structure_ids=final_structure_ids,
-            job_name=script_base_name, # Use base name for file naming
+            job_name=file_base_name, # Use base name for file naming
             job_dir=job_dir, # For json file location
             data_dir=job_data_dir, # For xyz file location
             train_ratio=train_ratio,
@@ -237,68 +191,130 @@ def prepare_mace_job(
             test_ratio=test_ratio,
             seed=seed # Use provided seed for splitting
         )
-        # --- End of Original Data Prep Logic ---
 
-    # --- Script Generation (runs regardless of data prep method) ---
-    logger.info(f"[{job_name}] Generating training script(s)...")
-    if num_ensemble is None:
-        # Single model case
-        _create_training_script(
-            job_dir=job_dir,
-            job_name=job_name, # Use the unique run name for the script/job
-            base_name=script_base_name, # Use script_base_name for data file reference
-            gpu_config=gpu_config,
-            e0s=e0s,
-            seed=seed, # Use the specific seed for this run
-            num_interactions=num_interactions,
-            num_channels=num_channels,
-            max_L=max_L,
-            r_max=r_max,
-            lr=lr,
-            forces_weight=forces_weight,
-            energy_weight=energy_weight,
-            stress_weight=stress_weight
-        )
+        # Define relative paths for config.yaml
+        train_file_rel = f"data/{file_base_name}_train.xyz"
+        val_file_rel = f"data/{file_base_name}_val.xyz"
+        test_file_rel = f"data/{file_base_name}_test.xyz"
+
+        # Check if files were created before setting paths
+        if (job_dir / train_file_rel).exists():
+            config_data_train_path = train_file_rel
+        else:
+            logger.error(f"Training file {train_file_rel} was not created successfully.")
+            raise FileNotFoundError(f"Training file {train_file_rel} failed to generate.")
+
+        if (job_dir / val_file_rel).exists():
+            config_data_val_path = val_file_rel
+        else:
+             logger.error(f"Validation file {val_file_rel} was not created successfully.")
+             raise FileNotFoundError(f"Validation file {val_file_rel} failed to generate.")
+
+        if (job_dir / test_file_rel).exists():
+             config_data_test_path = test_file_rel
+        else:
+             logger.warning(f"Test file {test_file_rel} was not created (might be intended if test_ratio was 0).")
+             config_data_test_path = test_file_rel # Still add path to config
+
+    # --- Generate config.yaml --- 
+    logger.info(f"[{job_name}] Generating config.yaml...")
+
+    # Handle E0s formatting for YAML
+    final_e0s: Union[str, Dict[int, float]]
+    if e0s == "average":
+        final_e0s = "average"
+    elif e0s == "default":
+        # Use the hardcoded default dict
+        final_e0s = {22: -2.15203187, 23: -3.55411419, 24: -5.42767241, 40: -2.3361286, 74: -4.55186158}
     else:
-         # Create multiple models with different seeds
-        if data_prep_skipped:
-             logger.warning(f"[{job_name}] num_ensemble > 1 requested, but data was prepared externally or existed. "
-                   "All ensemble members will use the same data. Only the training seed will differ.")
+        # Assume e0s is a valid JSON string, parse it into a dict
+        try:
+            final_e0s = json.loads(e0s)
+            # Ensure keys are integers if possible (MACE might prefer this)
+            final_e0s = {int(k): v for k, v in final_e0s.items()}
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Failed to parse provided e0s JSON string '{e0s}': {e}. Using default.")
+            final_e0s = {22: -2.15203187, 23: -3.55411419, 24: -5.42767241, 40: -2.3361286, 74: -4.55186158}
 
-        for model_idx in range(num_ensemble):
-            # Generate unique job name for ensemble member, but use the same base name for data reference
-            model_job_name = f"{job_name}_ensemble_{model_idx}"
-            model_seed = seed + model_idx # Ensure different training seed for each member
-            _create_training_script(
-                job_dir=job_dir, # Still in the same run directory
-                job_name=model_job_name, # Unique name for this script/job
-                base_name=script_base_name, # Base name for data file reference (symlinks/files)
-                gpu_config=gpu_config,
-                e0s=e0s,
-                seed=model_seed, # Use ensemble-specific seed
-                num_interactions=num_interactions,
-                num_channels=num_channels,
-                max_L=max_L,
-                r_max=r_max,
-                lr=lr,
-                forces_weight=forces_weight,
-                energy_weight=energy_weight,
-                stress_weight=stress_weight
-            )
-            logger.warning(f"[{job_name}] Ensemble script generation for MACE needs review. Ensure template/MACE handles ensemble correctly.")
+    # Build the config dictionary
+    config = {
+        # MACE specific keys (refer to mace_run_train documentation)
+        'name': job_name, # Model name / run name
+        'seed': seed,
+        'train_file': config_data_train_path,
+        'valid_file': config_data_val_path,
+        'test_file': config_data_test_path,
+        'E0s': final_e0s,
+        'r_max': r_max,
+        'num_interactions': num_interactions,
+        'num_hidden_layers': num_interactions, # Often tied? Check MACE docs. Assume equal for now.
+        'hidden_irreps': f'{num_channels}x0e', # Example format, adjust based on max_L etc.
+        'max_L': max_L,
+        'correlation': 3, # Common default
+        'error_table': 'PerAtomRMSE', # Common default
+        'default_dtype': 'float64', # Common default
 
+        # Training parameters
+        'lr': lr,
+        'batch_size': 10, # Example default, maybe make configurable?
+        'valid_batch_size': 10, # Example default
+        'max_num_epochs': 500, # Example default, maybe make configurable?
+        'patience': 50, # Example default
+        'eval_interval': 1, # Example default
+        'loss': 'weighted', # Common default for energy/forces/stress
+        'energy_weight': energy_weight,
+        'forces_weight': forces_weight,
+        'stress_weight': stress_weight,
 
-    return saved_structure_ids # Return the structure IDs (either loaded or newly generated)
+        # Logging
+        'log_dir': './logs', # Relative to job_dir
+        'wandb': True,
+        'wandb_project': 'mace-forge', # Example project name, maybe make configurable?
+        'wandb_name': job_name, # Use unique run name
+        'wandb_log_hypers': ['num_interactions', 'num_channels', 'max_L', 'lr', 'forces_weight'], # Example
+
+        # Add other MACE parameters as needed based on mace_run_train
+        # 'model': 'MACE', # Usually inferred?
+        # 'swa': None, # Stochastic Weight Averaging config
+        # 'ema': None, # Exponential Moving Average config
+        # 'scheduler': 'ReduceLROnPlateau', # Example
+        # 'lr_factor': 0.8, # Example
+        # 'scheduler_patience': 20, # Example
+    }
+
+    # Adjust hidden_irreps based on max_L if necessary (needs MACE expertise)
+    if max_L == 0:
+        config['hidden_irreps'] = f'{num_channels}x0e'
+    elif max_L == 1:
+        config['hidden_irreps'] = f'{num_channels}x0e + {num_channels}x1o' # Example
+    else:
+        # Placeholder for higher L, adjust based on MACE documentation
+        config['hidden_irreps'] = f'{num_channels}x0e + {num_channels}x1o + ...'
+        logger.warning(f"Hidden irreps format for max_L={max_L} needs verification.")
+
+    # --- Write YAML ---
+    yaml_path = job_dir / "config.yaml"
+    try:
+        # Use default_flow_style=False for a more readable block format
+        with open(yaml_path, 'w') as f:
+            yaml.dump(config, f, indent=2, default_flow_style=False, sort_keys=False)
+        logger.info(f"[{job_name}] Successfully generated {yaml_path}")
+    except Exception as e:
+        logger.error(f"Failed to write config.yaml for {job_name}: {e}", exc_info=True)
+        raise IOError(f"Failed to write config.yaml: {e}") from e
+
+    # Return structure IDs only if generated in standalone mode
+    return saved_structure_ids if not is_hpo_mode else {}
 
 def _get_vasp_structures(db_manager) -> List[int]:
     """Get all structures with complete VASP calculations."""
     # Find structures with VASP calculations
     structures = []
-    
+
     # Query for structures with completed VASP calculations
     with db_manager.conn.cursor() as cur:
         query = """
-            SELECT DISTINCT s.structure_id 
+            SELECT DISTINCT s.structure_id
             FROM structures s
             JOIN calculations c ON s.structure_id = c.structure_id
             WHERE c.calculator LIKE 'vasp%'
@@ -311,7 +327,7 @@ def _get_vasp_structures(db_manager) -> List[int]:
         cur.execute(query)
         structures = [row[0] for row in cur.fetchall()]
         print(f"Found {len(structures)} structures")  # Debug
-    
+
     return structures
 
 def _split_structures(structures: List[int], ratios: List[int]) -> List[List[int]]:
@@ -319,15 +335,15 @@ def _split_structures(structures: List[int], ratios: List[int]) -> List[List[int
     total = len(structures)
     splits = []
     start = 0
-    
+
     for ratio in ratios[:-1]:  # Handle all but last split
         split_size = int(total * ratio)
         splits.append(structures[start:start + split_size])
         start += split_size
-    
+
     # Add remaining structures to last split
     splits.append(structures[start:])
-    
+
     return splits
 
 def _save_structures_to_xyz(
@@ -418,7 +434,7 @@ def _replace_properties(xyz_path: Path):
         'stress=': 'REF_stress=',
         ':forces:': ':REF_force:'
     }
-    
+
     # Check if file exists and is not empty before reading
     if not xyz_path.exists() or xyz_path.stat().st_size == 0:
         # print(f"[INFO] Skipping property replacement for non-existent or empty file: {xyz_path}")
@@ -452,88 +468,10 @@ def _replace_properties(xyz_path: Path):
         except Exception as e:
             print(f"[ERROR] Failed to write updated properties to {xyz_path}: {e}")
 
-
-def _create_training_script(
-    job_dir: Path,
-    job_name: str, # This is the specific run name (e.g., hpo_..._fold_..._seed)
-    base_name: str, # This is the name used for data files (e.g., hpo_... or original job name)
-    gpu_config: Dict,
-    e0s: str = "default",
-    seed: int = 42,
-    num_interactions: int = 2,
-    num_channels: int = 128,
-    max_L: int = 0,
-    r_max: float = 5.0,
-    lr: float = 0.001,
-    forces_weight: float = 50.0,
-    energy_weight: float = 1.0,
-    stress_weight: float = 25.0
-):
-    """Create MACE training script from template."""
-    template_path = Path(__file__).parent / "templates" / "mace_train_template.sh"
-
-    if not template_path.exists():
-        raise FileNotFoundError(f"Template file not found: {template_path}")
-
-    with open(template_path, 'r') as f:
-        template = f.read()
-
-    # Determine E0s string based on input
-    if e0s == "average":
-        e0s_str = "average"
-    else: # Default to the hardcoded string if not "average"
-        # Ensure the default string is valid JSON or the expected format
-        # Original was: '{22: -2.15203187, 23 : -3.55411419, 24 : -5.42767241, 40 : -2.3361286, 74 : -4.55186158}'
-        # Let's ensure keys are strings if needed by MACE
-        default_e0s_dict = {22: -2.15203187, 23 : -3.55411419, 24 : -5.42767241, 40 : -2.3361286, 74 : -4.55186158}
-        # MACE might expect a string representation of the dict. Check MACE docs.
-        # Assuming string representation is fine for now.
-        e0s_str = json.dumps(default_e0s_dict).replace(" ", "") # Compact JSON string
-
-
-    # Replace template variables using exact placeholder names from template
-    replacements = {
-        '${JOB_NAME}': job_name, # SBATCH job name (unique run name)
-        '${NTASKS_PER_NODE}': str(gpu_config['count']),
-        '${GPUS_PER_NODE}': str(gpu_config['count']),
-        '${GPU_TYPE}': gpu_config['type'],
-        '${RUN_NAME}': job_name, # MACE --name argument (unique run name)
-        '${NUM_INTERACTIONS}': str(num_interactions),
-        '${NUM_CHANNELS}': str(num_channels),
-        '${MAX_L}': str(max_L),
-        # Use the correctly formatted E0s string, ensure quotes if needed by shell
-        '${E0S_STR}': f"'{e0s_str}'", # Add quotes for shell interpretation
-        '${FORCES_WEIGHT}': str(forces_weight),
-        '${ENERGY_WEIGHT}': str(energy_weight),
-        '${STRESS_WEIGHT}': str(stress_weight),
-        '${R_MAX}': str(r_max),
-        '${LR}': str(lr),
-        '${BASE_NAME}': base_name, # Base name for data files (train/val/test paths)
-        '${SEED}': str(seed), # Use the specific training seed for this run
-        # WandB run name should also be the unique job name
-        '${WANDB_NAME}': job_name
-    }
-
-    script_content = template
-    for placeholder, value in replacements.items():
-        # Need to be careful with replacing placeholders within values, simple replace should be ok here
-        script_content = script_content.replace(placeholder, value)
-
-    # Write training script (using the unique job_name for the script file)
-    script_path = job_dir / f"{job_name}_train.sh"
-    try:
-        with open(script_path, 'w') as f:
-            f.write(script_content)
-        # Make script executable
-        script_path.chmod(0o755)
-    except Exception as e:
-        print(f"[ERROR] Failed to write or chmod script {script_path}: {e}")
-
-
 def _prepare_structure_splits(
     db_manager,
     structure_ids: List[int],
-    job_name: str, # Should be the base_name used for filenames
+    job_name: str, # Base name used for filenames
     job_dir: Path, # The specific run directory for saving splits.json
     data_dir: Path, # The data directory (e.g., run_dir/data)
     train_ratio: float,
@@ -541,31 +479,22 @@ def _prepare_structure_splits(
     test_ratio: float,
     seed: int
 ) -> Dict[str, List[int]]:
-    """Prepare structure splits for training, validation, and testing."""
+    """Prepare structure splits, save to XYZ, run property replacement, and save ID map."""
     total = len(structure_ids)
-    # Ensure ratios sum close to 1
+    # Ensure ratios sum close to 1 (copied logic from prepare_mace_job)
     if not (0.99 <= train_ratio + val_ratio + test_ratio <= 1.01):
-         print(f"[Warning] Ratios sum to {train_ratio + val_ratio + test_ratio}. Adjusting test ratio.")
-         test_ratio = 1.0 - train_ratio - val_ratio
-         if test_ratio < 0: test_ratio = 0 # Avoid negative test ratio
+         logger.warning(f"Ratios sum to {train_ratio + val_ratio + test_ratio}. Normalizing.")
+         total_ratio = train_ratio + val_ratio + test_ratio
+         train_ratio /= total_ratio
+         val_ratio /= total_ratio
+         test_ratio /= total_ratio
 
-    val_size = math.ceil(total * val_ratio)
-    # Calculate test_size carefully to avoid exceeding total when combined with val_size
-    test_size = math.ceil(total * test_ratio)
-    if val_size + test_size > total:
-        # Prioritize validation set size, reduce test set size
-        test_size = total - val_size
-        if test_size < 0: test_size = 0 # Ensure non-negative
+    # Calculate sizes (use floor for train/val, remainder for test - matches hpo_sweep logic)
+    train_size = math.floor(total * train_ratio)
+    val_size = math.floor(total * val_ratio)
+    test_size = total - train_size - val_size # Remainder is test
 
-    train_size = total - val_size - test_size
-    if train_size < 0: train_size = 0 # Ensure non-negative
-
-    # Adjust sizes slightly if rounding caused total mismatch, prioritize train size
-    current_total = train_size + val_size + test_size
-    diff = total - current_total
-    train_size += diff # Add/remove difference from train set
-
-    print(f"Splitting {total} structures into: {train_size} train, {val_size} val, {test_size} test (using seed {seed})")
+    logger.info(f"Splitting {total} structures into: {train_size} train, {val_size} val, {test_size} test (using seed {seed})")
 
     # Shuffle and split structures
     random.seed(seed)
@@ -584,67 +513,52 @@ def _prepare_structure_splits(
     }
 
     # Save structure splits to xyz files and track saved IDs
-    saved_structure_ids = {}
+    saved_structure_ids_actual = {} # Track IDs actually saved
     any_save_failed = False
     for split_name, struct_list in split_mapping.items():
-        # Use job_name (which is the base_name) for the xyz filenames
+        # Use job_name (base_name) for the xyz filenames
         xyz_path = data_dir / f"{job_name}_{split_name}.xyz"
-        # print(f"\nProcessing {split_name} split with {len(struct_list)} structures for {xyz_path}") # Verbose
+        logger.info(f"  Saving {len(struct_list)} {split_name} structures to {xyz_path}...")
         saved_ids = _save_structures_to_xyz(db_manager, struct_list, xyz_path)
-        saved_structure_ids[split_name] = saved_ids
+        saved_structure_ids_actual[split_name] = saved_ids
 
         # Check if saving actually worked as expected (simple length check)
         if len(saved_ids) != len(struct_list):
-             print(f"[Warning] Mismatch in saved {split_name} IDs: requested {len(struct_list)}, saved {len(saved_ids)}.")
-             # Decide if this is critical? Maybe allow continuation but warn.
+             logger.warning(f"Mismatch in saved {split_name} IDs: requested {len(struct_list)}, saved {len(saved_ids)}.")
+             # Don't mark as failed, but log is important
 
         # Run property replacement script only if file seems valid
         if xyz_path.exists() and xyz_path.stat().st_size > 0:
              try:
+                 logger.info(f"    Running property replacement on {xyz_path.name}...")
                  _replace_properties(xyz_path)
              except Exception as e:
-                 print(f"[ERROR] Failed replacing properties in {xyz_path}: {e}")
-                 any_save_failed = True # Treat property replacement failure seriously?
+                 logger.error(f"    Failed replacing properties in {xyz_path}: {e}", exc_info=True)
+                 any_save_failed = True
+        elif not xyz_path.exists():
+             logger.warning(f"    Skipping property replacement: {xyz_path.name} does not exist.")
+             if struct_list: # If we expected structures, this is an error
+                 any_save_failed = True
+        else: # File exists but is empty
+            logger.info(f"    Skipping property replacement: {xyz_path.name} is empty.")
+
 
     # Save structure ID mapping (in the specific run's job_dir)
+    # Save the *intended* split mapping, as this is what the config generation used
     splits_json_path = job_dir / "structure_splits.json"
     try:
         with open(splits_json_path, 'w') as f:
-            json.dump(saved_structure_ids, f, indent=2)
+            # Save the intended split (split_mapping), not necessarily what was successfully written (saved_structure_ids_actual)
+            json.dump(split_mapping, f, indent=2)
+        logger.info(f"  Saved intended structure ID splits to {splits_json_path}")
     except Exception as e:
-        print(f"[ERROR] Failed to save structure splits mapping to {splits_json_path}: {e}")
+        logger.error(f"Failed to save structure splits mapping to {splits_json_path}: {e}", exc_info=True)
         any_save_failed = True
 
     if any_save_failed:
-         print(f"[Warning] Issues encountered during data splitting/saving for {job_name}. Check logs.")
+         logger.error(f"Issues encountered during data splitting/saving/property replacement for {job_name}. Check logs.")
+         # Decide whether to raise an error here or let the caller handle potentially missing files
+         # raise IOError(f"Data preparation failed for {job_name}")
 
-    # Return the mapping of split name to the list of IDs *intended* for that split,
-    # even if saving failed for some, as the caller might need the intended list.
-    # The saved_structure_ids dict contains IDs actually saved. Maybe return that instead?
-    # Let's return the intended split_mapping, as that's what downstream might expect.
-    # The warnings should indicate if saving failed.
+    # Return the mapping of split name to the list of IDs *intended* for that split
     return split_mapping
-
-
-def _create_single_model(
-    job_name: str,
-    job_dir: Path,
-    data_dir: Path,
-    structure_splits: Dict[str, List[int]],
-    gpu_config: Dict,
-    e0s: str = "default"
-) -> List[int]:
-    """Create a single MACE model training script and return saved structure IDs."""
-    # This function seems deprecated by the logic integrated into prepare_mace_job
-    # Let's comment it out or remove it.
-    raise DeprecationWarning("_create_single_model is likely deprecated, use prepare_mace_job directly.")
-    # # Create training script
-    # _create_training_script(
-    #     job_dir=job_dir,
-    #     job_name=job_name,
-    #     base_name=job_name, # Assume base_name is job_name here
-    #     gpu_config=gpu_config,
-    #     e0s=e0s
-    #     # Need to pass other MACE params here... this function is incomplete
-    # )
-    # return structure_splits['train'] # Returning only train seems wrong too

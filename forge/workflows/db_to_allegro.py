@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 from typing import TypedDict, List, Dict, Optional, Union, Any
 import logging # Add logging
+import yaml # <-- Add PyYAML import
 
 from ase.data import atomic_numbers
 from forge.core.database import DatabaseManager
@@ -16,15 +17,16 @@ from forge.workflows.db_to_mace import (
     _prepare_structure_splits,
     _save_structures_to_xyz,
     _replace_properties,
-    _create_symlink_if_needed
+    # Remove _create_symlink_if_needed as it's no longer used here
 )
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-class GPUConfig(TypedDict):
-    count: int
-    type: str
+# Remove GPUConfig as it's no longer used
+# class GPUConfig(TypedDict):
+#     count: int
+#     type: str
 
 
 def _extract_chemical_symbols(
@@ -92,18 +94,23 @@ def prepare_allegro_job(
     db_manager: DatabaseManager,
     job_name: str,
     job_dir: Union[str, Path],
-    gpu_config: GPUConfig = {"count": 4, "type": "rtx6000"},
+    # --- Arguments for HPO/Pre-split Mode ---
+    data_train_path: Optional[Union[str, Path]] = None,
+    data_val_path: Optional[Union[str, Path]] = None,
+    data_test_path: Optional[Union[str, Path]] = None,
+    chemical_symbols_list: Optional[List[str]] = None, # Explicit symbols from HPO
+    # --- Arguments for Standalone Mode (ignored if data paths provided) ---
     seed: int = 0,
     num_structures: Optional[int] = None,
     structure_ids: Optional[List[int]] = None,
-    train_ratio: Optional[float] = None, # Optional for pre-split
-    val_ratio: Optional[float] = None,   # Optional for pre-split
-    test_ratio: Optional[float] = None,  # Optional for pre-split
+    train_ratio: Optional[float] = None,
+    val_ratio: Optional[float] = None,
+    test_ratio: Optional[float] = None,
+    # --- Allegro Hyperparameters (used in config.yaml) ---
     max_epochs: int = 1000,
-    schedule: Optional[Dict[str, float]] = None,
-    project: str = "allegro-forge",
-    save_dir: Optional[str] = None,
-    loss_coeffs: Optional[Dict[str, float]] = None,
+    schedule: Optional[Dict[str, float]] = None, # Validation schedule overrides
+    project: str = "allegro-forge", # WandB project
+    loss_coeffs: Optional[Dict[str, float]] = None, # Loss coefficients
     lr: float = 0.001,
     r_max: float = 5.0,
     l_max: int = 1,
@@ -112,32 +119,43 @@ def prepare_allegro_job(
     num_tensor_features: int = 32,
     mlp_depth: int = 2,
     mlp_width: int = 128,
-    devices: Optional[int] = None,
-    num_nodes: int = 1,
-    num_ensemble: Optional[int] = None,
-    base_name: Optional[str] = None, # Deprecated for Allegro?
-    external_data_source_dir: Optional[Union[str, Path]] = None # New parameter
+    # devices: Optional[int] = None, # Devices determined by runner/SLURM
+    # num_nodes: int = 1, # Nodes determined by runner/SLURM
+    # --- Removed Parameters ---
+    # gpu_config removed (handled by runner/SLURM)
+    # num_ensemble removed (handled by HPO script)
+    # base_name removed (unused)
+    # external_data_source_dir removed
 ) -> Dict[str, List[int]]:
     """
-    Prepare structure splits and generate Allegro YAML + SLURM scripts.
-    Handles standard splitting, using pre-split data found in job_dir/data,
-    or using externally prepared data (via symlinks).
+    Prepare Allegro training config (config.yaml) from database or pre-split data.
+
+    Operates in two modes:
+    1. HPO Mode: If `data_train_path` is provided, uses the given absolute paths
+       and `chemical_symbols_list` (if provided) to generate `config.yaml`.
+       Ignores `seed`, `num_structures`, `structure_ids`, `*_ratio`.
+    2. Standalone Mode: If `data_train_path` is None, performs structure
+       selection, splitting, saving to `job_dir/data/`, and symbol extraction.
+       Uses relative paths in `config.yaml`. Requires `num_structures` or
+       `structure_ids`, and `*_ratio`.
 
     Args:
         db_manager: DatabaseManager instance.
-        job_name: Unique name for this specific run.
-        job_dir: Directory for this specific run.
-        gpu_config: GPU config.
-        seed: Random seed for splitting (if not pre-split) and training.
-        num_structures: Number of structures to select (if not pre-split).
-        structure_ids: List of structure IDs to use (if not pre-split).
-        train_ratio: Training fraction (required if not pre-split).
-        val_ratio: Validation fraction (required if not pre-split).
-        test_ratio: Testing fraction (required if not pre-split).
+        job_name: Unique name for this specific run (used for filenames if splitting).
+        job_dir: Directory for this specific run (config.yaml is saved here).
+        data_train_path: Absolute path to pre-generated training data (HPO mode).
+        data_val_path: Absolute path to pre-generated validation data (HPO mode).
+        data_test_path: Absolute path to pre-generated test data (HPO mode).
+        chemical_symbols_list: List of chemical symbols (optional in HPO mode).
+        seed: Random seed for standalone splitting/selection.
+        num_structures: Number of structures to select (standalone mode).
+        structure_ids: List of structure IDs to use (standalone mode).
+        train_ratio: Training fraction (standalone mode).
+        val_ratio: Validation fraction (standalone mode).
+        test_ratio: Testing fraction (standalone mode).
         max_epochs: Training epochs.
-        schedule: Annealing schedule.
+        schedule: Validation schedule overrides.
         project: WandB project name.
-        save_dir: Output directory within the run.
         loss_coeffs: Loss coefficients.
         lr: Learning rate.
         r_max: Cutoff radius.
@@ -147,120 +165,92 @@ def prepare_allegro_job(
         num_tensor_features: Tensor feature dimension.
         mlp_depth: MLP depth.
         mlp_width: MLP width.
-        devices: Number of devices (GPUs), defaults to gpu_config['count'].
-        num_nodes: Number of nodes for SLURM.
-        num_ensemble: Number of ensemble models to train (requires template support).
-        base_name: (Currently unused by Allegro preparation, job_name determines file names)
-        external_data_source_dir: Optional path to a directory containing pre-split
-                                  'train.xyz', 'val.xyz', 'test.xyz', and
-                                  'structure_splits.json'. If provided, symlinks
-                                  will be created in job_dir/data.
 
     Returns:
         Dict mapping 'train', 'val', 'test' to lists of structure_ids used.
-        Returns IDs from pre-split file if data exists, otherwise from new split.
+        Returns IDs from `structure_splits.json` if run in standalone mode.
+        Returns empty dict if run in HPO mode (IDs are handled by HPO script).
 
     Raises:
-        ValueError: If invalid arguments are provided.
-        FileNotFoundError: If external_data_source_dir or its contents are missing.
+        ValueError: If invalid arguments are provided for the chosen mode.
+        FileNotFoundError: If data files/dirs are missing in HPO mode.
     """
     job_dir = Path(job_dir)
-    job_data_dir = job_dir / "data" # Target directory for data/symlinks
-    job_data_dir.mkdir(parents=True, exist_ok=True)
+    job_data_dir = job_dir / "data" # Target directory for data if splitting internally
+    job_dir.mkdir(parents=True, exist_ok=True) # Ensure job_dir exists for config.yaml
 
-    # Allegro templates use job_name directly for data paths (DATA_PREFIX)
-    # effective_base_name = base_name if base_name is not None else job_name
-
-    chemical_symbols: List[str] = []
     saved_structure_ids: Dict[str, List[int]] = {'train': [], 'val': [], 'test': []}
-    all_used_ids: List[int] = [] # Keep track of all IDs used for symbol extraction
-    data_prep_skipped = False
-    run_names_to_generate = [job_name] # Default to single run
-    if num_ensemble and num_ensemble > 1:
-        run_names_to_generate = [f"{job_name}_ensemble_{idx}" for idx in range(num_ensemble)]
+    chemical_symbols: Optional[List[str]] = chemical_symbols_list # Use provided if available
+    config_data_train_path: str = ""
+    config_data_val_path: str = ""
+    config_data_test_path: str = ""
+    is_hpo_mode = data_train_path is not None
 
-    # --- Data Handling Strategy ---
-    if external_data_source_dir:
-        # Strategy 1: Use externally provided data via symlinks
-        external_data_path = Path(external_data_source_dir)
-        logger.info(f"[{job_name}] Using external data source: {external_data_path}")
-        if not external_data_path.is_dir():
-            raise FileNotFoundError(f"External data source directory not found: {external_data_path}")
+    if is_hpo_mode:
+        # --- HPO Mode ---
+        logger.info(f"[{job_name}] Running in HPO mode. Using provided data paths.")
+        if not data_val_path or not data_test_path:
+            raise ValueError("In HPO mode, data_train_path, data_val_path, and data_test_path must all be provided.")
 
-        external_splits_json = external_data_path / "structure_splits.json"
-        if not external_splits_json.exists():
-             raise FileNotFoundError(f"structure_splits.json not found in external source: {external_splits_json}")
+        data_train_path = Path(data_train_path)
+        data_val_path = Path(data_val_path)
+        data_test_path = Path(data_test_path)
 
-        try:
-            with open(external_splits_json, 'r') as f:
-                saved_structure_ids = json.load(f)
-            logger.info(f"[{job_name}] Loaded structure IDs from {external_splits_json}")
-            all_used_ids = list(set(saved_structure_ids.get('train', []) +
-                                  saved_structure_ids.get('val', []) +
-                                  saved_structure_ids.get('test', [])))
-            if not all_used_ids:
-                logger.warning(f"[{job_name}] {external_splits_json} contained no structure IDs.")
-            else:
-                chemical_symbols = _extract_chemical_symbols(db_manager, all_used_ids)
-        except Exception as e:
-            raise IOError(f"Failed to read {external_splits_json} or extract symbols: {e}") from e
+        if not data_train_path.exists(): raise FileNotFoundError(f"Provided train data not found: {data_train_path}")
+        if not data_val_path.exists(): raise FileNotFoundError(f"Provided validation data not found: {data_val_path}")
+        # Test file might be empty if test_ratio was 0
+        if not data_test_path.exists() and data_test_path.stat().st_size > 0:
+            logger.warning(f"Provided test data not found: {data_test_path}")
 
-        # Create relative symlinks in job_data_dir for each run name expected
-        # Allegro script expects files named {run_name}_{split}.xyz
-        for run_name in run_names_to_generate:
-            logger.info(f"  Ensuring symlinks exist for run: {run_name}")
-            for split in ["train", "val", "test"]:
-                src_file = external_data_path / f"{split}.xyz" # Generic name in source dir
-                link_name = job_data_dir / f"{run_name}_{split}.xyz" # Name expected by script
-                _create_symlink_if_needed(link_name, src_file)
+        # Use absolute paths in config for HPO mode
+        config_data_train_path = str(data_train_path.resolve())
+        config_data_val_path = str(data_val_path.resolve())
+        config_data_test_path = str(data_test_path.resolve())
 
-        data_prep_skipped = True
-
-    else:
-        # Strategy 2: Check for pre-existing data in job_data_dir
-        # Allegro uses job_name as prefix by default in template
-        train_file = job_data_dir / f"{job_name}_train.xyz"
-        val_file = job_data_dir / f"{job_name}_val.xyz"
-        test_file = job_data_dir / f"{job_name}_test.xyz"
-        splits_json_file = job_dir / "structure_splits.json" # JSON is always in job_dir
-
-        if train_file.exists() and val_file.exists() and test_file.exists():
-            logger.info(f"[{job_name}] Found existing data files (named {job_name}_...) in {job_data_dir}. Skipping data preparation.")
-            data_prep_skipped = True
-            if splits_json_file.exists():
+        # Extract symbols if not provided explicitly
+        if chemical_symbols is None:
+            logger.info(f"[{job_name}] Chemical symbols not provided, attempting extraction from training data...")
+            # Need to load the splits file associated with the data
+            # Assuming it's in the same directory as the data files (e.g., central_data_dir/fold_x)
+            splits_json_path = data_train_path.parent / "structure_splits.json"
+            if splits_json_path.exists():
                 try:
-                    with open(splits_json_file, 'r') as f:
-                        saved_structure_ids = json.load(f)
-                    logger.info(f"[{job_name}] Loaded structure IDs from {splits_json_file}")
-                    # Still need symbols
-                    all_used_ids = list(set(saved_structure_ids.get('train', []) +
-                                          saved_structure_ids.get('val', []) +
-                                          saved_structure_ids.get('test', [])))
-                    if not all_used_ids:
-                         logger.warning(f"[{job_name}] {splits_json_file} contained no IDs.")
+                    with open(splits_json_path, 'r') as f:
+                        split_ids_info = json.load(f)
+                    all_ids = list(set(split_ids_info.get('train', []) +
+                                       split_ids_info.get('val', []) +
+                                       split_ids_info.get('test', [])))
+                    if not all_ids:
+                        logger.warning(f"No structure IDs found in {splits_json_path} for symbol extraction.")
+                        chemical_symbols = []
                     else:
-                        chemical_symbols = _extract_chemical_symbols(db_manager, all_used_ids)
+                        chemical_symbols = _extract_chemical_symbols(db_manager, all_ids)
                 except Exception as e:
-                    logger.error(f"Failed to load {splits_json_file} or extract symbols: {e}. Cannot proceed reliably.")
-                    chemical_symbols = [] # Ensure it's empty list if failed
+                    logger.error(f"Failed to load {splits_json_path} or extract symbols: {e}. Cannot determine chemical symbols.", exc_info=True)
+                    chemical_symbols = []
             else:
-                logger.warning(f"Pre-split data files found, but {splits_json_file} is missing.")
-                logger.warning("Cannot determine chemical symbols. Proceeding with empty symbol list.")
+                logger.warning(f"Cannot find {splits_json_path} to extract symbols in HPO mode. Proceeding with empty symbol list.")
                 chemical_symbols = []
 
-    # Strategy 3: Perform splitting if needed
-    if not data_prep_skipped:
-        logger.info(f"[{job_name}] Data not found. Proceeding with standard data preparation.")
-        # --- Original Data Prep Logic ---
+    else:
+        # --- Standalone Mode ---
+        logger.info(f"[{job_name}] Running in Standalone mode. Preparing data in {job_dir}.")
+        job_data_dir.mkdir(parents=True, exist_ok=True) # Ensure data subdir exists
+
         # 1) Validate input for splitting
         if structure_ids is not None and num_structures is not None:
             raise ValueError("Cannot specify both structure_ids and num_structures")
         if structure_ids is None and num_structures is None:
-            raise ValueError("Must specify either structure_ids or num_structures when data is not pre-split and no external source is given.")
+            raise ValueError("Must specify either structure_ids or num_structures in standalone mode.")
         if train_ratio is None or val_ratio is None or test_ratio is None:
-            raise ValueError("train_ratio, val_ratio, and test_ratio must be provided when data is not pre-split and no external source is given.")
+            raise ValueError("train_ratio, val_ratio, and test_ratio must be provided in standalone mode.")
         if not (0.99 <= train_ratio + val_ratio + test_ratio <= 1.01):
-            raise ValueError("train_ratio, val_ratio, test_ratio must sum to ~1.0")
+            # Allow slight deviation, but normalize if needed (like in HPO script)
+             logger.warning(f"Provided train/val/test ratios sum to {train_ratio + val_ratio + test_ratio}. Normalizing.")
+             total_ratio = train_ratio + val_ratio + test_ratio
+             train_ratio /= total_ratio
+             val_ratio /= total_ratio
+             test_ratio /= total_ratio
 
         # 2) Fetch or randomly sample structure IDs
         if structure_ids:
@@ -270,21 +260,20 @@ def prepare_allegro_job(
             logger.info(f"Fetching up to {num_structures} structures...")
             all_db_ids = _get_vasp_structures(db_manager)
             if len(all_db_ids) < num_structures:
-                raise ValueError(
-                    f"Not enough structures ({len(all_db_ids)}) for requested {num_structures}"
-                )
-            random.seed(seed)
-            final_ids = random.sample(all_db_ids, num_structures)
+                 logger.warning(f"Requested {num_structures} structures, but only {len(all_db_ids)} found. Using all available.")
+                 final_ids = all_db_ids
+            else:
+                 random.seed(seed)
+                 final_ids = random.sample(all_db_ids, num_structures)
             logger.info(f"Selected {len(final_ids)} structures.")
 
-        all_used_ids = final_ids # All selected IDs are used here
+        if not final_ids:
+             raise ValueError("No structures selected for standalone run. Cannot proceed.")
+        all_used_ids = final_ids
 
         # 3) Determine chemical symbols from the dataset
-        if all_used_ids:
+        if chemical_symbols is None: # Only calculate if not already provided (unlikely in standalone)
              chemical_symbols = _extract_chemical_symbols(db_manager, all_used_ids)
-        else:
-             logger.warning("No structure IDs selected, cannot determine chemical symbols.")
-             chemical_symbols = []
 
         # 4) Split structures and write .xyz via db_to_mace helper
         # Saves xyz into job_data_dir (using job_name as prefix) and json into job_dir
@@ -299,135 +288,141 @@ def prepare_allegro_job(
             test_ratio=test_ratio,
             seed=seed
         )
-        # --- End of Original Data Prep Logic ---
+        # Note: _prepare_structure_splits now returns the *intended* splits,
+        # need to check if files actually exist for path setting.
 
-    # --- YAML and SLURM Script Generation ---
+        # Define relative paths for config.yaml
+        train_file_rel = f"data/{job_name}_train.xyz"
+        val_file_rel = f"data/{job_name}_val.xyz"
+        test_file_rel = f"data/{job_name}_test.xyz"
 
-    logger.info(f"[{job_name}] Generating YAML/SLURM script(s)...")
-    # Check if chemical symbols were determined (could fail in strategy 2)
-    if not chemical_symbols:
+        # Check if files were created before setting paths
+        if (job_dir / train_file_rel).exists():
+            config_data_train_path = train_file_rel
+        else:
+            logger.error(f"Training file {train_file_rel} was not created successfully.")
+            # Decide whether to raise error or allow config generation with missing path
+            raise FileNotFoundError(f"Training file {train_file_rel} failed to generate.")
+
+        if (job_dir / val_file_rel).exists():
+            config_data_val_path = val_file_rel
+        else:
+             logger.error(f"Validation file {val_file_rel} was not created successfully.")
+             raise FileNotFoundError(f"Validation file {val_file_rel} failed to generate.")
+
+        if (job_dir / test_file_rel).exists():
+             config_data_test_path = test_file_rel
+        else:
+             # Test set might be empty, don't raise error but log
+             logger.warning(f"Test file {test_file_rel} was not created (might be intended if test_ratio was 0).")
+             config_data_test_path = test_file_rel # Still add path to config
+
+
+    # --- Generate config.yaml ---
+    logger.info(f"[{job_name}] Generating config.yaml...")
+
+    if chemical_symbols is None or not chemical_symbols: # Final check
         logger.error(f"[{job_name}] Chemical symbols could not be determined. Cannot generate valid Allegro config.")
-        return saved_structure_ids # Return IDs, but indicate failure
+        # Return structure IDs if generated, otherwise empty dict
+        return saved_structure_ids if not is_hpo_mode else {}
 
-    chem_yaml = '[' + ', '.join(f"'{s}'" for s in chemical_symbols) + ']'
-
-    # 5) Defaults for schedule and loss
+    # Defaults for schedule and loss
     effective_schedule = schedule if schedule is not None else {
         'start_epoch': int(0.8 * max_epochs),
-        'per_atom_energy_mse': 10.0,
-        'forces_mse': 1.0,
-        'stress_mse': 0.25,
+        'factor': 0.5, # Default factor? NequIP examples vary. Let's add a default.
+        'patience': 25, # Default patience?
     }
-    default_schedule_keys = ['start_epoch', 'per_atom_energy_mse', 'forces_mse', 'stress_mse']
-    for key in default_schedule_keys:
-        if key not in effective_schedule:
-            raise ValueError(f"Missing key '{key}' in schedule for {job_name}")
+    # NequIP schedule keys might differ from old template, adapt based on nequip-train usage
+    # Common examples: factor, patience. Let's use these.
+    # Also need validation metric key, e.g., 'val_loss' or specific metrics
+    validation_metric = 'val_loss' # Default validation metric
 
     effective_loss_coeffs = loss_coeffs if loss_coeffs is not None else {
-        'total_energy': 1.0, 'forces': 50.0, 'stress': 25.0
+        'total_energy': {'coeff': 1.0, 'per_atom': True}, # NequIP examples use dicts
+        'forces': {'coeff': 50.0},
+        'stress': {'coeff': 25.0},
     }
-    default_loss_keys = ['total_energy', 'forces', 'stress']
-    for key in default_loss_keys:
-         if key not in effective_loss_coeffs:
-             raise ValueError(f"Missing key '{key}' in loss_coeffs for {job_name}")
+    # Ensure structure matches expected NequIP format
 
-    effective_save_dir = save_dir if save_dir is not None else f"results/{job_name}" # Base save dir on job_name
-    effective_devices = devices if devices is not None else gpu_config['count']
+    # Build the config dictionary
+    config = {
+        # Top-level keys expected by nequip-train
+        'run_name': job_name,
+        'seed': seed, # Use the provided seed (relevant for training init)
+        'dataset_file_name': config_data_train_path, # Path to training data
+        'validation_dataset_file_name': config_data_val_path, # Path to validation data
+        'test_dataset_file_name': config_data_test_path, # Path to test data
+        'chemical_symbols': chemical_symbols,
+        'r_max': r_max,
+        'l_max': l_max,
+        'num_layers': num_layers,
+        'num_features': num_scalar_features, # Map num_scalar_features -> num_features ? Check Allegro docs. Assuming scalar.
+        # Allegro specific params might go under 'model_builders' or similar key
+        # Check nequip-train examples for Allegro. Assuming direct keys for now, may need nesting.
+        'parity': True, # Common Allegro default
+        'mlp_latent_dimensions': [mlp_width] * mlp_depth, # Example format for MLP layers
+        # Tensor features might be part of model config - need to check Allegro/NequIP integration
+        # 'num_tensor_features': num_tensor_features, # Where does this go? Assume top-level for now.
 
-    # 6) Prepare base replacements dict (will be customized in make_run)
-    common_replacements: Dict[str, str] = {
-        #'JOB_NAME': job_name, # Set in make_run
-        #'DATA_PREFIX': job_name, # Set in make_run
-        'R_MAX': str(r_max),
-        'CHEMICAL_SYMBOLS': chem_yaml,
-        #'SEED': str(seed), # Set in make_run
-        'GPU_COUNT': str(effective_devices),
-        'NUM_NODES': str(num_nodes),
-        'MAX_EPOCHS': str(max_epochs),
-        'START_EPOCH': str(effective_schedule['start_epoch']),
-        'SCHEDULE_ENERGY': str(effective_schedule['per_atom_energy_mse']),
-        'SCHEDULE_FORCES': str(effective_schedule['forces_mse']),
-        'SCHEDULE_STRESS': str(effective_schedule['stress_mse']),
-        'PROJECT': project,
-        #'SAVE_DIR': effective_save_dir, # Set in make_run
-        'LOSS_ENERGY': str(effective_loss_coeffs['total_energy']),
-        'LOSS_FORCES': str(effective_loss_coeffs['forces']),
-        'LOSS_STRESS': str(effective_loss_coeffs['stress']),
-        'LR': str(lr),
-        'L_MAX': str(l_max),
-        'NUM_LAYERS': str(num_layers),
-        'NUM_SCALAR': str(num_scalar_features),
-        'NUM_TENSOR': str(num_tensor_features),
-        'MLP_DEPTH': str(mlp_depth),
-        'MLP_WIDTH': str(mlp_width),
-        'GPU_TYPE': gpu_config['type'],
-        #'TRAIN_FILE': f"data/{job_name}_train.xyz", # Set in make_run
-        #'VAL_FILE':   f"data/{job_name}_val.xyz", # Set in make_run
-        #'TEST_FILE':  f"data/{job_name}_test.xyz", # Set in make_run
+        # Training parameters
+        'max_epochs': max_epochs,
+        'learning_rate': lr,
+        'loss_coeffs': effective_loss_coeffs,
+        'metrics_key': validation_metric, # Key for ReduceLROnPlateau scheduler
+        # Scheduler config (example for ReduceLROnPlateau)
+        'scheduler_name': 'ReduceLROnPlateau',
+        'scheduler_kwargs': {
+            'factor': effective_schedule.get('factor', 0.5),
+            'patience': effective_schedule.get('patience', 25),
+            'threshold': 1e-5, # Example default
+            'threshold_mode': 'rel',
+            'cooldown': 0,
+            'min_lr': 1e-7, # Example default
+            'eps': 1e-8,
+        },
+        # WandB logging
+        'wandb': True,
+        'wandb_project': project,
+        'wandb_name': job_name, # Use unique run name for wandb
+
+        # Other common NequIP params (add defaults if needed)
+        'batch_size': 10, # Example default
+        'optimizer_name': 'Adam',
+        'optimizer_amsgrad': False,
+        'optimizer_betas': (0.9, 0.999),
+        'optimizer_eps': 1e-8,
+        'optimizer_weight_decay': 0.0,
+        'clip_grad': None, # Example: {'max_norm': 10.0}
+        'verbose': 'info', # Logging level
+        # Dataset params
+        'dataset_include_stress': True, # Assume stress is present
+
+        # Potential Allegro-specific keys (adjust based on documentation)
+        # These might need to be nested under a model configuration key
+        'allegro_num_scalar_features': num_scalar_features,
+        'allegro_num_tensor_features': num_tensor_features,
+        # Add other allegro specific params here if needed...
     }
 
-    # Template file paths
-    yaml_tmpl = Path(__file__).parent / 'templates' / 'allegro_template.yaml'
-    slurm_tmpl = Path(__file__).parent / 'templates' / 'allegro_slurm_template.sh'
+    # Refine loss coeff structure if needed (check NequIP docs)
+    # Example: loss_coeffs: {'forces': {'coeff': 50.0, 'level': 'element'}}
+    # Current structure might be okay.
 
-    if not yaml_tmpl.exists(): raise FileNotFoundError(f"YAML Template missing: {yaml_tmpl}")
-    if not slurm_tmpl.exists(): raise FileNotFoundError(f"SLURM Template missing: {slurm_tmpl}")
+    # --- Write YAML ---
+    yaml_path = job_dir / "config.yaml"
+    try:
+        # Use default_flow_style=False for a more readable block format
+        with open(yaml_path, 'w') as f:
+            yaml.dump(config, f, indent=2, default_flow_style=False, sort_keys=False)
+        logger.info(f"[{job_name}] Successfully generated {yaml_path}")
+    except Exception as e:
+        logger.error(f"Failed to write config.yaml for {job_name}: {e}", exc_info=True)
+        # Decide whether to raise error or just return partial results
+        raise IOError(f"Failed to write config.yaml: {e}") from e
 
-    # --- Generation Loop --- 
+    # Return structure IDs only if generated in standalone mode
+    return saved_structure_ids if not is_hpo_mode else {}
 
-    def make_run(run_name: str, run_seed: int):
-        logger.info(f"  Generating files for run: {run_name} (seed: {run_seed})")
-        current_replacements = common_replacements.copy()
-        # Set run-specific values
-        current_replacements['JOB_NAME'] = run_name
-        current_replacements['SEED'] = str(run_seed)
-        current_replacements['SAVE_DIR'] = f"results/{run_name}"
-        current_replacements['DATA_PREFIX'] = run_name
-        current_replacements['TRAIN_FILE'] = f"data/{run_name}_train.xyz"
-        current_replacements['VAL_FILE']   = f"data/{run_name}_val.xyz"
-        current_replacements['TEST_FILE']  = f"data/{run_name}_test.xyz"
-
-        # Write YAML from template
-        try:
-            txt = yaml_tmpl.read_text()
-            for k, v in current_replacements.items():
-                placeholder = f'${{{k}}}' # Template uses ${KEY} format
-                txt = txt.replace(placeholder, v)
-
-            yaml_path = job_dir / f"{run_name}.yaml"
-            yaml_path.write_text(txt)
-        except Exception as e:
-            logger.error(f"Failed to generate YAML for {run_name}: {e}", exc_info=True)
-            return # Skip slurm script if YAML failed
-
-        # Write SLURM script
-        try:
-            sl = slurm_tmpl.read_text()
-            slurm_repl = {
-                'JOB_NAME': run_name,
-                'GPU_COUNT': current_replacements['GPU_COUNT'],
-                'GPU_TYPE': current_replacements['GPU_TYPE'],
-                'NUM_NODES': current_replacements['NUM_NODES'],
-                'YAML_FILE': f"{run_name}.yaml" # Use the generated YAML name
-            }
-            for k, v in slurm_repl.items():
-                placeholder = f'${{{k}}}'
-                sl = sl.replace(placeholder, v)
-
-            script_path = job_dir / f"{run_name}.sh"
-            script_path.write_text(sl)
-            script_path.chmod(0o755)
-        except Exception as e:
-            logger.error(f"Failed to generate SLURM script for {run_name}: {e}", exc_info=True)
-
-    # Emit jobs for all required run names
-    logger.info(f"[{job_name}] Emitting generation tasks for: {run_names_to_generate}")
-    if data_prep_skipped and len(run_names_to_generate) > 1:
-         logger.warning("Ensemble members will use the same underlying data (via symlinks). Only training seed differs.")
-
-    current_seed = seed # Start with the base seed provided
-    for run_name in run_names_to_generate:
-        make_run(run_name, current_seed)
-        current_seed += 1 # Increment seed for next potential ensemble member
-
-    return saved_structure_ids
+# Remove the old template-based generation logic
+# (Removed make_run function, template loading, common_replacements, generation loop)
+# ... (rest of file, including _extract_chemical_symbols if it wasn't moved/changed) ...

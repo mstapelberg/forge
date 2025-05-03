@@ -98,7 +98,7 @@ def prepare_allegro_job(
     data_train_path: Optional[Union[str, Path]] = None,
     data_val_path: Optional[Union[str, Path]] = None,
     data_test_path: Optional[Union[str, Path]] = None,
-    chemical_symbols_list: Optional[List[str]] = None, # Explicit symbols from HPO
+    chemical_symbols_list: Optional[List[str]] = None, # <-- Will be provided by HPO sweep
     # --- Arguments for Standalone Mode (ignored if data paths provided) ---
     seed: int = 0,
     num_structures: Optional[int] = None,
@@ -181,7 +181,7 @@ def prepare_allegro_job(
     job_dir.mkdir(parents=True, exist_ok=True) # Ensure job_dir exists for config.yaml
 
     saved_structure_ids: Dict[str, List[int]] = {'train': [], 'val': [], 'test': []}
-    chemical_symbols: Optional[List[str]] = chemical_symbols_list # Use provided if available
+    chemical_symbols: Optional[List[str]] = chemical_symbols_list # Prioritize passed list
     config_data_train_path: str = ""
     config_data_val_path: str = ""
     config_data_test_path: str = ""
@@ -215,11 +215,11 @@ def prepare_allegro_job(
         config_data_val_path = str(abs_val_path)
         config_data_test_path = str(abs_test_path)
 
-        # Extract symbols if not provided explicitly
-        if chemical_symbols is None:
-            logger.info(f"[{job_name}] Chemical symbols not provided, attempting extraction from training data...")
-            # Need to load the splits file associated with the data
-            # Assuming it's in the same directory as the data files (e.g., central_data_dir/fold_x)
+        # --- MODIFIED: Symbol Handling ---
+        if chemical_symbols is None or not chemical_symbols: # Check if symbols were NOT passed
+            logger.warning(f"[{job_name}] Chemical symbols not provided by caller. Attempting extraction from training data splits file (less efficient)...")
+            # Fallback to original logic (less efficient)
+            abs_train_path = Path(data_train_path).resolve()
             splits_json_path = abs_train_path.parent / "structure_splits.json"
             logger.debug(f"[{job_name}] Looking for splits file at: {splits_json_path}")
             if splits_json_path.exists():
@@ -236,17 +236,19 @@ def prepare_allegro_job(
                         logger.warning(f"No structure IDs found in {splits_json_path} for symbol extraction.")
                         chemical_symbols = []
                     else:
-                        logger.debug(f"[{job_name}] Calling _extract_chemical_symbols...")
+                        logger.debug(f"[{job_name}] Calling _extract_chemical_symbols (Fallback)...")
                         chemical_symbols = _extract_chemical_symbols(db_manager, all_ids)
                         logger.debug(f"[{job_name}] _extract_chemical_symbols returned: {chemical_symbols}")
                 except Exception as e:
                     logger.error(f"Failed to load {splits_json_path} or extract symbols: {e}. Cannot determine chemical symbols.", exc_info=True)
-                    chemical_symbols = []
+                    chemical_symbols = [] # Set empty on error
             else:
-                logger.warning(f"Cannot find splits file at {splits_json_path} to extract symbols in HPO mode. Proceeding with empty symbol list.")
+                logger.warning(f"Cannot find splits file at {splits_json_path} to extract symbols in HPO mode fallback. Proceeding with empty symbol list.")
                 chemical_symbols = []
+            # --- End of Fallback Logic ---
         else:
-            logger.info(f"[{job_name}] Chemical symbols were provided directly: {chemical_symbols}")
+            logger.info(f"[{job_name}] Using chemical symbols provided by caller: {chemical_symbols}")
+        # --- End of MODIFIED Symbol Handling ---
 
     else:
         # --- Standalone Mode ---
@@ -333,110 +335,206 @@ def prepare_allegro_job(
              logger.warning(f"Test file {test_file_rel} was not created (might be intended if test_ratio was 0).")
              config_data_test_path = test_file_rel # Still add path to config
 
+    # --- Generate config.yaml -------------------------------------------------
+    logger.info(f"[{job_name}] Generating Hydra/Lightning-style config.yaml…")
 
-    # --- Generate config.yaml ---
-    logger.info(f"[{job_name}] Generating config.yaml...")
+    if not chemical_symbols:
+        raise ValueError(f"[{job_name}] Could not determine chemical symbols.")
 
-    if chemical_symbols is None or not chemical_symbols: # Final check
-        logger.error(f"[{job_name}] Chemical symbols could not be determined. Cannot generate valid Allegro config.")
-        # Return structure IDs if generated, otherwise empty dict
-        raise ValueError(f"[{job_name}] Chemical symbols could not be determined. Cannot generate valid Allegro config.")
-
-    # Defaults for schedule and loss
+    # ----------  schedule / loss defaults (missing before)  -------------------
     effective_schedule = schedule if schedule is not None else {
-        'start_epoch': int(0.8 * max_epochs),
-        'factor': 0.5, # Default factor? NequIP examples vary. Let's add a default.
-        'patience': 25, # Default patience?
+        "factor": 0.5,   # learning-rate reduction factor
+        "patience": 25,  # epochs with no improvement
+        # optional; used below, otherwise computed as 0.8*max_epochs
+        # "start_epoch": int(0.8 * max_epochs),
     }
-    # NequIP schedule keys might differ from old template, adapt based on nequip-train usage
-    # Common examples: factor, patience. Let's use these.
-    # Also need validation metric key, e.g., 'val_loss' or specific metrics
-    validation_metric = 'val_loss' # Default validation metric
 
     effective_loss_coeffs = loss_coeffs if loss_coeffs is not None else {
-        'total_energy': {'coeff': 1.0, 'per_atom': True}, # NequIP examples use dicts
-        'forces': {'coeff': 50.0},
-        'stress': {'coeff': 25.0},
+        "total_energy": {"coeff": 1.0, "per_atom": True},
+        "forces":       {"coeff": 50.0},
+        "stress":       {"coeff": 25.0},
     }
-    # Ensure structure matches expected NequIP format
+    # --------------------------------------------------------------------------
 
-    # Build the config dictionary
-    config = {
-        # Top-level keys expected by nequip-train
-        'run_name': job_name,
-        'seed': seed, # Use the provided seed (relevant for training init)
-        'dataset_file_name': config_data_train_path, # Path to training data
-        'validation_dataset_file_name': config_data_val_path, # Path to validation data
-        'test_dataset_file_name': config_data_test_path, # Path to test data
-        'chemical_symbols': chemical_symbols,
-        'r_max': r_max,
-        'l_max': l_max,
-        'num_layers': num_layers,
-        'num_features': num_scalar_features, # Map num_scalar_features -> num_features ? Check Allegro docs. Assuming scalar.
-        # Allegro specific params might go under 'model_builders' or similar key
-        # Check nequip-train examples for Allegro. Assuming direct keys for now, may need nesting.
-        'parity': True, # Common Allegro default
-        'mlp_latent_dimensions': [mlp_width] * mlp_depth, # Example format for MLP layers
-        # Tensor features might be part of model config - need to check Allegro/NequIP integration
-        # 'num_tensor_features': num_tensor_features, # Where does this go? Assume top-level for now.
+    # >>> HYDRA TEMPLATE BUILD  -------------------------------------------------
+    data_prefix = job_name
+    gpu_count   = 1
+    num_nodes   = 1
 
-        # Training parameters
-        'max_epochs': max_epochs,
-        'learning_rate': lr,
-        'loss_coeffs': effective_loss_coeffs,
-        'metrics_key': validation_metric, # Key for ReduceLROnPlateau scheduler
-        # Scheduler config (example for ReduceLROnPlateau)
-        'scheduler_name': 'ReduceLROnPlateau',
-        'scheduler_kwargs': {
-            'factor': effective_schedule.get('factor', 0.5),
-            'patience': effective_schedule.get('patience', 25),
-            'threshold': 1e-5, # Example default
-            'threshold_mode': 'rel',
-            'cooldown': 0,
-            'min_lr': 1e-7, # Example default
-            'eps': 1e-8,
+    # schedule numbers
+    sched_start_epoch = effective_schedule.get("start_epoch",
+                                               int(0.8 * max_epochs))
+    sched_energy = effective_schedule.get("factor", 0.5)
+    sched_forces = sched_energy
+    sched_stress = sched_energy
+
+    # loss scalars
+    loss_E = effective_loss_coeffs["total_energy"]["coeff"]
+    loss_F = effective_loss_coeffs["forces"]["coeff"]
+    loss_S = effective_loss_coeffs["stress"]["coeff"]
+
+    template_cfg = {
+        "run": ["val", "test", "train", "val", "test"],
+
+        # ---------------- basic keys ----------------
+        "cutoff_radius": r_max,
+        "chemical_symbols": chemical_symbols,
+        "model_type_names": chemical_symbols,
+        "seed": seed,
+        "job_name": job_name,
+
+        # ---------------- data block ----------------
+        "data": {
+            "_target_": "nequip.data.datamodule.ASEDataModule",
+            "train_file_path": config_data_train_path,
+            "val_file_path":   config_data_val_path,
+            "test_file_path":  config_data_test_path,
+            "ase_args": {"format": "extxyz"},
+            "key_mapping": {"REF_energy": "total_energy",
+                            "REF_force":  "forces",
+                            "REF_stress": "stress"},
+            "transforms": [
+                {"_target_": "nequip.data.transforms.NeighborListTransform",
+                 "r_max": r_max},
+                {"_target_":
+                     "nequip.data.transforms.ChemicalSpeciesToAtomTypeMapper",
+                 "chemical_symbols": chemical_symbols},
+            ],
+            "seed": seed,
+            # simple DataLoader settings
+            "train_dataloader": {"_target_": "torch.utils.data.DataLoader",
+                                 "batch_size": 4},
+            "val_dataloader":   {"_target_": "torch.utils.data.DataLoader",
+                                 "batch_size": 4},
+            "test_dataloader":  "${data.val_dataloader}",
+            "stats_manager": {
+                "_target_": "nequip.data.CommonDataStatisticsManager",
+                "type_names": chemical_symbols,
+            },
         },
-        # WandB logging
-        'wandb': True,
-        'wandb_project': project,
-        'wandb_name': job_name, # Use unique run name for wandb
 
-        # Other common NequIP params (add defaults if needed)
-        'batch_size': 10, # Example default
-        'optimizer_name': 'Adam',
-        'optimizer_amsgrad': False,
-        'optimizer_betas': (0.9, 0.999),
-        'optimizer_eps': 1e-8,
-        'optimizer_weight_decay': 0.0,
-        'clip_grad': None, # Example: {'max_norm': 10.0}
-        'verbose': 'info', # Logging level
-        # Dataset params
-        'dataset_include_stress': True, # Assume stress is present
+        # ---------------- trainer -------------------
+        "trainer": {
+            "_target_": "lightning.Trainer",
+            "accelerator": "gpu",
+            "devices": gpu_count,
+            "num_nodes": num_nodes,
+            "max_epochs": max_epochs,
+            "check_val_every_n_epoch": 1,
+            "log_every_n_steps": 5,
+            "callbacks": [
+                {
+                    "_target_": "lightning.pytorch.callbacks.ModelCheckpoint",
+                    "dirpath": f"results/{job_name}",
+                    "save_last": True,
+                },
+                {
+                    "_target_": "nequip.train.callbacks.LossCoefficientScheduler",
+                    "schedule": {
+                        sched_start_epoch: {
+                            "per_atom_energy_mse": sched_energy,
+                            "forces_mse":          sched_forces,
+                            "stress_mse":          sched_stress,
+                        }
+                    },
+                },
+            ],
+            "logger": {
+                "_target_": "lightning.pytorch.loggers.wandb.WandbLogger",
+                "project": project,
+                "name": job_name,
+                "save_dir": "results",
+            },
+        },
 
-        # Potential Allegro-specific keys (adjust based on documentation)
-        # These might need to be nested under a model configuration key
-        'allegro_num_scalar_features': num_scalar_features,
-        'allegro_num_tensor_features': num_tensor_features,
-        # Add other allegro specific params here if needed...
+        # --------------- training module -------------
+        "training_module": {
+            "_target_": "nequip.train.EMALightningModule",
+            "loss": {
+                "_target_": "nequip.train.EnergyForceStressLoss",
+                "per_atom_energy": True,
+                "coeffs": {
+                    "total_energy": loss_E,
+                    "forces":       loss_F,
+                    "stress":       loss_S,
+                },
+            },
+            "val_metrics": {
+                "_target_": "nequip.train.EnergyForceStressMetrics",
+                "coeffs": {
+                    "per_atom_energy_mae": loss_E,
+                    "forces_mae":          loss_F,
+                    "stress_mae":          loss_S,
+                },
+            },
+            "test_metrics": "${training_module.val_metrics}",
+
+            "optimizer": {
+                "_target_": "torch.optim.Adam",
+                "lr": lr,
+            },
+
+            # --------------- model --------------------
+            "model": {
+                "_target_": "allegro.model.AllegroModel",
+                "seed": seed,
+                "model_dtype": "float32",
+                "type_names": chemical_symbols,
+                "r_max": r_max,
+
+                "scalar_embed": {
+                    "_target_": "allegro.nn.TwoBodyBesselScalarEmbed",
+                    "num_bessels": 8,
+                    "bessel_trainable": False,
+                    "polynomial_cutoff_p": 6,
+                    "two_body_embedding_dim": 32,
+                    "two_body_mlp_hidden_layers_depth": 2,
+                    "two_body_mlp_hidden_layers_width": 64,
+                    "two_body_mlp_nonlinearity": "silu",
+                },
+
+                "l_max": l_max,
+                "parity_setting": "o3_full",
+                "num_layers": num_layers,
+                "num_scalar_features": num_scalar_features,
+                "num_tensor_features": num_tensor_features,
+                "tp_path_channel_coupling": False,
+                "allegro_mlp_hidden_layers_depth": mlp_depth,
+                "allegro_mlp_hidden_layers_width": mlp_width,
+
+                "avg_num_neighbors": "${training_data_stats:num_neighbors_mean}",
+                "per_type_energy_shifts":
+                    "${training_data_stats:per_atom_energy_mean}",
+                "per_type_energy_scales":
+                    "${training_data_stats:forces_rms}",
+                "per_type_energy_scales_trainable": False,
+                "per_type_energy_shifts_trainable": False,
+
+                "pair_potential": {
+                    "_target_": "nequip.nn.pair_potential.ZBL",
+                    "units": "metal",
+                    "chemical_species": chemical_symbols,
+                },
+            },
+        },
+
+        # ---------------- misc ----------------------
+        "global_options": {"allow_tf32": False},
     }
+    # -----------------------------------------------------------------
+    # <<< HYDRA TEMPLATE BUILD  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+    # -----------------------------------------------------------------
 
-    # Refine loss coeff structure if needed (check NequIP docs)
-    # Example: loss_coeffs: {'forces': {'coeff': 50.0, 'level': 'element'}}
-    # Current structure might be okay.
-
-    # --- Write YAML ---
     yaml_path = job_dir / "config.yaml"
     try:
-        # Use default_flow_style=False for a more readable block format
-        with open(yaml_path, 'w') as f:
-            yaml.dump(config, f, indent=2, default_flow_style=False, sort_keys=False)
-        logger.info(f"[{job_name}] Successfully generated {yaml_path}")
+        with yaml_path.open("w") as f:
+            yaml.dump(template_cfg, f, sort_keys=False)
+        logger.info(f"[{job_name}] Wrote Hydra-template config: {yaml_path}")
     except Exception as e:
-        logger.error(f"Failed to write config.yaml for {job_name}: {e}", exc_info=True)
-        # Decide whether to raise error or just return partial results
-        raise IOError(f"Failed to write config.yaml: {e}") from e
+        logger.error(f"Failed to write config.yaml: {e}", exc_info=True)
+        raise
 
-    # Return structure IDs only if generated in standalone mode
+    # return split IDs only for standalone mode
     return saved_structure_ids if not is_hpo_mode else {}
 
 # Remove the old template-based generation logic

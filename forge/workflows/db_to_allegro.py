@@ -189,12 +189,19 @@ def prepare_allegro_job(
     if is_hpo_mode:
         # --- HPO Mode ---
         logger.info(f"[{job_name}] Running in HPO mode. Using provided data paths.")
+        logger.debug(f"[{job_name}] Provided paths: train='{data_train_path}', val='{data_val_path}', test='{data_test_path}'")
         if not data_val_path or not data_test_path:
             raise ValueError("In HPO mode, data_train_path, data_val_path, and data_test_path must all be provided.")
 
         data_train_path = Path(data_train_path)
         data_val_path = Path(data_val_path)
         data_test_path = Path(data_test_path)
+
+        # Log absolute paths
+        abs_train_path = data_train_path.resolve()
+        abs_val_path = data_val_path.resolve()
+        abs_test_path = data_test_path.resolve()
+        logger.debug(f"[{job_name}] Resolved absolute paths: train='{abs_train_path}', val='{abs_val_path}', test='{abs_test_path}'")
 
         if not data_train_path.exists(): raise FileNotFoundError(f"Provided train data not found: {data_train_path}")
         if not data_val_path.exists(): raise FileNotFoundError(f"Provided validation data not found: {data_val_path}")
@@ -203,34 +210,42 @@ def prepare_allegro_job(
             logger.warning(f"Provided test data not found: {data_test_path}")
 
         # Use absolute paths in config for HPO mode
-        config_data_train_path = str(data_train_path.resolve())
-        config_data_val_path = str(data_val_path.resolve())
-        config_data_test_path = str(data_test_path.resolve())
+        config_data_train_path = str(abs_train_path)
+        config_data_val_path = str(abs_val_path)
+        config_data_test_path = str(abs_test_path)
 
         # Extract symbols if not provided explicitly
         if chemical_symbols is None:
             logger.info(f"[{job_name}] Chemical symbols not provided, attempting extraction from training data...")
             # Need to load the splits file associated with the data
             # Assuming it's in the same directory as the data files (e.g., central_data_dir/fold_x)
-            splits_json_path = data_train_path.parent / "structure_splits.json"
+            splits_json_path = abs_train_path.parent / "structure_splits.json"
+            logger.debug(f"[{job_name}] Looking for splits file at: {splits_json_path}")
             if splits_json_path.exists():
+                logger.debug(f"[{job_name}] Found splits file.")
                 try:
                     with open(splits_json_path, 'r') as f:
                         split_ids_info = json.load(f)
+                    logger.debug(f"[{job_name}] Successfully loaded splits JSON.")
                     all_ids = list(set(split_ids_info.get('train', []) +
                                        split_ids_info.get('val', []) +
                                        split_ids_info.get('test', [])))
+                    logger.debug(f"[{job_name}] Extracted {len(all_ids)} unique IDs from splits file.")
                     if not all_ids:
                         logger.warning(f"No structure IDs found in {splits_json_path} for symbol extraction.")
                         chemical_symbols = []
                     else:
+                        logger.debug(f"[{job_name}] Calling _extract_chemical_symbols...")
                         chemical_symbols = _extract_chemical_symbols(db_manager, all_ids)
+                        logger.debug(f"[{job_name}] _extract_chemical_symbols returned: {chemical_symbols}")
                 except Exception as e:
                     logger.error(f"Failed to load {splits_json_path} or extract symbols: {e}. Cannot determine chemical symbols.", exc_info=True)
                     chemical_symbols = []
             else:
-                logger.warning(f"Cannot find {splits_json_path} to extract symbols in HPO mode. Proceeding with empty symbol list.")
+                logger.warning(f"Cannot find splits file at {splits_json_path} to extract symbols in HPO mode. Proceeding with empty symbol list.")
                 chemical_symbols = []
+        else:
+            logger.info(f"[{job_name}] Chemical symbols were provided directly: {chemical_symbols}")
 
     else:
         # --- Standalone Mode ---

@@ -27,6 +27,7 @@ model_paths = ['../potentials/mace_gen_7_ensemble/job_gen_7-2025-04-14_model_0_p
 
 random.seed(42)
 
+
 trajectories = run_adversarial_attacks(
     db_manager = db_manager,
     model_paths = model_paths,
@@ -42,9 +43,11 @@ trajectories = run_adversarial_attacks(
     debug=False,
     top_n=100,
     save_output=True,
-    output_dir='../data/adversarial_attacks/gen_8_no_shake',
+    output_dir='../data/adversarial_attacks/gen_8_no_shake_rmse_all',
     patience=25,
     shake=False,
+    ranking_metric='force_rmse',
+    reference_calculator='vasp',
 )
 
 # --- Handle None return value when saving --- 

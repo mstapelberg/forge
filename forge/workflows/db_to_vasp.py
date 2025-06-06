@@ -1,5 +1,7 @@
 """Functions for preparing VASP calculations from structures."""
 
+import json
+from monty.serialization import dumpfn
 import os
 import shutil
 from datetime import datetime
@@ -286,6 +288,10 @@ def prepare_vasp_job_from_ase(
     _write_potcar(
         unique_species, potcar_map, potcar_dir, os.path.join(output_dir, "POTCAR")
     )
+
+    # Save atoms metadata using monty serialization (handles numpy arrays, etc.)
+    metadata_path = os.path.join(output_dir, "metadata.json")
+    dumpfn(atoms.info, metadata_path)
 
     # Create Slurm script
     slurm_script = _create_slurm_script(

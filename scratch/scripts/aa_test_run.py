@@ -10,9 +10,12 @@ db_manager = DatabaseManager()
 #dimer_ids = db_manager.find_structures_by_metadata(metadata_filters={'config_type' : 'dimer'})
 gen_7_ids = db_manager.find_structures_by_metadata(metadata_filters={'generation' : '7'})
 gen_6_ids = db_manager.find_structures_by_metadata(metadata_filters={'generation' : '6'})
+dimer_ids = db_manager.find_structures_by_metadata(metadata_filters={'config_type' : 'dimer'})
 
 # combine the two lists without duplicates
 all_ids = list(set(gen_6_ids + gen_7_ids))
+# remove all dimer ids from all_ids
+all_ids = [id for id in all_ids if id not in dimer_ids]
 print(len(all_ids))
 
 calcs = db_manager.get_calculations_batch(all_ids)
@@ -27,6 +30,7 @@ model_paths = ['../potentials/mace_gen_7_ensemble/job_gen_7-2025-04-14_model_0_p
 
 random.seed(42)
 
+#rand_10_all_ids = random.sample(all_ids, 10)
 
 trajectories = run_adversarial_attacks(
     db_manager = db_manager,
@@ -41,13 +45,16 @@ trajectories = run_adversarial_attacks(
     use_energy_per_atom=True,
     device='cuda',
     debug=False,
-    top_n=100,
+    top_n=318,
     save_output=True,
     output_dir='../data/adversarial_attacks/gen_8_no_shake_rmse_all',
     patience=25,
     shake=False,
     ranking_metric='force_rmse',
     reference_calculator='vasp',
+    cache_rmse=True,
+    plot_rmse_histogram=True,
+    rmse_cutoff=0.1
 )
 
 # --- Handle None return value when saving --- 

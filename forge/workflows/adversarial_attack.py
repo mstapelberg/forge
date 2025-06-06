@@ -6,11 +6,14 @@ import torch
 import argparse
 import os
 import time
+import pickle
+import hashlib
 from tqdm import tqdm
 from typing import List, Dict, Optional, Any, Union
 from pathlib import Path
 from ase import Atoms
 from ase.io import write
+import matplotlib.pyplot as plt
 
 # --- Core Forge Imports ---
 # Assume forge is installed or PYTHONPATH is set correctly
@@ -41,13 +44,14 @@ class Timer:
         return 0
 
     def summary(self):
-        print("\n===== Performance Summary =====")
-        for name, times in self.timers.items():
-            total = sum(times)
-            avg = total / len(times) if times else 0
-            count = len(times)
-            print(f"{name}: Total={total:.4f}s, Count={count}, Avg={avg:.4f}s")
-        print("==============================\n")
+        if self.debug:
+            print("\n===== Performance Summary =====")
+            for name, times in self.timers.items():
+                total = sum(times)
+                avg = total / len(times) if times else 0
+                count = len(times)
+                print(f"{name}: Total={total:.4f}s, Count={count}, Avg={avg:.4f}s")
+            print("==============================\n")
 
 
 # --- Main Workflow Function ---
@@ -67,15 +71,23 @@ def run_adversarial_attacks(
     device: Optional[str] = None,
     debug: bool = False,
     output_dir: str = '.',
-    save_output: bool = False, # Added save_output flag back
-    patience: int = 25, # Add patience parameter
-    shake: bool = False, # Add shake parameter
-    shake_std: float = 0.05, # Add shake_std for consistency
-    ranking_metric: str = 'variance',
-    reference_calculator: str = 'vasp'
+    save_output: bool = False,
+    patience: int = 25,
+    shake: bool = False,
+    shake_std: float = 0.05,
+    ranking_metric: str = 'force_rmse',
+    reference_calculator: str = 'vasp',
+    cache_rmse: bool = True,
+    plot_rmse_histogram: bool = True,
+    rmse_cutoff: Optional[float] = None
 ) -> Union[Dict[int, List[Atoms]], None]:
     """
     Runs the gradient-based adversarial attack workflow using a provided DatabaseManager.
+
+    NEW FEATURES:
+        cache_rmse: If True, cache RMSE calculations to avoid recomputation
+        plot_rmse_histogram: If True, plot histogram of RMSE values with statistics
+        rmse_cutoff: If provided, show how many structures would be selected at this cutoff
 
     Args:
         db_manager: An initialized instance of DatabaseManager.
@@ -94,10 +106,14 @@ def run_adversarial_attacks(
         output_dir: Directory to save output files.
         save_output: If True, save trajectories and plots to output_dir and return None.
                       If False, return the dictionary of trajectories.
+        patience: Patience parameter for the optimizer.
         shake: If True, apply random shake when optimizer patience is reached. If False, stop.
         shake_std: Standard deviation for the random shake if shake is True.
         ranking_metric: Metric to rank structures for attack ('variance' or 'force_rmse').
         reference_calculator: Calculator name to fetch for reference forces if ranking by RMSE.
+        cache_rmse: Whether to cache RMSE calculations for reuse
+        plot_rmse_histogram: Whether to generate RMSE distribution histogram
+        rmse_cutoff: Optional RMSE cutoff threshold for analysis
 
     Returns:
         If save_output is False (default): Returns a dictionary where keys are parent IDs
@@ -108,6 +124,26 @@ def run_adversarial_attacks(
     wf_timer = Timer(debug=debug)
     wf_timer.start("total_workflow")
 
+    # --- Create cache key for RMSE calculations ---
+    if ranking_metric == 'force_rmse' and cache_rmse:
+        # Create a hash based on model paths and reference calculator
+        cache_key_string = f"{reference_calculator}_{'_'.join(sorted(model_paths))}"
+        cache_key = hashlib.md5(cache_key_string.encode()).hexdigest()[:12]
+        cache_dir = Path(output_dir) / "rmse_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / f"rmse_cache_{cache_key}.pkl"
+        
+        # Try to load existing cache
+        rmse_cache = {}
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'rb') as f:
+                    rmse_cache = pickle.load(f)
+                print(f"[INFO] Loaded RMSE cache with {len(rmse_cache)} entries from {cache_file}")
+            except Exception as e:
+                print(f"[WARN] Failed to load RMSE cache: {e}")
+                rmse_cache = {}
+    
     # --- Initialization ---
     wf_timer.start("init")
     print("--- Starting Adversarial Attack Workflow ---")
@@ -215,8 +251,20 @@ def run_adversarial_attacks(
 
     if ranking_metric == 'force_rmse':
         print("\nCalculating initial force RMSE...")
+        cached_count = 0
+        computed_count = 0
+        
         for i, data in enumerate(tqdm(structures_to_process, desc="Initial Force RMSE Calc")):
-            atoms = data['atoms'].copy() # Use a copy to prevent side effects
+            structure_id = data['id']
+            
+            # Check cache first
+            if cache_rmse and structure_id in rmse_cache:
+                rmse = rmse_cache[structure_id]
+                initial_metrics.append({'id': structure_id, 'metric': float(rmse), 'index': i})
+                cached_count += 1
+                continue
+            
+            atoms = data['atoms'].copy()
             try:
                 # 1. Get reference forces stored in the Atoms object from the database query.
                 if not atoms.has("forces"):
@@ -248,12 +296,34 @@ def run_adversarial_attacks(
                     raise ValueError(f"Shape mismatch between reference forces {ref_forces.shape} and model forces {mean_model_forces.shape}")
 
                 rmse = np.sqrt(np.mean((mean_model_forces - ref_forces)**2))
-                initial_metrics.append({'id': data['id'], 'metric': float(rmse), 'index': i})
+                initial_metrics.append({'id': structure_id, 'metric': float(rmse), 'index': i})
+                
+                # Cache the result
+                if cache_rmse:
+                    rmse_cache[structure_id] = float(rmse)
+                computed_count += 1
 
             except Exception as e:
-                print(f"\n[WARN] Failed force RMSE calculation for structure {data['id']}: {e}")
-                initial_metrics.append({'id': data['id'], 'metric': -1, 'index': i})  # Mark as failed
-
+                print(f"\n[WARN] Failed force RMSE calculation for structure {structure_id}: {e}")
+                initial_metrics.append({'id': structure_id, 'metric': -1, 'index': i})
+        
+        # Save updated cache
+        if cache_rmse and computed_count > 0:
+            try:
+                with open(cache_file, 'wb') as f:
+                    pickle.dump(rmse_cache, f)
+                print(f"[INFO] Saved updated RMSE cache to {cache_file}")
+            except Exception as e:
+                print(f"[WARN] Failed to save RMSE cache: {e}")
+        
+        print(f"[INFO] RMSE calculations: {cached_count} from cache, {computed_count} newly computed")
+        
+        # Generate RMSE histogram and statistics
+        if plot_rmse_histogram:
+            valid_rmse_values = [m['metric'] for m in initial_metrics if m['metric'] >= 0]
+            if valid_rmse_values:
+                _plot_rmse_histogram(valid_rmse_values, top_n, rmse_cutoff, output_dir)
+    
     elif ranking_metric == 'variance':
         print("\nCalculating initial variances...")
         for i, data in enumerate(tqdm(structures_to_process, desc="Initial Variance Calc")):
@@ -392,6 +462,104 @@ def run_adversarial_attacks(
     else:
         # Return the collected trajectories dictionary
         return all_trajectories
+
+
+def _plot_rmse_histogram(rmse_values: List[float], top_n: int, rmse_cutoff: Optional[float], output_dir: str):
+    """Plot histogram of RMSE values with statistics and selection info."""
+    rmse_array = np.array(rmse_values)
+    
+    # Calculate statistics
+    mean_rmse = np.mean(rmse_array)
+    median_rmse = np.median(rmse_array)
+    std_rmse = np.std(rmse_array)
+    q25 = np.percentile(rmse_array, 25)
+    q75 = np.percentile(rmse_array, 75)
+    q90 = np.percentile(rmse_array, 90)
+    q95 = np.percentile(rmse_array, 95)
+    
+    # Sort for top-N analysis
+    sorted_rmse = np.sort(rmse_array)[::-1]  # Descending order
+    
+    plt.figure(figsize=(12, 8))
+    
+    # Main histogram
+    n_bins = min(50, len(rmse_values) // 10)
+    n, bins, patches = plt.hist(rmse_array, bins=n_bins, alpha=0.7, color='skyblue', edgecolor='black')
+    
+    # Calculate number of structures above each threshold
+    n_above_mean = np.sum(rmse_array >= mean_rmse)
+    n_above_median = np.sum(rmse_array >= median_rmse)
+    n_above_q95 = np.sum(rmse_array >= q95)
+    n_above_q90 = np.sum(rmse_array >= q90)
+    n_above_q75 = np.sum(rmse_array >= q75)
+    
+    # Add vertical lines for statistics with structure counts
+    plt.axvline(mean_rmse, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_rmse:.4f} ({n_above_mean} structures)')
+    plt.axvline(median_rmse, color='green', linestyle='--', linewidth=2, label=f'Median: {median_rmse:.4f} ({n_above_median} structures)')
+    plt.axvline(q95, color='orange', linestyle=':', linewidth=2, label=f'95th percentile: {q95:.4f} ({n_above_q95} structures)')
+    plt.axvline(q90, color='brown', linestyle=':', linewidth=1, label=f'90th percentile: {q90:.4f} ({n_above_q90} structures)')
+    plt.axvline(q75, color='purple', linestyle=':', linewidth=1, label=f'75th percentile: {q75:.4f} ({n_above_q75} structures)')
+    
+    # Show top-N threshold
+    if top_n <= len(sorted_rmse):
+        top_n_threshold = sorted_rmse[top_n - 1]
+        plt.axvline(top_n_threshold, color='purple', linestyle='-', linewidth=3, 
+                   label=f'Top {top_n} threshold: {top_n_threshold:.4f}')
+    
+    # Show custom cutoff if provided
+    if rmse_cutoff is not None:
+        n_selected_at_cutoff = np.sum(rmse_array >= rmse_cutoff)
+        plt.axvline(rmse_cutoff, color='magenta', linestyle='-', linewidth=3,
+                   label=f'Custom cutoff {rmse_cutoff:.4f} (selects {n_selected_at_cutoff})')
+    
+    plt.xlabel('Force RMSE (eV/Å)', fontsize=12)
+    plt.ylabel('Number of Structures', fontsize=12)
+    plt.title('Distribution of Force RMSE Values', fontsize=14)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Add statistics text box
+    stats_text = (
+        f'Total structures: {len(rmse_values)}\n'
+        f'Mean: {mean_rmse:.4f}\n'
+        f'Median: {median_rmse:.4f}\n'
+        f'Std: {std_rmse:.4f}\n'
+        f'25th percentile: {q25:.4f}\n'
+        f'75th percentile: {q75:.4f}\n'
+        f'90th percentile: {q90:.4f}\n'
+        f'95th percentile: {q95:.4f}'
+    )
+    
+    if rmse_cutoff is not None:
+        stats_text += f'\n\nAt cutoff {rmse_cutoff:.4f}:\n{n_selected_at_cutoff} structures selected'
+    
+    plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes, 
+             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+    
+    # Save plot
+    plot_path = Path(output_dir) / 'rmse_distribution.png'
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"\n=== RMSE Distribution Statistics ===")
+    print(f"Total structures: {len(rmse_values)}")
+    print(f"Mean RMSE: {mean_rmse:.4f} eV/Å ({n_above_mean} structures above)")
+    print(f"Median RMSE: {median_rmse:.4f} eV/Å ({n_above_median} structures above)")
+    print(f"Standard deviation: {std_rmse:.4f} eV/Å")
+    print(f"25th percentile: {q25:.4f} eV/Å ({len(rmse_values) - int(0.25 * len(rmse_values))} structures above)")
+    print(f"75th percentile: {q75:.4f} eV/Å ({n_above_q75} structures above)")
+    print(f"90th percentile: {q90:.4f} eV/Å ({n_above_q90} structures above)")
+    print(f"95th percentile: {q95:.4f} eV/Å ({n_above_q95} structures above)")
+    
+    if top_n <= len(sorted_rmse):
+        print(f"Top {top_n} threshold: {sorted_rmse[top_n - 1]:.4f} eV/Å")
+    
+    if rmse_cutoff is not None:
+        print(f"Structures above {rmse_cutoff:.4f} eV/Å cutoff: {n_selected_at_cutoff}")
+    
+    print(f"Histogram saved to: {plot_path}")
+    print("="*40)
 
 
 # --- Command-Line Interface ---

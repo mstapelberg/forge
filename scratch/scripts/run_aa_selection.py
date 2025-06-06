@@ -22,10 +22,12 @@ def main():
     # --- Start of User Configuration ---
     
     # Directory containing .xyz trajectory files.
-    INPUT_DIR = "../data/adversarial_attacks/gen_8_no_shake_rmse_10_debug"
+    #INPUT_DIR = "../data/adversarial_attacks/gen_8_no_shake_rmse_10_debug"
+    INPUT_DIR = '../data/adversarial_attacks/gen_8_no_shake_rmse_all'
     
     # Directory to save VASP job folders and analysis plots.
-    OUTPUT_DIR = "../data/adversarial_attacks/gen_8_no_shake_rmse_10_debug_vasp_jobs"
+    #OUTPUT_DIR = "../data/adversarial_attacks/gen_8_no_shake_rmse_10_debug_vasp_jobs"
+    OUTPUT_DIR = "../data/adversarial_attacks/gen_8_no_shake_rmse_all_vasp_jobs"
     
     # List of paths to the MACE model files (.model) for the ensemble.
     MACE_MODEL_PATHS = [
@@ -37,7 +39,7 @@ def main():
     ]
     
     # Number of diverse structures to select.
-    N_SELECT = 250
+    N_SELECT = 1590
     
     # Device to run MACE on ('cpu' or 'cuda').
     DEVICE = "cuda"

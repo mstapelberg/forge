@@ -51,15 +51,16 @@ class Timer:
 
     def summary(self):
         """Print summary of all timers."""
-        print("\n===== Performance Summary =====")
-        for name, times in self.timers.items():
-            total = sum(times)
-            avg = total / len(times) if times else 0
-            print(f"{name}:")
-            print(f"  Total: {total:.4f} seconds")
-            print(f"  Count: {len(times)}")
-            print(f"  Average: {avg:.4f} seconds")
-        print("==============================\n")
+        if self.debug:
+            print("\n===== Performance Summary =====")
+            for name, times in self.timers.items():
+                total = sum(times)
+                avg = total / len(times) if times else 0
+                print(f"{name}:")
+                print(f"  Total: {total:.4f} seconds")
+                print(f"  Count: {len(times)}")
+                print(f"  Average: {avg:.4f} seconds")
+            print("==============================\n")
 
 class GradientAdversarialOptimizer:
     """Optimizer that uses PyTorch autograd to maximize adversarial loss."""

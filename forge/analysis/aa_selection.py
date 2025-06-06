@@ -7,6 +7,7 @@ from ase import Atoms
 from typing import List, Tuple, Optional, Union, Dict
 import warnings
 from mace.calculators.mace import MACECalculator # Assuming MACE is the primary target
+from tqdm import tqdm
 
 class AAAnalyzer:
     """
@@ -57,11 +58,15 @@ class AAAnalyzer:
         valid_indices_temp = []
         temp_embeddings_list = [None] * self.n_initial_structures # Temp list during calculation
 
-        # Simple one-by-one calculation for now
-        for i, atoms in enumerate(self.atoms_list):
+        # Simple one-by-one calculation for now with progress bar
+        for i, atoms in tqdm(enumerate(self.atoms_list), total=self.n_initial_structures, desc="MACE descriptors"):
             try:
                 # Ensure atoms object is suitable if needed
                 desc = self.calculator.get_descriptors(atoms)
+
+                # Handle ensemble descriptor output (list of arrays)
+                if isinstance(desc, list):
+                    desc = np.mean(desc, axis=0)
 
                 if desc is None or not isinstance(desc, np.ndarray) or desc.ndim != 2 or desc.shape[0] == 0:
                      warnings.warn(f"Invalid descriptor for structure index {i} (shape: {getattr(desc, 'shape', 'N/A')}, type: {type(desc)}). Skipping.")
@@ -165,13 +170,10 @@ class AAAnalyzer:
 
         variances_np = np.array(selection_variances) # Use the filtered variances
 
-        # --- The rest of the logic is similar to the standalone function ---
-        # --- using selection_* lists and n_structures_for_selection ---
-
         # --- Step 2: Aggregate Per-Atom Embeddings (using selection_embeddings) ---
         aggregated_embeddings_list = []
         print(f"Aggregating per-atom embeddings for {n_structures_for_selection} structures using '{aggregation_method}'...")
-        for emb_array in selection_embeddings:
+        for emb_array in tqdm(selection_embeddings, desc="Aggregating embeddings"):
             if aggregation_method == 'mean':
                 aggregated_embeddings_list.append(np.mean(emb_array, axis=0))
             elif aggregation_method == 'sum':

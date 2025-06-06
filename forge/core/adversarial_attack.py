@@ -4,7 +4,7 @@
 import numpy as np
 from ase import Atoms
 from ase.io import read, write
-from mace.calculators.mace import MACECalculator
+from mace.calculators import MACECalculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from scipy.spatial.distance import pdist, squareform
 import os
@@ -15,6 +15,10 @@ import torch
 import time
 import matplotlib.pyplot as plt
 import copy # Import the copy module
+# --- New Imports for Autograd ---
+from mace.data import AtomicData, config_from_atoms
+from mace.tools.torch_geometric import Batch
+
 
 class Timer:
     """Simple timer for performance debugging."""
@@ -75,7 +79,6 @@ class GradientAdversarialOptimizer:
             energy_list: List of energies (total or per atom) for normalization constant calculation
             use_energy_per_atom: If True, treat energy_list as energy/atom and use energy/atom for probability calc.
         """
-        self.energy_list = energy_list
         self.model_paths = model_paths
         self.device = device
         self.learning_rate = learning_rate
@@ -83,15 +86,24 @@ class GradientAdversarialOptimizer:
         self.include_probability = include_probability
         self.debug = debug
         self.timer = Timer(debug=debug)
-        self.dtype = torch.float32  # Explicitly set data type
+        self.dtype = torch.float32
         self.use_energy_per_atom = use_energy_per_atom
-
-        # Initialize ASE calculator for force calculations
+        
+        # Initialize ASE calculator for force calculations and to hold models
         self.timer.start("calculator_init")
-        self.calculator = AdversarialCalculator(
-            model_paths=model_paths,
-            device=device
-        )
+        try:
+            self.calculator = MACECalculator(
+                model_paths=self.model_paths,
+                device=self.device,
+                default_dtype='float32'
+            )
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize MACECalculator in optimizer: {e}")
+            raise
+        
+        # The models are the raw torch models, stored on the calculator
+        self.models = self.calculator.models
+
         self.timer.stop("calculator_init")
 
         # Calculate normalization constant based on flag
@@ -195,7 +207,7 @@ class GradientAdversarialOptimizer:
 
     def optimize(self, atoms, generation: int, n_iterations=60, min_distance=1.5, output_dir='.',
                  patience: int = 20, shake_std: float = 0.05, shake: bool = False):
-        """Run gradient-based adversarial attack optimization.
+        """Run gradient-based adversarial attack optimization using PyTorch Autograd.
 
         Args:
             atoms: ASE Atoms object (must contain 'structure_id' and 'config_type' in info)
@@ -219,202 +231,188 @@ class GradientAdversarialOptimizer:
             raise ValueError("Input 'atoms' object must have 'structure_id' in its info dictionary.")
         original_config_type = atoms.info.get('config_type', 'unknown')
         struct_name = atoms.info.get('structure_name', f'structure_{parent_id}')
-
+        
         # Derive new config_type
         if '_aa' in original_config_type:
             new_config_type = original_config_type
         else:
             new_config_type = f"{original_config_type}_aa"
 
-        # Initialize tracking variables
-        original_positions = atoms.positions.copy()
-        best_loss = -float('inf') # Still track best loss for potential future use/logging
-        steps_without_improvement = 0 # Counter for patience
-        trajectory = [] # Store Atoms objects for each step
+        # --- Setup for PyTorch Autograd ---
+        self.timer.start("autograd_setup")
+        # Get parameters from the initialized calculator
+        ref_model = self.models[0]
+        r_max = ref_model.r_max.item()
+        z_table = self.calculator.z_table # Get z_table from the calculator
+        
+        # Create a data object for MACE, which is then batched.
+        config = config_from_atoms(atoms)
+        data = AtomicData.from_config(config, z_table=z_table, cutoff=r_max)
+        # Move the data to the correct device after batching.
+        data = Batch.from_data_list([data]).to(self.device)
 
-        # Initialize displacement tensor with gradient tracking
+        # Displacement tensor will be optimized.
         displacement = torch.zeros(
             (len(atoms), 3),
             requires_grad=True,
-            device="cpu", # Keep displacement on CPU for numpy conversion
+            device=self.device,
             dtype=self.dtype
         )
+        # Keep track of the original positions on the correct device.
+        original_positions_tensor = data.positions.clone()
 
-        # Create optimizer
         optimizer = torch.optim.Adam([displacement], lr=self.learning_rate)
+        self.timer.stop("autograd_setup")
 
-        print(f"[INFO] Starting optimization for parent ID: {parent_id}, generation: {generation}, patience={patience}, shake={shake}, shake_std={shake_std}")
+        # Initialize tracking variables
+        best_loss = -float('inf')
+        steps_without_improvement = 0
+        trajectory = []
+
+        print(f"[INFO] Starting optimization for parent ID: {parent_id}, gen: {generation} with PyTorch Autograd (patience={patience}, shake={shake})")
 
         # --- Optimization loop ---
         for step in tqdm(range(n_iterations), desc=f"Optimizing {struct_name}"):
             self.timer.start(f"step_{step}")
 
-            # --- Check for patience ---
+            # --- Patience and Shake Logic ---
             if steps_without_improvement >= patience:
-                 if shake:
-                     print(f"\n[INFO] Step {step}: No improvement for {patience} steps. Applying random shake (std={shake_std} Å).")
-                     noise = np.random.normal(0, shake_std, size=original_positions.shape)
-                     # --- Apply shake to the *base* positions ---
-                     original_positions += noise
-                     # --- Reset learned displacement and optimizer state ---
-                     displacement.data.zero_()
-                     optimizer = torch.optim.Adam([displacement], lr=self.learning_rate) # Reinitialize optimizer
-                     steps_without_improvement = 0 # Reset counter after shake
-                     # NOTE: The next step will calculate loss based on the *shaken* structure
-                 else:
-                     print(f"\n[INFO] Step {step}: No improvement for {patience} steps and shake=False. Stopping optimization.")
-                     break # Stop the optimization loop
+                if shake:
+                    print(f"\n[INFO] Step {step}: No improvement for {patience} steps. Applying random shake (std={shake_std} Å).")
+                    with torch.no_grad():
+                        noise = torch.randn_like(original_positions_tensor) * shake_std
+                        original_positions_tensor.data.add_(noise)
+                        displacement.data.zero_()
+                    # Reinitialize optimizer state
+                    optimizer = torch.optim.Adam([displacement], lr=self.learning_rate)
+                    steps_without_improvement = 0
+                else:
+                    print(f"\n[INFO] Step {step}: No improvement for {patience} steps and shake=False. Stopping optimization.")
+                    break
 
-            # Zero gradients
             optimizer.zero_grad()
 
-            # Apply displacements to get new positions
-            # Ensure displacement is detached before numpy conversion
-            new_positions = original_positions + displacement.detach().cpu().numpy()
+            # --- Forward Pass ---
+            self.timer.start("forward_pass")
+            # Update positions in the data dictionary for the forward pass
+            new_positions_tensor = original_positions_tensor + displacement
+            data.positions = new_positions_tensor
 
-            # Create current_atoms for this step's calculations
-            current_atoms_step = atoms.copy()
-            current_atoms_step.positions = new_positions
+            # --- Minimum Distance Check (with torch) ---
+            if len(atoms) > 1:
+                dists = torch.pdist(data.positions)
+                min_dist_val = torch.min(dists)
+                if min_dist_val < min_distance:
+                    if self.debug:
+                        print(f"[DEBUG] Step {step}: Min dist violated: {min_dist_val:.3f} Å. Scaling back.")
+                    with torch.no_grad():
+                        # If displacement is zero, scaling won't help. Add a small random perturbation before scaling.
+                        if torch.norm(displacement.data) < 1e-6:
+                             displacement.data.add_(torch.randn_like(displacement.data) * 0.01)
+                        
+                        displacement.data *= 0.9
+                    self.timer.stop("forward_pass")
+                    self.timer.stop(f"step_{step}")
+                    continue
 
-            # Check minimum distance constraint
-            self.timer.start("distance_check")
-            distances = current_atoms_step.get_all_distances(mic=True)
-            np.fill_diagonal(distances, np.inf) # Ignore self-distance
-            min_dist = np.min(distances) if distances.size > 0 else np.inf
-            self.timer.stop("distance_check")
+            # --- Calculate forces and variance using autograd ---
+            forces_list = []
+            energy_list = [] # For probability calculation if needed
+            for torch_model in self.models: # Iterate directly over raw torch models
+                # model expects a dict, not a Batch object.
+                # We set training=True to enable creation of the graph for second derivatives, which is required for autograd.
+                output = torch_model(data.to_dict(), training=True, compute_force=True)
+                forces_list.append(output['forces'])
+                # Always append energy for logging, even if probability is not used in loss
+                if 'energy' in output:
+                    energy_list.append(output['energy'])
 
-            if min_dist < min_distance:
-                if self.debug:
-                    print(f"[DEBUG] Step {step}: Minimum distance constraint violated: {min_dist:.3f} Å. Scaling back.")
-                # Scale back displacement to satisfy constraint
-                scale_factor = 0.9
-                with torch.no_grad():
-                    displacement.data *= scale_factor
-                self.timer.stop(f"step_{step}")
-                # Skip gradient calculation and optimizer step for this iteration
-                continue
+            forces_tensor = torch.stack(forces_list)
+            
+            # --- Calculate Variance (Torch native) ---
+            force_magnitudes = torch.linalg.norm(forces_tensor, dim=2, keepdim=True)
+            force_magnitudes = torch.where(force_magnitudes < 1e-10, torch.tensor(1.0, device=self.device, dtype=self.dtype), force_magnitudes)
+            normalized_forces = forces_tensor / force_magnitudes
+            atom_variances = torch.var(normalized_forces, dim=0) # Variance across models
+            total_atom_variances = torch.sum(atom_variances, dim=1) # Sum of x,y,z variances
+            variance = torch.mean(total_atom_variances)
 
-            # Calculate variance and mean forces using the step's atoms
-            self.timer.start("variance_forces_calc")
-            variance, _, mean_forces = self._calculate_force_variance(current_atoms_step)
-            self.timer.stop("variance_forces_calc")
-
-            # Calculate energy using the step's atoms
-            energy = self._calculate_energy(current_atoms_step)
-
-            # Calculate probability if needed
-            probability = 1.0 # Default if not included
+            # --- Calculate Loss ---
+            mean_energy = None
             if self.include_probability:
-                self.timer.start("probability_calculation")
-                probability = self._calculate_probability(
-                    energy, self.temperature, self.normalization_constant
-                )
-                self.timer.stop("probability_calculation")
+                 if energy_list:
+                     energy_tensor = torch.stack(energy_list)
+                     mean_energy = torch.mean(energy_tensor)
+                     # Note: probability calculation with autograd still needs full implementation
+                     print("[WARN] probability calculation with autograd is not fully implemented. Ignoring probability term for loss.")
+                 else:
+                     print("[WARN] `include_probability` is True but energy list is empty. Ignoring probability term.")
 
-            # Calculate loss
-            loss = probability * variance if self.include_probability else variance
+            # Also compute mean_energy if it hasn't been, for logging purposes
+            if mean_energy is None and energy_list:
+                energy_tensor = torch.stack(energy_list)
+                mean_energy = torch.mean(energy_tensor)
+            
+            loss_val = variance
+            self.timer.stop("forward_pass")
 
             # Update best loss tracking and patience counter
-            if loss > best_loss:
-                best_loss = loss
-                steps_without_improvement = 0 # Reset patience counter
-                if self.debug:
-                     print(f"[DEBUG] Step {step}: New best loss: {loss:.6f}")
+            current_loss_item = loss_val.item()
+            if current_loss_item > best_loss:
+                best_loss = current_loss_item
+                steps_without_improvement = 0
             else:
-                steps_without_improvement += 1 # Increment patience counter
+                steps_without_improvement += 1
 
             # --- Store step results in trajectory ---
             self.timer.start("store_trajectory_step")
-            step_atoms = current_atoms_step # Use the atoms object already created for this step
-
-            # Clear previous calculator if attached by internal methods
-            step_atoms.calc = None
+            step_atoms = atoms.copy() # Create a fresh copy
+            step_atoms.positions = new_positions_tensor.detach().cpu().numpy()
+            step_atoms.calc = None # Always clear calculator
 
             # Store results in info
-            step_atoms.info['parent_id'] = parent_id
-            step_atoms.info['generation'] = generation
-            step_atoms.info['config_type'] = new_config_type
-            step_atoms.info['step'] = step
-            step_atoms.info['variance'] = variance
-            step_atoms.info['energy'] = energy # Mean energy
-            step_atoms.info['loss'] = loss
-            if self.include_probability:
-                step_atoms.info['probability'] = probability
-
-            # Remove structure_id if it exists (inherited from original atoms)
-            if 'structure_id' in step_atoms.info:
-                del step_atoms.info['structure_id']
-
-            # Remove calculation_info if it exists (inherited from original atoms)
-            if 'calculation_info' in step_atoms.info:
-                del step_atoms.info['calculation_info']
-
+            step_atoms.info.update({
+                'parent_id': parent_id,
+                'generation': generation,
+                'config_type': new_config_type,
+                'step': step,
+                'variance': variance.item(),
+                'loss': current_loss_item,
+                'energy': mean_energy.item() if mean_energy is not None else float('nan'),
+                # 'probability': probability.item(), # if calculated
+            })
+            # Clean up inherited info
+            step_atoms.info.pop('structure_id', None)
+            step_atoms.info.pop('calculation_info', None)
+            
             # Store mean forces in arrays
-            step_atoms.arrays['forces'] = mean_forces # Store mean forces
+            mean_forces = torch.mean(forces_tensor, dim=0).detach().cpu().numpy()
+            step_atoms.arrays['forces'] = mean_forces
 
-            # --- Use deepcopy to ensure independence --- 
             trajectory.append(copy.deepcopy(step_atoms))
             self.timer.stop("store_trajectory_step")
 
-            # --- Compute gradient using numerical approximation ---
-            # (Calculation performed on current_atoms_step implicitly via forward diff)
-            self.timer.start("gradient_calculation")
-            epsilon = 1e-4
-            grad = np.zeros_like(original_positions)
-
-            if self.debug and step % 10 == 0: # Print less often
-                print(f"[DEBUG] Grad calc step {step}: Starting gradient for {len(atoms)} atoms")
-
-            # Re-use current_atoms_step for gradient calculation to avoid extra copies
-            temp_atoms_for_grad = current_atoms_step.copy()
-
-            for i in range(len(atoms)):
-                for j in range(3):
-                    # Forward difference positions
-                    forward_positions = new_positions.copy()
-                    forward_positions[i, j] += epsilon
-                    temp_atoms_for_grad.positions = forward_positions # Modify positions of the temp object
-
-                    # Calculate forward variance
-                    forward_variance, _, _ = self._calculate_force_variance(temp_atoms_for_grad)
-
-                    # Calculate forward loss
-                    if self.include_probability:
-                        forward_energy = self._calculate_energy(temp_atoms_for_grad)
-                        forward_probability = self._calculate_probability(
-                            forward_energy, self.temperature, self.normalization_constant
-                        )
-                        forward_loss = forward_probability * forward_variance
-                    else:
-                        forward_loss = forward_variance
-
-                    # Estimate gradient component
-                    grad[i, j] = (forward_loss - loss) / epsilon
-
-            self.timer.stop("gradient_calculation")
-
-            # Convert gradient to torch tensor
-            grad_tensor = torch.tensor(grad, device=displacement.device, dtype=self.dtype)
-
-            # Manually set the gradient on the displacement tensor
-            # Gradient points towards increase, optimizer minimizes, so negate it.
-            if displacement.grad is None:
-                 displacement.grad = -grad_tensor
-            else:
-                 displacement.grad.copy_(-grad_tensor) # Use copy_ for in-place update if grad already exists
-
-            # Step optimizer
+            # --- Backward Pass ---
+            self.timer.start("backward_pass")
+            # We want to MAXIMIZE variance/loss, so we minimize its NEGATIVE.
+            objective = -loss_val
+            objective.backward()
+            self.timer.stop("backward_pass")
+            
+            # --- Optimizer Step ---
             self.timer.start("optimizer_step")
             optimizer.step()
             self.timer.stop("optimizer_step")
 
             self.timer.stop(f"step_{step}")
-
+            
             # Log progress
             if self.debug and (step % 5 == 0 or step == n_iterations - 1):
-                 print(f"[DEBUG] Step {step}: Var={variance:.6f}, Prob={probability:.6f}, Loss={loss:.6f}, LR={optimizer.param_groups[0]['lr']:.1e}, Disp_norm={torch.norm(displacement.data):.4f}")
+                 print(f"[DEBUG] Step {step}: Var={variance.item():.6f}, Loss={current_loss_item:.6f}, LR={optimizer.param_groups[0]['lr']:.1e}, Disp_norm={torch.norm(displacement.data):.4f}")
             elif not self.debug and (step % 10 == 0 or step == n_iterations - 1):
-                 print(f"Step {step}: Variance={variance:.6f}, Probability={probability:.6f}, Loss={loss:.6f}")
+                 # Reduced probability logging as it's not used in loss
+                 print(f"Step {step}: Variance={variance.item():.6f}, Loss={current_loss_item:.6f}")
+
 
         # --- Finalization ---
         print(f"[INFO] Optimization finished for parent ID: {parent_id}. Total steps: {len(trajectory)}")
@@ -557,11 +555,25 @@ class AdversarialCalculator:
         # Initialize each model separately to ensure proper loading
         self.models = []
         for model_path in self.model_paths:
-            model = MACECalculator(
-                model_paths=model_path,
-                device=self.device,
-                default_dtype=self.default_dtype
-            )
+            # The use_cueq flag is specific to certain setups, so we handle it carefully.
+            calc_kwargs = {
+                'model_paths': model_path,
+                'device': self.device,
+                'default_dtype': self.default_dtype
+            }
+            if self.device == 'cuda':
+                # This flag may not always be present or needed.
+                # A try-except block could make this more robust if needed.
+                # For now, assume it's a valid kwarg for the user's MACE version.
+                try:
+                    # Attempt to initialize with use_cueq
+                    model = MACECalculator(**calc_kwargs, use_cueq=True)
+                except TypeError:
+                    # Fallback if use_cueq is not a valid argument
+                    print("[INFO] MACECalculator does not accept 'use_cueq'. Initializing without it.")
+                    model = MACECalculator(**calc_kwargs)
+            else:
+                model = MACECalculator(**calc_kwargs)
             self.models.append(model)
 
     def calculate_forces(self, atoms):
@@ -575,6 +587,10 @@ class AdversarialCalculator:
         """
         forces_list = []
         for model in self.models:
+            # To prevent ASE from using cached results from the previous model,
+            # we assign a new empty dictionary to .results.
+            # This is safer than .clear() as it creates the attribute if it's missing.
+            atoms.results = {}
             atoms.calc = model
             try:
                 # Force energy calculation to ensure forces are computed
@@ -606,217 +622,4 @@ class AdversarialCalculator:
         # Calculate variance across models for each atom
         atom_variances = np.var(normalized_forces, axis=0)
         total_atom_variances = np.sum(atom_variances, axis=1)
-        return total_atom_variances
-
-class DisplacementGenerator:
-    def __init__(self, min_distance=2.0):
-        """Initialize displacement generator.
-        
-        Args:
-            min_distance (float): Minimum allowed distance between atoms (Å)
-        """
-        self.min_distance = min_distance
-        
-    def _check_overlaps(self, positions, cell, pbc):
-        """Check if any atoms are closer than min_distance."""
-        distances = squareform(pdist(positions))
-        np.fill_diagonal(distances, np.inf)
-        return np.all(distances > self.min_distance)
-    
-    def _apply_mb_displacement(self, atoms, temperature, single_atom_idx=None, max_attempts=100):
-        """Apply Maxwell-Boltzmann displacement with overlap checking."""
-        temp_atoms = atoms.copy()
-        
-        for attempt in range(max_attempts):
-            MaxwellBoltzmannDistribution(temp_atoms, temperature_K=temperature)
-            displacements = temp_atoms.get_velocities()
-            
-            if single_atom_idx is not None:
-                mask = np.zeros_like(displacements)
-                mask[single_atom_idx] = 1
-                displacements *= mask
-            
-            new_positions = atoms.positions + displacements
-            
-            if self._check_overlaps(new_positions, atoms.cell, atoms.pbc):
-                return new_positions, True
-            
-            displacements *= 0.8
-        
-        return None, False
-    
-    def generate_displacement(self, atoms, temperature, single_atom_idx=None):
-        """Generate thermally motivated displacements for atoms.
-        
-        Args:
-            atoms (Atoms): Input atomic structure
-            temperature (float): Temperature in Kelvin
-            single_atom_idx (int, optional): If provided, only displace this atom
-            
-        Returns:
-            Atoms: New Atoms object with displaced positions, or None if invalid
-        """
-        new_positions, success = self._apply_mb_displacement(
-            atoms, temperature, single_atom_idx
-        )
-        
-        if not success:
-            return None
-            
-        new_atoms = atoms.copy()
-        new_atoms.positions = new_positions
-        
-        if 'structure_name' in atoms.info:
-            new_atoms.info['parent_structure'] = atoms.info['structure_name']
-        
-        return new_atoms
-
-class AdversarialOptimizer:
-    def __init__(self, adversarial_calc, displacement_gen=None, min_distance=2.0):
-        """Initialize optimizer with calculator and displacement generator.
-        
-        Args:
-            adversarial_calc: Instance of AdversarialCalculator
-            displacement_gen: Optional instance of DisplacementGenerator
-            min_distance: Minimum atomic distance if creating new DisplacementGenerator
-        """
-        self.calculator = adversarial_calc
-        self.displacement_gen = displacement_gen or DisplacementGenerator(min_distance=min_distance)
-        
-    def _get_output_filename(self, atoms):
-        """Generate output filename based on parent structure name."""
-        if 'structure_name' in atoms.info:
-            base_name = atoms.info['structure_name']
-        else:
-            base_name = 'structure'
-        return f"{base_name}_adversarial.xyz"
-    
-    def _calculate_variance(self, atoms):
-        """Calculate force variance for structure."""
-        forces = self.calculator.calculate_forces(atoms)
-        atom_variances = self.calculator.calculate_normalized_force_variance(forces)
-        structure_variance = float(np.mean(atom_variances))
-        return structure_variance, atom_variances, forces
-    
-    def _metropolis_acceptance(self, old_variance, new_variance, temperature):
-        """Metropolis acceptance criterion for variance maximization.
-        
-        Uses relative change in variance (delta_var/old_var) to make acceptance
-        probability independent of the absolute scale of the variance.
-        """
-        old_var = float(old_variance)
-        new_var = float(new_variance)
-        
-        if new_var > old_var:
-            return True
-        else:
-            # Use relative change in variance
-            relative_delta = (new_var - old_var) / (old_var + 1e-10)  # Add small epsilon to avoid division by zero
-            probability = np.exp(relative_delta * 100 / temperature)  # Scale by 100 since relative changes are small
-            return float(np.random.random()) < probability
-    
-    def optimize(self, atoms, temperature, max_iterations=50, patience=25,
-                mode='all', output_dir='.'):
-        """Run adversarial optimization to maximize force variance.
-        
-        Args:
-            atoms: ASE Atoms object
-            temperature: Temperature in Kelvin for displacements and acceptance
-            max_iterations: Maximum optimization steps
-            patience: Stop if no improvement after this many steps
-            mode: 'all' for all atoms or 'single' for highest variance atom
-            output_dir: Directory to save trajectory
-            
-        Returns:
-            tuple: (best_atoms, best_variance, accepted_moves)
-        """
-        output_file = os.path.join(output_dir, self._get_output_filename(atoms))
-        
-        current_variance, atom_variances, _ = self._calculate_variance(atoms)
-        best_variance = current_variance
-        best_atoms = atoms.copy()
-        
-        if mode == 'single':
-            target_atom = np.argmax(atom_variances)
-            print(f"Selected atom {target_atom} with initial variance {atom_variances[target_atom]}")
-        
-        steps_without_improvement = 0
-        accepted_moves = 0
-        current_atoms = atoms.copy()
-        step_variances = [current_variance]  # Track variances at each step
-        
-        if 'structure_name' in atoms.info:
-            current_atoms.info['parent_structure'] = atoms.info['structure_name']
-        current_atoms.info['variance'] = current_variance
-        write(output_file, current_atoms, write_results=False)
-        
-        for step in tqdm(range(max_iterations), desc="Optimizing structure"):
-            if mode == 'all':
-                new_atoms = self.displacement_gen.generate_displacement(
-                    current_atoms, temperature)
-            else:
-                new_atoms = self.displacement_gen.generate_displacement(
-                    current_atoms, temperature, single_atom_idx=target_atom)
-            
-            if new_atoms is None:
-                print("Warning: Could not generate valid displacement")
-                continue
-                
-            new_variance, _, _ = self._calculate_variance(new_atoms)
-            
-            if self._metropolis_acceptance(current_variance, new_variance, temperature):
-                current_atoms = new_atoms
-                current_variance = new_variance
-                accepted_moves += 1
-                
-                current_atoms.info['variance'] = current_variance
-                write(output_file, current_atoms, append=True, write_results=False)
-                step_variances.append(current_variance)
-                
-                print(f"\nStep {step}: Accepted move")
-                print(f"New variance: {current_variance:.6f} (delta: {current_variance - best_variance:.6f})")
-                print(f"Acceptance rate: {accepted_moves/(step+1):.2%}")
-                
-                if current_variance > best_variance:
-                    best_variance = current_variance
-                    best_atoms = current_atoms.copy()
-                    steps_without_improvement = 0
-                else:
-                    steps_without_improvement += 1
-            else:
-                steps_without_improvement += 1
-                step_variances.append(current_variance)  # Keep previous variance for rejected moves
-            
-            if steps_without_improvement >= patience:
-                print(f"\nStopping: No improvement for {patience} steps")
-                break
-        
-        # Save optimization summary with step variances
-        summary_file = os.path.join(output_dir, 'optimization_summary.json')
-        if os.path.exists(summary_file):
-            with open(summary_file, 'r') as f:
-                summary = json.load(f)
-        else:
-            summary = {'results': []}
-            
-        structure_name = atoms.info.get('structure_name', 'unknown')
-        result = {
-            'structure_name': structure_name,
-            'initial_variance': float(step_variances[0]),
-            'final_variance': float(best_variance),
-            'accepted_moves': accepted_moves,
-            'total_steps': step + 1,
-            'step_variances': [float(v) for v in step_variances]
-        }
-        summary['results'].append(result)
-        
-        with open(summary_file, 'w') as f:
-            json.dump(summary, f, indent=2)
-        
-        print(f"\nOptimization complete:")
-        print(f"Best variance: {best_variance:.6f}")
-        print(f"Accepted moves: {accepted_moves}/{step+1} ({accepted_moves/(step+1):.2%})")
-        print(f"Trajectory saved to: {output_file}")
-        print(f"Summary saved to: {summary_file}")
-        
-        return best_atoms, best_variance, accepted_moves 
+        return total_atom_variances 

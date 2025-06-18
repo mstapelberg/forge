@@ -295,7 +295,7 @@ def prepare_vasp_job_from_ase(
 
     # Create Slurm script
     slurm_script = _create_slurm_script(
-        hpc_profile, 
+        hpc_profile,
         output_dir,
         job_name=job_name
     )

@@ -1,7 +1,7 @@
 # Core database interface (core/database.py)
 from typing import Any, Dict, List, Optional, Union, Tuple
 import psycopg2
-from psycopg2.extras import Json
+from psycopg2.extras import Json, execute_values
 from ase import Atoms
 import numpy as np
 import yaml
@@ -206,89 +206,158 @@ class DatabaseManager:
             raise
         if self.debug: print("[DEBUG] Exiting _initialize_tables normally.")
     
-    def add_structure(self, atoms: Atoms, source_type: str = 'vasp',
-                     parent_id: Optional[int] = None, metadata: Optional[Dict] = None) -> int:
-        """Add structure to database with thorough numpy fixing."""
+    def batch_add_structures(self, structures_data: List[Dict[str, Any]]) -> List[int]:
+        """Adds a batch of new atomic structures to the database efficiently.
+
+        This method takes a list of structure data dictionaries and inserts them
+        in a single transaction using `psycopg2.extras.execute_values` for
+        high performance.
+
+        Args:
+            structures_data: A list where each dictionary contains the data
+                for a single structure. Each dictionary should contain the
+                following keys:
+                - 'atoms' (ase.Atoms): The ASE Atoms object for the structure. This key
+                  is required.
+                - 'source_type' (str, optional): A string indicating the origin or
+                  provenance of the structure. This helps track how a structure
+                  entered the database. Examples: 'vasp-relax', 'xyz_import',
+                  'user_script', 'adversarial_attack'. This is distinct from
+                  'config_type', which is typically stored in the metadata and
+                  describes the physical configuration (e.g., 'liquid', 'defect').
+                  Defaults to 'vasp'.
+                - 'parent_id' (int, optional): The `structure_id` of a parent
+                  structure if this one was derived from it (e.g., via relaxation
+                  or an adversarial attack). Defaults to None.
+                - 'metadata' (dict, optional): A dictionary of additional
+                  data to store with the structure. This is merged with the
+                  `atoms.info` dictionary (with `metadata` taking precedence)
+                  and stored in a JSONB field. Defaults to None.
+
+        Returns:
+            List[int]: A list of the unique `structure_id`s for the newly added
+                       structures, in the same order as the input list.
+
+        Raises:
+            ValueError: If `structures_data` is empty or if any dictionary is
+                        missing the 'atoms' key.
+        """
+        if not structures_data:
+            return []
+
         if self.dry_run:
-            # Simulate adding structure and return fake ID
-            fake_id = self._fake_id_counter
-            self._fake_id_counter += 1
-            print(f"[DRY RUN] Would add structure to database with ID: {fake_id}")
-            return fake_id
+            num_structures = len(structures_data)
+            fake_ids = list(range(self._fake_id_counter, self._fake_id_counter + num_structures))
+            self._fake_id_counter += num_structures
+            print(f"[DRY RUN] Would add batch of {num_structures} structures to database with IDs: {fake_ids}")
+            return fake_ids
+
+        records_to_insert = []
+        for data in structures_data:
+            atoms = data.get('atoms')
+            if not isinstance(atoms, Atoms):
+                raise ValueError("Each dictionary in structures_data must contain an 'atoms' key with an ASE Atoms object.")
             
-        if parent_id is not None:
-            parent_id = int(parent_id)
+            source_type = data.get('source_type', 'vasp')
+            parent_id = data.get('parent_id')
+            metadata = data.get('metadata')
+            
+            if parent_id is not None:
+                parent_id = int(parent_id)
+            
+            formula_str = atoms.get_chemical_formula()
 
-        # Generate formula string if not already in metadata
-        formula_str = atoms.get_chemical_formula() 
+            combined_metadata = atoms.info.copy()
+            if metadata:
+                combined_metadata.update(metadata)
+            combined_metadata['formula_string'] = formula_str
 
-        # Combine provided metadata with atoms.info and generated formula
-        combined_metadata = atoms.info.copy() # Start with atoms.info
-        if metadata:
-            combined_metadata.update(metadata) # Add/overwrite with provided metadata
-        combined_metadata['formula_string'] = formula_str # Add formula string
-
-        # Ensure parent_id from atoms.info is captured if not explicitly passed
-        if parent_id is None and 'parent_id' in combined_metadata:
-             try:
-                  parent_id = int(combined_metadata['parent_id'])
-             except (ValueError, TypeError):
-                  print(f"[WARN] Could not parse parent_id {combined_metadata.get('parent_id')} from metadata.")
-                  parent_id = None # Ensure it's None if parsing fails
-
-
-        # Calculate composition and number of atoms
-        symbols = atoms.get_chemical_symbols()
-        if not symbols:
-             raise ValueError("Cannot add structure with no atoms.")
-        total_atoms = len(symbols)
-        composition = {}
-
-        for symbol in set(symbols):
-            count = symbols.count(symbol)
-            composition[symbol] = {
-                "at_frac": count / total_atoms,
-                "num_atoms": count
+            if parent_id is None and 'parent_id' in combined_metadata:
+                try:
+                    parent_id = int(combined_metadata['parent_id'])
+                except (ValueError, TypeError):
+                    parent_id = None
+            
+            symbols = atoms.get_chemical_symbols()
+            if not symbols:
+                raise ValueError("Cannot add structure with no atoms.")
+            total_atoms = len(symbols)
+            composition = {
+                symbol: {"at_frac": symbols.count(symbol) / total_atoms, "num_atoms": symbols.count(symbol)}
+                for symbol in set(symbols)
             }
 
-        # Compute composition hash
-        composition_hash = _compute_composition_hash(composition, decimal=4)
+            composition_hash = _compute_composition_hash(composition, decimal=4)
 
-        # Fix all data before JSON serialization
-        safe_data = {
-            'formula': atoms.get_chemical_formula(), # Keep full formula for table column
-            'composition': fix_numpy(composition),
-            'positions': fix_numpy(atoms.positions),
-            'cell': fix_numpy(atoms.cell.tolist()),
-            'pbc': fix_numpy(atoms.pbc.tolist()),
-            'metadata': fix_numpy(combined_metadata) # Use combined, fixed metadata
-        }
-
+            safe_data = {
+                'formula': formula_str,
+                'composition': fix_numpy(composition),
+                'positions': fix_numpy(atoms.positions),
+                'cell': fix_numpy(atoms.cell.tolist()),
+                'pbc': fix_numpy(atoms.pbc.tolist()),
+                'metadata': fix_numpy(combined_metadata)
+            }
+            
+            records_to_insert.append((
+                safe_data['formula'],
+                Json(safe_data['composition']),
+                Json(safe_data['positions']),
+                Json(safe_data['cell']),
+                safe_data['pbc'],
+                parent_id,
+                source_type,
+                Json(safe_data['metadata']) if safe_data['metadata'] else None,
+                composition_hash
+            ))
+        
         with self.conn.cursor() as cur:
-            cur.execute(
-                """
+            insert_query = """
                 INSERT INTO structures (
                     formula, composition, positions, cell, pbc,
                     parent_structure_id, source_type, metadata, composition_hash
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES %s
                 RETURNING structure_id
-                """,
-                (
-                    safe_data['formula'],
-                    Json(safe_data['composition']),
-                    Json(safe_data['positions']),
-                    Json(safe_data['cell']),
-                    safe_data['pbc'],
-                    parent_id, # Use validated parent_id
-                    source_type,
-                    Json(safe_data['metadata']) if safe_data['metadata'] else None,
-                    composition_hash
-                )
+            """
+            
+            results = execute_values(
+                cur, insert_query, records_to_insert,
+                template=None, page_size=100, fetch=True
             )
-            structure_id = cur.fetchone()[0]
+            structure_ids = [row[0] for row in results]
+
         self.conn.commit()
-        return structure_id
+        return structure_ids
+
+    def add_structure(self, atoms: Atoms, source_type: str = 'vasp',
+                     parent_id: Optional[int] = None, metadata: Optional[Dict] = None) -> int:
+        """Adds a single atomic structure to the database.
+
+        This method is a convenience wrapper around `batch_add_structures` for
+        adding a single item. For adding multiple structures, using
+        `batch_add_structures` directly is more performant.
+
+        Args:
+            atoms (Atoms): The ASE Atoms object representing the structure.
+            source_type (str, optional): A string indicating the origin or
+                provenance of the structure. Defaults to 'vasp'.
+            parent_id (Optional[int], optional): The `structure_id` of a parent
+                structure. Defaults to None.
+            metadata (Optional[Dict], optional): A dictionary of additional
+                data to store with the structure. Defaults to None.
+
+        Returns:
+            int: The unique `structure_id` of the newly added structure.
+        """
+        structure_data = [{
+            'atoms': atoms,
+            'source_type': source_type,
+            'parent_id': parent_id,
+            'metadata': metadata
+        }]
+        
+        new_ids = self.batch_add_structures(structure_data)
+        return new_ids[0]
     
     def _get_composition_dict(self, atoms: Atoms) -> Dict[str, float]:
         """Convert Atoms object to composition dictionary."""
@@ -348,85 +417,98 @@ class DatabaseManager:
 
             return atoms
 
-    def add_calculation(self, structure_id: int, calc_data: Dict) -> int:
-        """Add calculation results to database (new schema)."""
+    def batch_add_calculations(self, calculations_data: List[Dict[str, Any]]) -> List[int]:
+        """Adds a batch of calculation results to the database.
+
+        Args:
+            calculations_data (List[Dict[str, Any]]): A list where each dictionary
+                contains the data for a single calculation. Required keys:
+                - 'structure_id' (int): The ID of the structure for this calculation.
+                - 'calc_data' (dict): A dictionary of calculation results,
+                  which can contain 'energy', 'forces', 'stress', 'calculator',
+                  'calculation_source_path', and 'metadata'.
+        Returns:
+            List[int]: A list of the new calculation_ids.
+        Raises:
+            ValueError: if input list is empty or data is malformed.
+        """
+        if not calculations_data:
+            return []
+        
         if self.dry_run:
-             print(f"[DRY RUN] Would add calculation for structure {structure_id}")
-             fake_id = self._fake_id_counter
-             self._fake_id_counter += 1
-             return fake_id
+            num_calcs = len(calculations_data)
+            fake_ids = list(range(self._fake_id_counter, self._fake_id_counter + num_calcs))
+            self._fake_id_counter += num_calcs
+            print(f"[DRY RUN] Would add batch of {num_calcs} calculations to database with IDs: {fake_ids}")
+            return fake_ids
 
-        # Ensure structure_id exists
-        with self.conn.cursor() as cur:
-             cur.execute("SELECT 1 FROM structures WHERE structure_id = %s", (structure_id,))
-             if cur.fetchone() is None:
-                  raise ValueError(f"Cannot add calculation: Structure with ID {structure_id} does not exist.")
+        records_to_insert = []
+        for item in calculations_data:
+            structure_id = item.get('structure_id')
+            calc_data = item.get('calc_data')
+            if structure_id is None or calc_data is None:
+                raise ValueError("Each item in calculations_data must have 'structure_id' and 'calc_data' keys.")
 
-        safe_data = fix_numpy(calc_data)
+            safe_data = fix_numpy(calc_data)
+            
+            calculator = safe_data.get('calculator', safe_data.get('model_type', 'vasp'))
+            calculation_source_path = safe_data.get('calculation_source_path', safe_data.get('model_path'))
+            energy_val = safe_data.get('energy')
+            forces_val = safe_data.get('forces')
+            stress_val = safe_data.get('stress')
 
-        # Extract fields for the NEW calculations schema
-        # Use 'calculator' key preferentially, fall back to 'model_type' for compatibility
-        calculator = safe_data.get('calculator', safe_data.get('model_type', 'vasp'))
-        # Use 'calculation_source_path' preferentially, fall back to 'model_path'
-        calculation_source_path = safe_data.get('calculation_source_path', safe_data.get('model_path'))
-        energy_val = safe_data.get('energy')
-        forces_val = safe_data.get('forces')
-        stress_val = safe_data.get('stress')
+            db_energy = None
+            if isinstance(energy_val, (int, float)):
+                db_energy = float(energy_val)
+            elif isinstance(energy_val, list) and len(energy_val) == 1 and isinstance(energy_val[0], (int, float)):
+                db_energy = float(energy_val[0])
+            elif energy_val is not None:
+                try:
+                    db_energy = float(energy_val)
+                except (ValueError, TypeError):
+                    raise ValueError(f"Unexpected energy format for structure {structure_id}: {energy_val}. Batch aborted.")
+            
+            column_keys = {'structure_id', 'calculator', 'calculation_source_path', 'energy', 'forces', 'stress'}
+            old_column_keys = {'model_type', 'model_path', 'model_generation', 'ensemble_variance'}
+            exclude_keys = column_keys.union(old_column_keys).union({'metadata'})
 
-        # Handle single energy value if provided (assuming REAL column type)
-        db_energy = None
-        if isinstance(energy_val, (int, float)):
-            db_energy = float(energy_val)
-        elif isinstance(energy_val, list) and len(energy_val) == 1 and isinstance(energy_val[0], (int, float)):
-             db_energy = float(energy_val[0])
-        elif energy_val is not None:
-             # Check if it's a numpy array/scalar that fix_numpy handled
-             try:
-                  db_energy = float(energy_val)
-             except (ValueError, TypeError):
-                  print(f"[WARN] Unexpected energy format for structure {structure_id}: {energy_val}. Storing NULL.")
+            metadata_dict = {k: v for k, v in safe_data.items() if k not in exclude_keys}
+            if 'metadata' in safe_data and isinstance(safe_data['metadata'], dict):
+                metadata_dict.update(safe_data['metadata'])
 
-
-        # Metadata: Collect everything not explicitly mapped to a column
-        # Define keys mapped to specific columns in the *new* schema
-        column_keys = {'structure_id', 'calculator', 'calculation_source_path',
-                       'energy', 'forces', 'stress'}
-        # Include old names to ensure they don't leak into metadata if passed
-        old_column_keys = {'model_type', 'model_path', 'model_generation', 'ensemble_variance'}
-        # Also explicitly exclude the 'metadata' key itself from the initial collection
-        exclude_keys = column_keys.union(old_column_keys).union({'metadata'})
-
-        # Start metadata_dict with any top-level keys from safe_data not explicitly excluded
-        metadata_dict = {k: v for k, v in safe_data.items() if k not in exclude_keys}
-
-        # If the incoming calc_data had its own 'metadata' key (e.g., from VaspParser), merge its contents
-        if 'metadata' in safe_data and isinstance(safe_data['metadata'], dict):
-             nested_meta = safe_data['metadata']
-             # Update the dict with keys/values from the nested metadata
-             # This correctly unpacks the parser's metadata into the top level
-             metadata_dict.update(nested_meta)
-
+            records_to_insert.append((
+                structure_id,
+                calculator,
+                calculation_source_path,
+                db_energy,
+                Json(forces_val) if forces_val is not None else None,
+                Json(stress_val) if stress_val is not None else None,
+                Json(metadata_dict) if metadata_dict else None
+            ))
 
         with self.conn.cursor() as cur:
-            cur.execute("""
+            insert_query = """
                 INSERT INTO calculations (
                     structure_id, calculator, calculation_source_path,
                     energy, forces, stress, metadata
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES %s
                 RETURNING calculation_id
-            """, (
-                structure_id,
-                calculator,
-                calculation_source_path, # Allows NULL
-                db_energy,               # Processed REAL value or None
-                Json(forces_val) if forces_val is not None else None,
-                Json(stress_val) if stress_val is not None else None,
-                Json(metadata_dict) if metadata_dict else None # Store the correctly structured metadata
-            ))
-            calc_id = cur.fetchone()[0]
+            """
+            results = execute_values(cur, insert_query, records_to_insert, fetch=True, page_size=100)
+            calc_ids = [row[0] for row in results]
+
         self.conn.commit()
-        return calc_id
+        return calc_ids
+
+    def add_calculation(self, structure_id: int, calc_data: Dict) -> int:
+        """Add calculation results to database (new schema)."""
+        calculations_data = [{
+            'structure_id': structure_id,
+            'calc_data': calc_data
+        }]
+        new_ids = self.batch_add_calculations(calculations_data)
+        return new_ids[0]
 
     def get_calculations(self, structure_id: int, calculator: Optional[str] = None) -> List[Dict]:
         """
@@ -668,58 +750,96 @@ class DatabaseManager:
         return added_ids
 
     def check_duplicate_structure(self, atoms: Atoms,
-                             decimal: int = 4, position_tol: float = 1e-5) -> bool:
+                                  decimal: int = 4, position_tol: float = 1e-5) -> bool:
         """
-        Check if 'atoms' is a duplicate of any structure in the DB by:
-        1) Checking if composition_hash already exists
-        2) Checking positions only for those structures that share the same composition_hash
+        Check if 'atoms' is a duplicate of any structure in the DB.
+        This is a convenience wrapper around the more performant batch_check_duplicates.
         """
-        # Compute composition dictionary
-        symbols = atoms.get_chemical_symbols()
-        if not symbols: # Handle empty atoms object
-             return False
-        total_atoms = len(symbols)
-        comp_dict = {}
-        for symbol in set(symbols):
-            count = symbols.count(symbol)
-            comp_dict[symbol] = {
-                "at_frac": count / total_atoms,
-                "num_atoms": count
+        results = self.batch_check_duplicates([atoms], decimal=decimal, position_tol=position_tol)
+        return results[0]
+
+    def batch_check_duplicates(self, atoms_list: List[Atoms],
+                               decimal: int = 4, position_tol: float = 1e-5) -> List[bool]:
+        """
+        Checks a batch of Atoms objects for duplicates in the database.
+
+        This method first finds all structures in the database that share a
+        composition hash with any of the input structures, retrieving them in a
+        single query. It then performs position comparisons in memory.
+
+        Args:
+            atoms_list: A list of ASE Atoms objects to check.
+            decimal: Number of decimal places to round composition fractions for hashing.
+            position_tol: Tolerance for comparing atomic positions.
+
+        Returns:
+            A list of booleans of the same length as atoms_list, where True
+            indicates the corresponding Atoms object is a duplicate of an
+            existing structure in the database.
+        """
+        if not atoms_list:
+            return []
+
+        # 1. Compute hashes for all input structures
+        input_hashes = {}  # {hash: [indices_in_atoms_list]}
+        for i, atoms in enumerate(atoms_list):
+            symbols = atoms.get_chemical_symbols()
+            if not symbols: continue
+            total_atoms = len(symbols)
+            comp_dict = {
+                symbol: {"at_frac": symbols.count(symbol) / total_atoms}
+                for symbol in set(symbols)
             }
+            composition_hash = _compute_composition_hash(comp_dict, decimal=decimal)
+            if composition_hash not in input_hashes:
+                input_hashes[composition_hash] = []
+            input_hashes[composition_hash].append(i)
 
-        # Compute hash
-        composition_hash = _compute_composition_hash(comp_dict, decimal=decimal)
-
-        # Find potential duplicates by composition_hash (should be faster with index)
+        # 2. Fetch all potential duplicates from DB in one query
+        if not input_hashes:
+            return [False] * len(atoms_list)
+            
         with self.conn.cursor() as cur:
             cur.execute("""
-                SELECT structure_id, positions
+                SELECT composition_hash, structure_id, positions
                 FROM structures
-                WHERE composition_hash = %s
-            """, (composition_hash,))
+                WHERE composition_hash = ANY(%s)
+            """, (list(input_hashes.keys()),))
             potential_duplicates = cur.fetchall()
 
-        if not potential_duplicates:
-            # No structures with the same composition hash, definitely not a duplicate
-            return False
+        # 3. Group DB results by hash for quick lookup
+        db_dupes_by_hash = {}
+        for comp_hash, struct_id, db_positions_json in potential_duplicates:
+            if comp_hash not in db_dupes_by_hash:
+                db_dupes_by_hash[comp_hash] = []
+            db_dupes_by_hash[comp_hash].append(np.array(db_positions_json))
 
-        # Check positions only for these structures
-        # Round positions before comparison
-        new_positions = np.round(atoms.positions, decimals=int(abs(np.log10(position_tol))))
+        # 4. Perform comparisons in memory
+        is_duplicate_list = [False] * len(atoms_list)
+        pos_decimals = int(abs(np.log10(position_tol)))
 
-        for struct_id, db_positions_json in potential_duplicates:
-            db_positions = np.array(db_positions_json)
-            db_positions_rounded = np.round(db_positions, decimals=int(abs(np.log10(position_tol))))
+        # Create a list of items to iterate over with a progress bar
+        # This list contains tuples of (hash, index_in_original_list)
+        items_to_check = []
+        for comp_hash, indices in input_hashes.items():
+            if comp_hash in db_dupes_by_hash:
+                for index in indices:
+                    items_to_check.append((comp_hash, index))
+        
+        # This is where the majority of the time will be spent if there are many potential matches
+        for comp_hash, index in tqdm(items_to_check, desc="Comparing positions", leave=False):
+            db_positions_list = db_dupes_by_hash[comp_hash]
+            input_atoms = atoms_list[index]
+            new_positions_rounded = np.round(input_atoms.positions, decimals=pos_decimals)
 
-            # Compare shape and values
-            if db_positions_rounded.shape == new_positions.shape and \
-               np.allclose(db_positions_rounded, new_positions, atol=position_tol):
-                # Found a match
-                # print(f"[DEBUG] Duplicate found: New structure matches existing structure {struct_id}") # Optional debug
-                return True
+            for db_positions in db_positions_list:
+                db_positions_rounded = np.round(db_positions, decimals=pos_decimals)
+                if new_positions_rounded.shape == db_positions_rounded.shape and \
+                   np.allclose(new_positions_rounded, db_positions_rounded, atol=position_tol):
+                    is_duplicate_list[index] = True
+                    break  # Found a match for this input_atoms, move to next one
 
-        # No exact match found
-        return False
+        return is_duplicate_list
 
     def remove_duplicate_structures(
         self, decimal: int = 5, position_tol: float = 1e-5
@@ -1215,86 +1335,16 @@ class DatabaseManager:
         return results
 
     def remove_structure(self, structure_id: int, dry_run_override: Optional[bool] = None) -> None:
-        """
-        Remove a structure and its associated calculations from the database.
-
-        Args:
-            structure_id: The ID of the structure to remove.
-            dry_run_override: Optionally override the instance's dry_run setting
-                              for this specific operation.
-
-        Raises:
-            psycopg2.Error: If there is a database deletion error.
-            ConnectionError: If the database is not connected (and not in dry run).
-        """
-        is_dry_run = self.dry_run if dry_run_override is None else dry_run_override
-
-        if is_dry_run:
-            print(f"[DRY RUN] Preparing to remove structure ID: {structure_id}")
-            # Simulate checking associated calculations (requires connection if possible)
-            if self.conn:
-                 try:
-                    with self.conn.cursor() as cur:
-                         cur.execute(
-                              "SELECT COUNT(*) FROM calculations WHERE structure_id = %s",
-                              (structure_id,)
-                         )
-                         count = cur.fetchone()[0]
-                         print(f"[DRY RUN] Found {count} associated calculations.")
-                         print(f"[DRY RUN] Would remove structure ID: {structure_id} (cascading to calculations).")
-                 except psycopg2.Error as e:
-                      print(f"[DRY RUN][WARN] Could not query calculations (DB error): {e}")
-                      print(f"[DRY RUN] Would attempt removal of structure {structure_id} anyway.")
-            else:
-                 print("[DRY RUN] Cannot query calculations (no DB connection).")
-                 print(f"[DRY RUN] Would attempt removal of structure {structure_id} (cascading to calculations).")
-            return
-
-        # --- Actual Deletion ---
-        if self.conn is None:
-             print("[ERROR] Cannot remove structure: Database connection is not initialized.")
-             return
-
-        print(
-            f"[INFO] Attempting to remove structure ID: {structure_id} "
-            f"and its calculations (via cascade)..."
-        )
-        try:
-            with self.conn.cursor() as cur:
-                # Delete the structure; cascade handled by DB constraint
-                cur.execute(
-                    """
-                    DELETE FROM structures
-                    WHERE structure_id = %s
-                    RETURNING structure_id
-                    """,
-                    (structure_id,),
-                )
-                deleted_struct_id = cur.fetchone()
-
-                if deleted_struct_id:
-                    print(
-                        f"[INFO] Successfully removed structure ID: "
-                        f"{deleted_struct_id[0]} (and cascaded deletes)."
-                    )
-                else:
-                    print(f"[WARN] Structure ID {structure_id} not found or already removed.")
-
-            self.conn.commit()
-            print(f"[INFO] Removal of structure {structure_id} committed.")
-
-        except psycopg2.Error as e:
-            print(f"[ERROR] Failed to remove structure {structure_id}: {e}")
-            if self.conn:
-                self.conn.rollback()
-            print("[INFO] Transaction rolled back.")
-            raise
+        """Removes a single structure and its calculations by wrapping the batch method."""
+        self.remove_structures_batch([structure_id], dry_run_override=dry_run_override)
 
     def remove_structures_batch(self, structure_ids: List[int], dry_run_override: Optional[bool] = None) -> None:
         """
         Remove a batch of structures and their associated calculations from the database.
 
-        Associated calculations are removed due to the ON DELETE CASCADE constraint.
+        This method first explicitly deletes calculations linked to the given structure
+        IDs, then deletes the structures themselves. This is more robust than relying
+        on the database's `ON DELETE CASCADE` feature.
 
         Args:
             structure_ids: A list of structure IDs to remove.
@@ -1311,26 +1361,29 @@ class DatabaseManager:
             return
 
         if is_dry_run:
-            print(f"[DRY RUN] Would attempt to remove {len(structure_ids)} structures:")
+            print(f"[DRY RUN] Would attempt to remove {len(structure_ids)} structures and their calculations:")
             print(f"[DRY RUN] Structure IDs: {structure_ids}")
-            print("[DRY RUN] Associated calculations would also be removed due to CASCADE.")
             return
 
         if not self.conn:
-            print("[ERROR] Database connection is not available (likely due to dry_run during init). Cannot remove structures.")
+            print("[ERROR] Database connection is not available. Cannot remove structures.")
             return
 
         try:
             with self.conn.cursor() as cur:
-                # Use ANY() for efficient deletion of multiple rows
-                # RETURNING structure_id tells us which ones were actually found and deleted
+                # Step 1: Explicitly delete associated calculations
                 cur.execute(
-                    """
-                    DELETE FROM structures
-                    WHERE structure_id = ANY(%s)
-                    RETURNING structure_id;
-                    """,
-                    (structure_ids,) # Pass the list as a tuple for the parameter
+                    "DELETE FROM calculations WHERE structure_id = ANY(%s) RETURNING calculation_id;",
+                    (structure_ids,)
+                )
+                deleted_calc_ids = [row[0] for row in cur.fetchall()]
+                if deleted_calc_ids:
+                    print(f"[INFO] Removed {len(deleted_calc_ids)} associated calculations.")
+
+                # Step 2: Delete the structures
+                cur.execute(
+                    "DELETE FROM structures WHERE structure_id = ANY(%s) RETURNING structure_id;",
+                    (structure_ids,)
                 )
                 deleted_ids = [row[0] for row in cur.fetchall()]
                 
@@ -1339,7 +1392,7 @@ class DatabaseManager:
                     print(f"[WARN] Some requested structure IDs were not found or not deleted: {list(missing_ids)}")
 
                 if deleted_ids:
-                    print(f"[INFO] Successfully removed {len(deleted_ids)} structures (and associated calculations): {deleted_ids}")
+                    print(f"[INFO] Successfully removed {len(deleted_ids)} structures: {deleted_ids}")
                 else:
                     print("[INFO] No structures were removed (possibly none of the provided IDs existed).")
                 
@@ -1348,6 +1401,48 @@ class DatabaseManager:
         except Exception as e:
             self.conn.rollback()
             print(f"[ERROR] Error during batch removal of structures {structure_ids}: {e}")
+            raise
+
+    def remove_calculation(self, calculation_id: int, dry_run_override: Optional[bool] = None) -> None:
+        """Removes a single calculation from the database by wrapping the batch method."""
+        self.remove_calculations_batch([calculation_id], dry_run_override)
+
+    def remove_calculations_batch(self, calculation_ids: List[int], dry_run_override: Optional[bool] = None) -> None:
+        """Removes a batch of calculations from the database.
+
+        Args:
+            calculation_ids: A list of calculation IDs to remove.
+            dry_run_override: If provided, overrides the instance's dry_run setting for this operation.
+        """
+        is_dry_run = self.dry_run if dry_run_override is None else dry_run_override
+
+        if not calculation_ids:
+            print("[WARN] remove_calculations_batch called with an empty list. No action taken.")
+            return
+
+        if is_dry_run:
+            print(f"[DRY RUN] Would attempt to remove {len(calculation_ids)} calculations: {calculation_ids}")
+            return
+
+        if not self.conn:
+            print("[ERROR] Database connection is not available. Cannot remove calculations.")
+            return
+            
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM calculations WHERE calculation_id = ANY(%s) RETURNING calculation_id;",
+                    (calculation_ids,)
+                )
+                deleted_ids = [row[0] for row in cur.fetchall()]
+                if deleted_ids:
+                    print(f"[INFO] Successfully removed {len(deleted_ids)} calculations: {deleted_ids}")
+                else:
+                    print("[INFO] No calculations were removed (possibly none of the provided IDs existed).")
+                self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            print(f"[ERROR] Error during batch removal of calculations {calculation_ids}: {e}")
             raise
 
     def add_mlip_model(

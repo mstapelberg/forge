@@ -1,6 +1,7 @@
 # vasp_to_db.py
 import os
 import re # Keep re if needed elsewhere, otherwise VaspParser handles it
+import json
 from pathlib import Path
 # from pymatgen.io.vasp import Vasprun # No longer needed
 # from ase.io.vasp import read_vasp_out # Handled by VaspParser
@@ -12,6 +13,8 @@ from typing import Dict, Optional, Generator, Tuple, List # Added Generator, Lis
 from dataclasses import dataclass # Added dataclass
 from tqdm import tqdm # Added tqdm
 import ase # Added ase
+import multiprocessing
+import traceback
 
 # --- Added from convert_outcars.py ---
 @dataclass
@@ -64,7 +67,12 @@ def parse_path_metadata(path: Path, atoms: Optional[ase.Atoms] = None) -> Dict[s
 
     return metadata
 
-def add_vasp_results_to_db(db_manager: DatabaseManager, structure_id: int, output_dir: str, calculation_type="static", vasp_profile_name: Optional[str] = None, hpc_profile_name: Optional[str] = None):
+def add_vasp_results_to_db(db_manager: DatabaseManager, 
+                           structure_id: int, 
+                           output_dir: str, 
+                           calculation_type="static", 
+                           vasp_profile_name: Optional[str] = None, 
+                           hpc_profile_name: Optional[str] = None):
     """
     Parses VASP results from an OUTCAR using VaspParser and adds them
     to the 'calculations' table associated with the structure_id.
@@ -186,121 +194,193 @@ def add_vasp_results_to_db(db_manager: DatabaseManager, structure_id: int, outpu
         # Optionally update status to indicate DB error
 
 
-# --- BATCH PROCESSING FUNCTION (WORKFLOW A) ---
-def process_vasp_directory_and_add(db_manager: DatabaseManager, base_dir: str, skip_duplicates: bool = True, default_source_type: str = 'vasp'):
+# The legacy `process_vasp_directory_and_add` function has been removed.
+# Please use the `process_vasp_jobs` function as the standard method
+# for importing new VASP jobs from directories.
+
+
+def _parse_single_vasp_job(args: Tuple) -> Dict:
     """
-    Walks through VASP directories, parses results, and adds structure+calculation to DB.
-    (Workflow A: Assumes structures are NOT already in DB; uses simplified path parsing)
+    Helper function for parallel processing. Parses a single VASP job directory.
+    """
+    job_dir, calculation_type, default_config_type = args
+    try:
+        metadata_path = job_dir / "metadata.json"
+        if not metadata_path.exists():
+            return {'status': 'missing_meta', 'path': str(job_dir)}
+
+        parser = VaspParser(str(job_dir), calculation_type=calculation_type)
+        if not parser.is_successful:
+            return {'status': 'parse_fail', 'path': str(job_dir), 'error': parser.error_message}
+
+        final_atoms = parser.atoms
+        calc_data_from_parser = parser.get_calculation_data()
+
+        if not final_atoms or calc_data_from_parser is None:
+            return {'status': 'parse_fail', 'path': str(job_dir), 'error': 'Could not extract atoms or calculation data from OUTCAR.'}
+
+        with open(metadata_path, 'r') as f:
+            metadata_from_json = json.load(f)
+
+        config_type = metadata_from_json.get('config_type')
+        if not config_type:
+            if default_config_type:
+                metadata_from_json['config_type'] = default_config_type
+            else:
+                return {'status': 'parse_fail', 'path': str(job_dir), 'error': f"'config_type' not found in {metadata_path} and no 'default_config_type' was provided."}
+        
+        return {
+            'status': 'success',
+            'atoms': final_atoms,
+            'calc_data': calc_data_from_parser,
+            'metadata': metadata_from_json,
+            'job_dir': str(job_dir),
+        }
+    except Exception as e:
+        return {'status': 'exception', 'path': str(job_dir), 'error': str(e), 'traceback': traceback.format_exc()}
+
+
+def process_vasp_jobs(
+    db_manager: DatabaseManager,
+    base_dir: str,
+    generation_tag: int,
+    calculation_type: str = 'static',
+    default_config_type: Optional[str] = None,
+    skip_duplicates: bool = True
+):
+    """
+    Processes VASP jobs, reads metadata from JSON, and adds them to the database.
+
+    This is the standard workflow for importing new VASP calculations. It scans a
+    directory for jobs, each expecting an OUTCAR and an accompanying `metadata.json`
+    file. It uses multiprocessing to parse jobs in parallel and batch database
+    insertions for high performance.
 
     Args:
-        db_manager: Instance of DatabaseManager.
-        base_dir: The root directory containing VASP job subfolders.
-        skip_duplicates: If True, check DB for duplicates before adding.
-        default_source_type: The source_type to assign to structures added via this function.
+        db_manager (DatabaseManager): Instance of the database manager.
+        base_dir (str): The root directory to search for VASP jobs.
+        generation_tag (int): The generation number to assign to all new structures.
+        calculation_type (str, optional): The type of VASP calculation, e.g.,
+            'static' or 'relax'. Defaults to 'static'.
+        default_config_type (Optional[str], optional): A fallback config type to use
+            if 'config_type' is not found in the `metadata.json`. If this is not
+            provided and 'config_type' is missing, an error will be raised.
+            This value is stored within the structure's metadata. Defaults to None.
+        skip_duplicates (bool, optional): If True, checks for duplicates in the
+            database before adding new structures. Defaults to True.
     """
     base_path = Path(base_dir)
-    print(f"[INFO] Starting WF-A batch processing of VASP directories in: {base_path}")
-    processed_count = 0
-    added_count = 0
+    print(f"[INFO] Starting batch processing of VASP jobs in: {base_path}")
+    print(f"[INFO] Assigning all new structures to Generation: {generation_tag}")
+
     skipped_duplicate_count = 0
-    failed_db_add_count = 0
     failed_parse_count = 0
+    missing_meta_count = 0
+
     outcar_paths = list(base_path.rglob('OUTCAR'))
-    total_dirs = len(outcar_paths)
+    job_dirs = [p.parent for p in outcar_paths]
+    total_dirs = len(job_dirs)
     print(f"[INFO] Found {total_dirs} potential VASP calculation directories.")
 
+    # --- Stage 1: Parse all structures in parallel ---
+    parsed_results = []
+    print("\n[INFO] Stage 1: Parsing VASP jobs in parallel...")
+    with multiprocessing.Pool() as pool:
+        args_list = [(job_dir, calculation_type, default_config_type) for job_dir in job_dirs]
+        results_iterator = pool.imap_unordered(_parse_single_vasp_job, args_list)
+        
+        for result in tqdm(results_iterator, total=total_dirs, desc="Parsing VASP jobs"):
+            if result['status'] == 'success':
+                parsed_results.append(result)
+            elif result['status'] == 'missing_meta':
+                missing_meta_count += 1
+            else: # parse_fail or exception
+                failed_parse_count += 1
+                print(f"\n[WARN] Failed to parse {result['path']}: {result['error']}")
+                if 'traceback' in result:
+                    print(result['traceback'])
+    
+    processed_count = len(parsed_results)
 
-    with tqdm(total=total_dirs, desc="Processing VASP dirs (WF-A)") as pbar:
-        for outcar_path in outcar_paths:
-            job_dir = outcar_path.parent
-            pbar.set_postfix_str(f"Processing: ...{str(job_dir)[-40:]}", refresh=True)
-            try:
-                # 1. Parse OUTCAR
-                parser = VaspParser(str(job_dir))
-                if not parser.is_successful:
-                    failed_parse_count += 1
-                    pbar.update(1)
-                    continue
+    # --- Stage 2: Filter duplicates and prepare for batch insert ---
+    print("\n[INFO] Stage 2: Filtering duplicates and preparing data...")
+    structures_to_add = []
+    calculations_to_prepare = []
+    
+    # Pre-calculate duplicate flags in a single batch call if required
+    is_duplicate_list = [False] * len(parsed_results)
+    if skip_duplicates and parsed_results:
+        print("[INFO] Performing batch duplicate check against database...")
+        atoms_to_check = [res['atoms'] for res in parsed_results]
+        is_duplicate_list = db_manager.batch_check_duplicates(atoms_to_check)
 
-                # 2. Get parsed data
-                final_atoms = parser.atoms
-                calc_data_from_parser = parser.get_calculation_data()
+    for i, result in enumerate(tqdm(parsed_results, desc="Preparing structures")):
+        if is_duplicate_list[i]:
+            skipped_duplicate_count += 1
+            continue
 
-                if not final_atoms or calc_data_from_parser is None:
-                     failed_parse_count += 1 # Count as parse fail if data missing
-                     pbar.update(1)
-                     continue
+        # This structure is not a duplicate, prepare it for insertion
+        metadata_from_json = result['metadata']
+        calc_data_from_parser = result['calc_data']
 
-                processed_count += 1 # Increment successfully parsed counter
+        structure_metadata_for_db = metadata_from_json.copy()
+        structure_metadata_for_db['generation'] = generation_tag
+        structure_metadata_for_db['date_added_to_db'] = datetime.now().isoformat()
+        
+        structures_to_add.append({
+            'atoms': result['atoms'],
+            'source_type': 'vasp-from-metadata',
+            'parent_id': metadata_from_json.get('parent_id'),
+            'metadata': structure_metadata_for_db
+        })
 
+        calculations_to_prepare.append({
+            'calculator': 'vasp',
+            'calculation_type': calculation_type,
+            'calculation_source_path': result['job_dir'],
+            'energy': calc_data_from_parser.get('energy'),
+            'forces': calc_data_from_parser.get('forces'),
+            'stress': calc_data_from_parser.get('stress'),
+            'metadata': calc_data_from_parser.get('metadata', {})
+        })
 
-                # 3. Parse path metadata (SIMPLIFIED)
-                path_meta = parse_path_metadata(job_dir, final_atoms)
-                # structure_source_type is now set via function argument default_source_type
+    # --- Stage 3: Batch insert structures and calculations ---
+    added_count = 0
+    failed_db_add_count = 0
+    if not structures_to_add:
+        print("\n[INFO] No new, non-duplicate structures found to add.")
+    else:
+        print(f"\n[INFO] Stage 3: Batch inserting {len(structures_to_add)} structures...")
+        try:
+            new_structure_ids = db_manager.batch_add_structures(structures_to_add)
+            
+            print(f"\n[INFO] Stage 4: Batch inserting {len(new_structure_ids)} corresponding calculations...")
+            
+            calculations_to_add = []
+            for i, struct_id in enumerate(new_structure_ids):
+                calculations_to_add.append({
+                    'structure_id': struct_id,
+                    'calc_data': calculations_to_prepare[i]
+                })
 
+            new_calc_ids = db_manager.batch_add_calculations(calculations_to_add)
+            added_count = len(new_calc_ids)
+            if len(new_structure_ids) != added_count:
+                failed_db_add_count = len(new_structure_ids) - added_count
 
-                # 4. Check for duplicates (optional)
-                is_duplicate = False
-                if skip_duplicates:
-                    try:
-                        if db_manager.check_duplicate_structure(final_atoms):
-                            is_duplicate = True
-                            skipped_duplicate_count += 1
-                    except Exception as e:
-                        pass # Log error? Count as fail? For now, proceed.
+        except Exception as e_struct:
+            print(f"\n[ERROR] A critical error occurred during a batch database operation: {e_struct}")
+            failed_db_add_count = len(structures_to_add)
 
-                # 5. Add to Database if not duplicate
-                if not is_duplicate:
-                    struct_id = None # Keep track in case calc add fails
-                    try:
-                        # --- Prepare Structure Data ---
-                        # Metadata now only contains source_path, generation (optional), composition_str
-                        structure_metadata_for_db = path_meta.copy()
-                        structure_metadata_for_db['date_added_to_db'] = datetime.now().isoformat()
-
-                        struct_id = db_manager.add_structure(
-                            atoms=final_atoms,
-                            source_type=default_source_type, # Use the default passed to function
-                            metadata=structure_metadata_for_db # Simplified metadata
-                        )
-
-                        # --- Prepare Calculation Data ---
-                        calc_data_for_db = {
-                             'calculator': 'vasp',
-                             'calculation_source_path': str(job_dir),
-                             'energy': calc_data_from_parser.get('energy'),
-                             'forces': calc_data_from_parser.get('forces'),
-                             'stress': calc_data_from_parser.get('stress'),
-                             'metadata': calc_data_from_parser.get('metadata', {}) # VASP run details
-                         }
-
-
-                        calc_id = db_manager.add_calculation(
-                            structure_id=struct_id,
-                            calc_data=calc_data_for_db
-                        )
-                        added_count += 1
-
-                    except Exception as e:
-                        print(f"\n[ERROR] Failed DB add for {job_dir} (Struct/Calc): {e}")
-                        failed_db_add_count += 1
-                        # Optional: If structure was added but calc failed, remove structure?
-                pbar.update(1)
-
-            except Exception as e:
-                print(f"\n[ERROR] Unhandled exception for {job_dir}: {e}")
-                import traceback
-                traceback.print_exc()
-                failed_parse_count += 1 # Count unhandled as parse fail
-                pbar.update(1)
-
-    # Updated summary print
-    print(f"\n[INFO] Finished WF-A batch processing.")
+    # Summary print
+    print("\n[INFO] Finished batch processing.")
     print(f"  - Successfully processed (OUTCAR parsed): {processed_count}")
     print(f"  - Successfully added to DB (Structure + Calc): {added_count}")
-    print(f"  - Skipped as duplicate: {skipped_duplicate_count}")
+    print(f"  - Skipped (Duplicate): {skipped_duplicate_count}")
+    print(f"  - Skipped (Missing metadata.json): {missing_meta_count}")
     print(f"  - Failed (Parse Error or Missing Data): {failed_parse_count}")
     print(f"  - Failed (DB Add Error): {failed_db_add_count}")
+
 
 # Example of how you might call the batch processing function
 if __name__ == "__main__":

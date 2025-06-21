@@ -1,0 +1,30 @@
+# @package _global_
+defaults:
+  - override /training_module/loss/metrics@_here_: loss_variants  # see below
+  - override hydra/sweeper: basic
+
+loss_variants:
+  - name: per_atom_energy_mse
+    field:
+      _target_: nequip.data.PerAtomModifier
+      field: total_energy
+    coeff: 1
+    metric: {_target_: nequip.train.MeanSquaredError}
+
+  - name: forces_huber
+    field: forces
+    coeff: 10
+    metric:
+      _target_: mlip_utils.losses.huber
+      delta: ${hydra.sweeper.params.delta}
+
+  - name: stress_mse
+    field: stress
+    coeff: 100
+    metric: {_target_: nequip.train.MeanSquaredError}
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      delta: 0.5,1.0,2.0

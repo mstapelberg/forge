@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 #     count: int
 #     type: str
 
+# --- NEW: Import custom components for type hinting and path resolution ---
+from forge.workflows.allegro_utils.callbacks import CurriculumCallback, GradNormCallback
+from forge.workflows.allegro_utils.custom_losses import FocalMSELoss
+from forge.workflows.allegro_utils.custom_metrics import TailMSE
+from forge.workflows.allegro_utils.samplers import RareWeightedSampler
+# ---
 
 def _extract_chemical_symbols(
     db_manager: DatabaseManager,
@@ -106,8 +112,18 @@ def prepare_allegro_job(
     train_ratio: Optional[float] = None,
     val_ratio: Optional[float] = None,
     test_ratio: Optional[float] = None,
+    # --- NEW: Arguments for custom training components ---
+    loss_function: str = "mse", # 'mse' or 'focal'
+    loss_params: Optional[Dict[str, Any]] = None,
+    sampler: Optional[str] = None, # 'rare_weighted'
+    sampler_params: Optional[Dict[str, Any]] = None,
+    callbacks: Optional[List[str]] = None, # 'curriculum', 'grad_norm'
+    callback_params: Optional[Dict[str, Any]] = None,
+    extra_val_metrics: Optional[List[str]] = None, # 'tail_mse'
+    extra_val_metric_params: Optional[Dict[str, Any]] = None,
     # --- Allegro Hyperparameters (used in config.yaml) ---
     max_epochs: int = 1000,
+    batch_size: int = 4,
     schedule: Optional[Dict[str, float]] = None, # Validation schedule overrides
     project: str = "allegro-forge", # WandB project
     loss_coeffs: Optional[Dict[str, float]] = None, # Loss coefficients
@@ -153,7 +169,16 @@ def prepare_allegro_job(
         train_ratio: Training fraction (standalone mode).
         val_ratio: Validation fraction (standalone mode).
         test_ratio: Testing fraction (standalone mode).
+        loss_function: The loss function to use ('mse' or 'focal').
+        loss_params: Parameters for the chosen loss function.
+        sampler: The data sampler to use (e.g., 'rare_weighted').
+        sampler_params: Parameters for the chosen sampler.
+        callbacks: List of extra callbacks to add (e.g., 'curriculum', 'grad_norm').
+        callback_params: Parameters for the chosen callbacks.
+        extra_val_metrics: List of extra validation metrics to add (e.g., 'tail_mse').
+        extra_val_metric_params: Parameters for the validation metrics.
         max_epochs: Training epochs.
+        batch_size: DataLoader batch size.
         schedule: Validation schedule overrides.
         project: WandB project name.
         loss_coeffs: Loss coefficients.
@@ -341,20 +366,123 @@ def prepare_allegro_job(
     if not chemical_symbols:
         raise ValueError(f"[{job_name}] Could not determine chemical symbols.")
 
-    # ----------  schedule / loss defaults (missing before)  -------------------
+    # ----------  schedule / loss defaults  -------------------
     effective_schedule = schedule if schedule is not None else {
-        "factor": 0.5,   # learning-rate reduction factor
-        "patience": 25,  # epochs with no improvement
-        # optional; used below, otherwise computed as 0.8*max_epochs
-        # "start_epoch": int(0.8 * max_epochs),
+        "factor": 0.5,
+        "patience": 10,
     }
 
     effective_loss_coeffs = loss_coeffs if loss_coeffs is not None else {
         "total_energy": {"coeff": 1.0, "per_atom": True},
-        "forces":       {"coeff": 50.0},
-        "stress":       {"coeff": 25.0},
+        "forces": {"coeff": 50.0},
+        "stress": {"coeff": 25.0},
     }
-    # --------------------------------------------------------------------------
+
+    # --- NEW: Dynamically build loss function configuration ---
+    loss_metrics = []
+    
+    loss_function_map = {
+        "mse": "nequip.train.MeanSquaredError",
+        "focal": "forge.workflows.allegro_utils.custom_losses.FocalMSELoss",
+    }
+    
+    if loss_function not in loss_function_map:
+        raise ValueError(f"Unsupported loss function '{loss_function}'. Available: {list(loss_function_map.keys())}")
+
+    loss_target = loss_function_map[loss_function]
+    
+    # Energy
+    energy_metric = {
+        "name": f"per_atom_energy_{loss_function}",
+        "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"},
+        "metric": {"_target_": loss_target},
+        "coeff": effective_loss_coeffs["total_energy"]["coeff"],
+    }
+    if loss_params:
+        energy_metric["metric"].update(loss_params)
+    loss_metrics.append(energy_metric)
+    
+    # Forces
+    forces_metric = {
+        "name": f"forces_{loss_function}",
+        "field": "forces",
+        "metric": {"_target_": loss_target},
+        "coeff": effective_loss_coeffs["forces"]["coeff"],
+    }
+    if loss_params:
+        forces_metric["metric"].update(loss_params)
+    loss_metrics.append(forces_metric)
+
+    # Stress (optional, only if coeff is provided)
+    if "stress" in effective_loss_coeffs and effective_loss_coeffs["stress"]["coeff"] > 0:
+        stress_metric = {
+            "name": f"stress_{loss_function}",
+            "field": "stress",
+            "metric": {"_target_": loss_target},
+            "coeff": effective_loss_coeffs["stress"]["coeff"],
+        }
+        if loss_params:
+            stress_metric["metric"].update(loss_params)
+        loss_metrics.append(stress_metric)
+
+    # --- NEW: Dynamically build validation metrics ---
+    val_metrics = []
+    # Standard metrics
+    val_metrics.extend([
+        {"name": "per_atom_energy_mae", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": "mae"},
+        {"name": "forces_mae", "field": "forces", "metric": "mae"},
+        {"name": "stress_mae", "field": "stress", "metric": "mae", "ignore_nan": True},
+    ])
+    # Extra metrics
+    if extra_val_metrics:
+        metric_map = {"tail_mse": "forge.workflows.allegro_utils.custom_metrics.TailMSE"}
+        for metric_name in extra_val_metrics:
+            if metric_name not in metric_map:
+                raise ValueError(f"Unsupported validation metric '{metric_name}'.")
+            
+            metric_params = (extra_val_metric_params or {}).get(metric_name, {})
+            
+            # Add for forces
+            val_metrics.append({
+                "name": f"forces_{metric_name}",
+                "field": "forces",
+                "metric": {"_target_": metric_map[metric_name], **metric_params}
+            })
+            # Add for energy
+            val_metrics.append({
+                "name": f"per_atom_energy_{metric_name}",
+                "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"},
+                "metric": {"_target_": metric_map[metric_name], **metric_params}
+            })
+
+    # --- NEW: Dynamically build dataloader config ---
+    train_dataloader_config = {
+        "_target_": "torch.utils.data.DataLoader",
+        "batch_size": batch_size
+    }
+    if sampler == 'rare_weighted':
+        train_dataloader_config["sampler"] = {
+            "_target_": "forge.workflows.allegro_utils.samplers.RareWeightedSampler",
+            **(sampler_params or {})
+        }
+    elif sampler is not None:
+        raise ValueError(f"Unsupported sampler '{sampler}'.")
+
+    # --- NEW: Dynamically build callbacks ---
+    all_callbacks = [
+        {"_target_": "lightning.pytorch.callbacks.ModelCheckpoint", "dirpath": f"results/{job_name}", "save_last": True},
+        {"_target_": "nequip.train.callbacks.LossCoefficientScheduler", "schedule": {int(0.8 * max_epochs): {"factor": 0.5}}},
+    ]
+    if callbacks:
+        callback_map = {
+            "curriculum": "forge.workflows.allegro_utils.callbacks.CurriculumCallback",
+            "grad_norm": "forge.workflows.allegro_utils.callbacks.GradNormCallback",
+        }
+        for cb_name in callbacks:
+            if cb_name not in callback_map:
+                raise ValueError(f"Unsupported callback '{cb_name}'.")
+            cb_params = (callback_params or {}).get(cb_name, {})
+            all_callbacks.append({"_target_": callback_map[cb_name], **cb_params})
 
     # >>> HYDRA TEMPLATE BUILD  -------------------------------------------------
     data_prefix = job_name
@@ -401,11 +529,9 @@ def prepare_allegro_job(
                  "chemical_symbols": chemical_symbols},
             ],
             "seed": seed,
-            # simple DataLoader settings
-            "train_dataloader": {"_target_": "torch.utils.data.DataLoader",
-                                 "batch_size": 4},
+            "train_dataloader": train_dataloader_config,
             "val_dataloader":   {"_target_": "torch.utils.data.DataLoader",
-                                 "batch_size": 4},
+                                 "batch_size": batch_size},
             "test_dataloader":  "${data.val_dataloader}",
             "stats_manager": {
                 "_target_": "nequip.data.CommonDataStatisticsManager",
@@ -422,23 +548,7 @@ def prepare_allegro_job(
             "max_epochs": max_epochs,
             "check_val_every_n_epoch": 1,
             "log_every_n_steps": 5,
-            "callbacks": [
-                {
-                    "_target_": "lightning.pytorch.callbacks.ModelCheckpoint",
-                    "dirpath": f"results/{job_name}",
-                    "save_last": True,
-                },
-                {
-                    "_target_": "nequip.train.callbacks.LossCoefficientScheduler",
-                    "schedule": {
-                        sched_start_epoch: {
-                            "per_atom_energy_mse": sched_energy,
-                            "forces_mse":          sched_forces,
-                            "stress_mse":          sched_stress,
-                        }
-                    },
-                },
-            ],
+            "callbacks": all_callbacks,
             "logger": {
                 "_target_": "lightning.pytorch.loggers.wandb.WandbLogger",
                 "project": project,
@@ -451,21 +561,12 @@ def prepare_allegro_job(
         "training_module": {
             "_target_": "nequip.train.EMALightningModule",
             "loss": {
-                "_target_": "nequip.train.EnergyForceStressLoss",
-                "per_atom_energy": True,
-                "coeffs": {
-                    "total_energy": loss_E,
-                    "forces":       loss_F,
-                    "stress":       loss_S,
-                },
+                "_target_": "nequip.train.MetricsManager",
+                "metrics": loss_metrics,
             },
             "val_metrics": {
-                "_target_": "nequip.train.EnergyForceStressMetrics",
-                "coeffs": {
-                    "per_atom_energy_mae": loss_E,
-                    "forces_mae":          loss_F,
-                    "stress_mae":          loss_S,
-                },
+                "_target_": "nequip.train.MetricsManager",
+                "metrics": val_metrics
             },
             "test_metrics": "${training_module.val_metrics}",
 

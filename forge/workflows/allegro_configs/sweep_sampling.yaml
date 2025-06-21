@@ -1,0 +1,15 @@
+# @package _global_
+data:
+  train_dataloader:
+    sampler:
+      _target_: mlip_utils.samplers.RareWeightedSampler
+      replica: ${hydra.sweeper.params.rep}
+      alpha: ${hydra.sweeper.params.alpha}
+      rare_idx: ${oc.env:RARE_INDEX_FILE}  # JSON list pre‑computed
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      rep: 1,2,3
+      alpha: 0.0,0.5    # 0 ==> pure replica; >0 ==> weighted

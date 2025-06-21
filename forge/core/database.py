@@ -1334,6 +1334,59 @@ class DatabaseManager:
 
         return results
 
+    def get_distinct_metadata_values(self, metadata_key: str) -> List[str]:
+        """Retrieves all unique non-null values for a given key in the metadata JSONB column.
+
+        Args:
+            metadata_key: The key within the metadata to find distinct values for.
+                          Nested keys are NOT supported by this simple method.
+
+        Returns:
+            A list of unique string values for the given key.
+        """
+        if self.dry_run:
+            print(f"[DRY RUN] Would fetch distinct values for metadata key '{metadata_key}'")
+            return [f"dummy_value_1_for_{metadata_key}", f"dummy_value_2_for_{metadata_key}"]
+
+        if self.conn is None:
+            raise ConnectionError("Database is not connected.")
+
+        # The `->>` operator extracts the value as text.
+        query = f"SELECT DISTINCT metadata->>%s FROM structures WHERE metadata->>%s IS NOT NULL"
+        
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, (metadata_key, metadata_key))
+                results = [row[0] for row in cur.fetchall()]
+            return results
+        except psycopg2.Error as e:
+            print(f"[ERROR] Failed to get distinct metadata values for key '{metadata_key}': {e}")
+            self.conn.rollback()
+            return []
+
+    def get_all_structure_ids(self) -> List[int]:
+        """Retrieves all structure IDs from the database, ordered by creation time.
+
+        Returns:
+            List[int]: A list of all structure IDs.
+        """
+        if self.dry_run:
+            print("[DRY RUN] Would fetch all structure IDs.")
+            return list(range(1, 101)) # Return a dummy list
+
+        if self.conn is None:
+            raise ConnectionError("Database is not connected.")
+
+        query = "SELECT structure_id FROM structures ORDER BY created_at ASC"
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query)
+                return [row[0] for row in cur.fetchall()]
+        except psycopg2.Error as e:
+            print(f"[ERROR] Failed to get all structure IDs: {e}")
+            self.conn.rollback()
+            return []
+
     def remove_structure(self, structure_id: int, dry_run_override: Optional[bool] = None) -> None:
         """Removes a single structure and its calculations by wrapping the batch method."""
         self.remove_structures_batch([structure_id], dry_run_override=dry_run_override)

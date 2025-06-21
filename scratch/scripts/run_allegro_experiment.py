@@ -1,5 +1,6 @@
 # scratch/scripts/run_allegro_experiment.py
 import logging
+import json
 from pathlib import Path
 
 from forge.core.database import DatabaseManager
@@ -54,13 +55,30 @@ def main():
         logger.error("No structures found. Exiting.")
         return
         
-    # TODO: For the sampler, you need to identify rare structures.
-    # This is just a placeholder. You might select these based on energy,
-    # composition, or structural features.
-    rare_structure_indices = [idx for idx, sid in enumerate(structure_ids) if sid % 50 == 0]
-    logger.warning(f"Using {len(rare_structure_indices)} placeholder rare structures for sampling.")
+    # --- 3. Load Pre-identified Rare Structures ---
+    rare_ids_path = Path("./rare_structure_ids.json")
+    if not rare_ids_path.exists():
+        logger.warning(
+            f"'{rare_ids_path}' not found. "
+            f"Run 'identify_rare_structures.py' first to enable rare sampling."
+        )
+        rare_ids_set = set()
+    else:
+        with open(rare_ids_path, 'r') as f:
+            rare_ids_set = set(json.load(f))
+        logger.info(f"Loaded {len(rare_ids_set)} rare structure IDs from {rare_ids_path.resolve()}")
 
-    # --- 3. Define Experiment Parameters ---
+    # Convert the loaded structure IDs to dataset indices for the sampler
+    # The sampler operates on the indices of the `structure_ids` list, not the IDs themselves.
+    structure_id_to_index = {sid: i for i, sid in enumerate(structure_ids)}
+    rare_structure_indices = [structure_id_to_index[sid] for sid in rare_ids_set if sid in structure_id_to_index]
+    
+    if rare_ids_set and not rare_structure_indices:
+        logger.warning("Loaded rare structure IDs do not overlap with the experiment's dataset.")
+    else:
+        logger.info(f"Identified {len(rare_structure_indices)} rare structures within the current dataset to be used for sampling.")
+
+    # --- 4. Define Experiment Parameters ---
     experiment_name = "allegro_training_study_1"
     base_experiment_dir = Path(f"../data/allegro_experiments/{experiment_name}")
     
@@ -75,7 +93,7 @@ def main():
         "max_epochs": 1000,
     }
 
-    # --- 4. Run All Experimental Phases ---
+    # --- 5. Run All Experimental Phases ---
 
     # Phase 1: Robust Loss (Focal Loss) + Gradient Norm Clipping
     phase1_args = {

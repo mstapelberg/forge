@@ -90,6 +90,22 @@ def test_focal_loss_selection(mock_db_manager, temp_job_dir):
     assert force_loss["metric"]["beta"] == 1.5
     assert force_loss["metric"]["gamma"] == 2.5
 
+def test_huber_loss_selection(mock_db_manager, temp_job_dir):
+    """Tests selecting the huber loss function with parameters."""
+    loss_params = {"delta": 0.5}
+    config = run_prepare_and_load_config(
+        mock_db_manager,
+        temp_job_dir,
+        loss_function="huber",
+        loss_params=loss_params,
+    )
+    
+    loss_metrics = config["training_module"]["loss"]["metrics"]
+    force_loss = next(m for m in loss_metrics if m["field"] == "forces")
+    
+    assert force_loss["metric"]["_target_"] == "nequip.train.HuberLoss"
+    assert force_loss["metric"]["delta"] == 0.5
+
 def test_rare_weighted_sampler(mock_db_manager, temp_job_dir):
     """Tests the configuration of the RareWeightedSampler."""
     sampler_params = {"replica": 5, "alpha": 0.5, "rare_idx": [1, 2, 3]}
@@ -145,6 +161,19 @@ def test_extra_validation_metric(mock_db_manager, temp_job_dir):
     # Ensure standard MAE metrics are still present
     mae_metric = next(m for m in val_metrics if m["name"] == "forces_mae")
     assert mae_metric is not None
+
+def test_extra_trainer_params(mock_db_manager, temp_job_dir):
+    """Tests adding extra parameters to the trainer."""
+    trainer_params = {"accumulate_grad_batches": 4, "precision": "16-mixed"}
+    config = run_prepare_and_load_config(
+        mock_db_manager,
+        temp_job_dir,
+        extra_trainer_params=trainer_params,
+    )
+    
+    trainer_config = config["trainer"]
+    assert trainer_config["accumulate_grad_batches"] == 4
+    assert trainer_config["precision"] == "16-mixed"
 
 def test_invalid_argument_raises_error(mock_db_manager, temp_job_dir):
     """Tests that providing an unsupported component name raises a ValueError."""

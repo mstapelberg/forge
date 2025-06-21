@@ -113,7 +113,7 @@ def prepare_allegro_job(
     val_ratio: Optional[float] = None,
     test_ratio: Optional[float] = None,
     # --- NEW: Arguments for custom training components ---
-    loss_function: str = "mse", # 'mse' or 'focal'
+    loss_function: str = "mse", # 'mse' or 'focal' or 'huber'
     loss_params: Optional[Dict[str, Any]] = None,
     sampler: Optional[str] = None, # 'rare_weighted'
     sampler_params: Optional[Dict[str, Any]] = None,
@@ -121,6 +121,7 @@ def prepare_allegro_job(
     callback_params: Optional[Dict[str, Any]] = None,
     extra_val_metrics: Optional[List[str]] = None, # 'tail_mse'
     extra_val_metric_params: Optional[Dict[str, Any]] = None,
+    extra_trainer_params: Optional[Dict[str, Any]] = None,
     # --- Allegro Hyperparameters (used in config.yaml) ---
     max_epochs: int = 1000,
     batch_size: int = 4,
@@ -169,7 +170,7 @@ def prepare_allegro_job(
         train_ratio: Training fraction (standalone mode).
         val_ratio: Validation fraction (standalone mode).
         test_ratio: Testing fraction (standalone mode).
-        loss_function: The loss function to use ('mse' or 'focal').
+        loss_function: The loss function to use ('mse', 'focal', or 'huber').
         loss_params: Parameters for the chosen loss function.
         sampler: The data sampler to use (e.g., 'rare_weighted').
         sampler_params: Parameters for the chosen sampler.
@@ -177,6 +178,7 @@ def prepare_allegro_job(
         callback_params: Parameters for the chosen callbacks.
         extra_val_metrics: List of extra validation metrics to add (e.g., 'tail_mse').
         extra_val_metric_params: Parameters for the validation metrics.
+        extra_trainer_params: Extra parameters to pass to the lightning.Trainer.
         max_epochs: Training epochs.
         batch_size: DataLoader batch size.
         schedule: Validation schedule overrides.
@@ -384,6 +386,7 @@ def prepare_allegro_job(
     loss_function_map = {
         "mse": "nequip.train.MeanSquaredError",
         "focal": "forge.workflows.allegro_utils.custom_losses.FocalMSELoss",
+        "huber": "nequip.train.HuberLoss",
     }
     
     if loss_function not in loss_function_map:
@@ -555,6 +558,7 @@ def prepare_allegro_job(
                 "name": job_name,
                 "save_dir": "results",
             },
+            **(extra_trainer_params or {}),
         },
 
         # --------------- training module -------------

@@ -45,7 +45,13 @@ def main():
     # This connection will be closed after we get the initial data.
     logger.info("Initializing database connection to fetch initial dataset...")
     with DatabaseManager() as db_manager:
+        logger.info("Finding structures with completed VASP calculations...")
         structure_ids = db_manager.find_structures_by_metadata({'generation': 0}, operator='>=')
+        logger.info(f"Found {len(structure_ids)} structures with VASP calculations.")
+        dimer_ids = db_manager.find_structures_by_metadata({'config_type': 'dimer'})
+        logger.info(f"Found {len(dimer_ids)} structures with dimer config type that are bad.")
+        # remove the dimer ids from the structure ids
+        structure_ids = [sid for sid in structure_ids if sid not in dimer_ids] # remove the dimer ids from the structure ids
         logger.info(f"Found {len(structure_ids)} structures for the experiment.")
         
         # Load rare IDs from file

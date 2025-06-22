@@ -124,18 +124,18 @@ def prepare_allegro_job(
     extra_trainer_params: Optional[Dict[str, Any]] = None,
     checkpoint_monitor_key: str = "val0_epoch/stress_rmse", # Metric to monitor for saving checkpoints
     # --- Allegro Hyperparameters (used in config.yaml) ---
-    max_epochs: int = 1000,
+    max_epochs: int = 400,
     batch_size: int = 4,
     wandb_project: Optional[str] = None,
     loss_coeffs: Optional[Dict[str, float]] = None, # Loss coefficients
     lr: float = 0.001,
     r_max: float = 5.0,
-    l_max: int = 1,
+    l_max: int = 2,
     num_layers: int = 2,
     num_scalar_features: int = 128,
-    num_tensor_features: int = 32,
+    num_tensor_features: int = 64,
     mlp_depth: int = 2,
-    mlp_width: int = 128,
+    mlp_width: int = 512,
     # devices: Optional[int] = None, # Devices determined by runner/SLURM
     # num_nodes: int = 1, # Nodes determined by runner/SLURM
     # --- Removed Parameters ---

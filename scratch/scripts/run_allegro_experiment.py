@@ -86,18 +86,22 @@ def main():
         "test_ratio": 0.1,
         "seed": 42,
         "max_epochs": 400,
+        "wandb_project": "allegro_training_study_1",
     }
 
     # --- 3. Run All Experimental Phases ---
 
-    # Phase 1: Robust Loss (Focal Loss) + Gradient Norm Clipping
+    # Phase 1: Use the built-in LossCoefficientScheduler
     phase1_args = {
         **base_args,
-        "job_name": "phase1_focal_loss_gradnorm",
-        "loss_function": "focal",
-        "loss_params": {"beta": 1.0, "gamma": 2.0},
-        "callbacks": ["grad_norm"],
-        "callback_params": {"grad_norm": {"alpha": 1.5}}
+        "job_name": "phase1_loss_schedule",
+        "loss_function": "huber",
+        "loss_params": {"delta": 1.0},
+        "loss_schedule": {
+            0:   {"forces_huber": 10.0, "stress_huber": 100.0},
+            150: {"forces_huber": 50.0, "stress_huber": 50.0},
+            300: {"forces_huber": 100.0, "stress_huber": 10.0},
+        }
     }
     with DatabaseManager() as db:
         run_and_summarize(base_experiment_dir / phase1_args["job_name"], db_manager=db, **phase1_args)
@@ -121,7 +125,7 @@ def main():
     with DatabaseManager() as db:
         run_and_summarize(base_experiment_dir / phase3_args["job_name"], db_manager=db, **phase3_args)
 
-    # Phase 4: Integrated "Best" Settings
+    # Phase 4: Integrated "Best" Settings (No longer uses custom callbacks)
     phase4_args = {
         **base_args,
         "job_name": "phase4_integrated_final",
@@ -129,7 +133,6 @@ def main():
         "loss_params": {"delta": 1.0},
         "sampler": "rare_weighted",
         "sampler_params": {"replica": 3, "rare_idx": rare_structure_indices},
-        "callbacks": ["curriculum"],
         "extra_trainer_params": {"accumulate_grad_batches": 4},
     }
     with DatabaseManager() as db:

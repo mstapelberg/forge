@@ -116,18 +116,16 @@ def prepare_allegro_job(
     # --- NEW: Arguments for custom training components ---
     loss_function: str = "mse", # 'mse' or 'focal' or 'huber'
     loss_params: Optional[Dict[str, Any]] = None,
+    loss_schedule: Optional[Dict[int, Dict[str, float]]] = None, # For LossCoefficientScheduler
     sampler: Optional[str] = None, # 'rare_weighted'
     sampler_params: Optional[Dict[str, Any]] = None,
-    callbacks: Optional[List[str]] = None, # 'curriculum', 'grad_norm'
-    callback_params: Optional[Dict[str, Any]] = None,
     extra_val_metrics: Optional[List[str]] = None, # 'tail_mse'
     extra_val_metric_params: Optional[Dict[str, Any]] = None,
     extra_trainer_params: Optional[Dict[str, Any]] = None,
     # --- Allegro Hyperparameters (used in config.yaml) ---
     max_epochs: int = 1000,
     batch_size: int = 4,
-    schedule: Optional[Dict[str, float]] = None, # Validation schedule overrides
-    project: str = "allegro-forge", # WandB project
+    wandb_project: Optional[str] = None,
     loss_coeffs: Optional[Dict[str, float]] = None, # Loss coefficients
     lr: float = 0.001,
     r_max: float = 5.0,
@@ -173,17 +171,15 @@ def prepare_allegro_job(
         test_ratio: Testing fraction (standalone mode).
         loss_function: The loss function to use ('mse', 'focal', or 'huber').
         loss_params: Parameters for the chosen loss function.
+        loss_schedule: A dictionary defining epochs and new loss coefficients for the scheduler.
         sampler: The data sampler to use (e.g., 'rare_weighted').
         sampler_params: Parameters for the chosen sampler.
-        callbacks: List of extra callbacks to add (e.g., 'curriculum', 'grad_norm').
-        callback_params: Parameters for the chosen callbacks.
         extra_val_metrics: List of extra validation metrics to add (e.g., 'tail_mse').
         extra_val_metric_params: Parameters for the validation metrics.
         extra_trainer_params: Extra parameters to pass to the lightning.Trainer.
         max_epochs: Training epochs.
         batch_size: DataLoader batch size.
-        schedule: Validation schedule overrides.
-        project: WandB project name.
+        wandb_project: Name of the WandB project.
         loss_coeffs: Loss coefficients.
         lr: Learning rate.
         r_max: Cutoff radius.
@@ -406,6 +402,10 @@ def prepare_allegro_job(
     # Update trainer and optimizer parameters
     config['trainer']['max_epochs'] = max_epochs
     config['training_module']['optimizer']['lr'] = lr
+    if wandb_project:
+        config['wandb_name'] = wandb_project
+        if 'logger' in config['trainer'] and 'project' in config['trainer']['logger']:
+            config['trainer']['logger']['project'] = wandb_project
     if 'logger' in config['trainer'] and 'name' in config['trainer']['logger']:
         config['trainer']['logger']['name'] = job_name # Update WandB run name
 
@@ -529,21 +529,22 @@ def prepare_allegro_job(
     elif sampler is not None:
         raise ValueError(f"Unsupported sampler '{sampler}'.")
 
-    # --- NEW: Dynamically build callbacks ---
-    all_callbacks = [
-        {"_target_": "lightning.pytorch.callbacks.ModelCheckpoint", "dirpath": f"results/{job_name}", "save_last": True},
-        {"_target_": "nequip.train.callbacks.LossCoefficientScheduler", "schedule": {int(0.8 * max_epochs): {"factor": 0.5}}},
-    ]
-    if callbacks:
-        callback_map = {
-            "curriculum": "forge.workflows.allegro_utils.callbacks.CurriculumCallback",
-            "grad_norm": "forge.workflows.allegro_utils.callbacks.GradNormCallback",
-        }
-        for cb_name in callbacks:
-            if cb_name not in callback_map:
-                raise ValueError(f"Unsupported callback '{cb_name}'.")
-            cb_params = (callback_params or {}).get(cb_name, {})
-            all_callbacks.append({"_target_": callback_map[cb_name], **cb_params})
+    # --- NEW: Build callbacks using the robust, supported scheduler ---
+    all_callbacks = []
+    # Find and update the ModelCheckpoint from the base config, if it exists
+    checkpoint_callback = next((item for item in config.get('trainer', {}).get('callbacks', []) if 'ModelCheckpoint' in item.get('_target_', '')), None)
+    if checkpoint_callback:
+        checkpoint_callback['dirpath'] = f"results/{job_name}" # Ensure dirpath is correct
+        all_callbacks.append(checkpoint_callback)
+    else: # Add a default one if not in base
+        all_callbacks.append({"_target_": "lightning.pytorch.callbacks.ModelCheckpoint", "dirpath": f"results/{job_name}", "save_last": True})
+
+    # Add the loss scheduler if a schedule is provided
+    if loss_schedule:
+        all_callbacks.append({
+            "_target_": "nequip.train.callbacks.LossCoefficientScheduler",
+            "schedule": loss_schedule
+        })
 
     # --- Apply the dynamically generated sections to the config ---
     config['training_module']['loss'] = {"_target_": "nequip.train.MetricsManager", "metrics": loss_metrics}

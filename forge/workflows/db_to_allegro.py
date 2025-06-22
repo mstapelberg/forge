@@ -122,6 +122,7 @@ def prepare_allegro_job(
     extra_val_metrics: Optional[List[str]] = None, # 'tail_mse'
     extra_val_metric_params: Optional[Dict[str, Any]] = None,
     extra_trainer_params: Optional[Dict[str, Any]] = None,
+    checkpoint_monitor_key: str = "val0_epoch/stress_rmse", # Metric to monitor for saving checkpoints
     # --- Allegro Hyperparameters (used in config.yaml) ---
     max_epochs: int = 1000,
     batch_size: int = 4,
@@ -177,6 +178,7 @@ def prepare_allegro_job(
         extra_val_metrics: List of extra validation metrics to add (e.g., 'tail_mse').
         extra_val_metric_params: Parameters for the validation metrics.
         extra_trainer_params: Extra parameters to pass to the lightning.Trainer.
+        checkpoint_monitor_key: The metric key for ModelCheckpoint to monitor.
         max_epochs: Training epochs.
         batch_size: DataLoader batch size.
         wandb_project: Name of the WandB project.
@@ -488,11 +490,16 @@ def prepare_allegro_job(
 
     # --- NEW: Dynamically build validation metrics ---
     val_metrics = []
-    # Standard metrics
+    # Standard metrics - now including both MAE and RMSE
     val_metrics.extend([
+        # MAE
         {"name": "per_atom_energy_mae", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
         {"name": "forces_mae", "field": "forces", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
         {"name": "stress_mae", "field": "stress", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}, "ignore_nan": True},
+        # RMSE
+        {"name": "per_atom_energy_rmse", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.RootMeanSquaredError"}},
+        {"name": "forces_rmse", "field": "forces", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}},
+        {"name": "stress_rmse", "field": "stress", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "ignore_nan": True},
     ])
     # Extra metrics
     if extra_val_metrics:
@@ -535,9 +542,15 @@ def prepare_allegro_job(
     checkpoint_callback = next((item for item in config.get('trainer', {}).get('callbacks', []) if 'ModelCheckpoint' in item.get('_target_', '')), None)
     if checkpoint_callback:
         checkpoint_callback['dirpath'] = f"results/{job_name}" # Ensure dirpath is correct
+        checkpoint_callback['monitor'] = checkpoint_monitor_key # Update monitor key
         all_callbacks.append(checkpoint_callback)
     else: # Add a default one if not in base
-        all_callbacks.append({"_target_": "lightning.pytorch.callbacks.ModelCheckpoint", "dirpath": f"results/{job_name}", "save_last": True})
+        all_callbacks.append({
+            "_target_": "lightning.pytorch.callbacks.ModelCheckpoint", 
+            "dirpath": f"results/{job_name}", 
+            "monitor": checkpoint_monitor_key,
+            "save_last": True
+        })
 
     # Add the loss scheduler if a schedule is provided
     if loss_schedule:

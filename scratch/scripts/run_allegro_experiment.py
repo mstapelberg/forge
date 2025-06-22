@@ -87,6 +87,7 @@ def main():
         "seed": 42,
         "max_epochs": 400,
         "wandb_project": "allegro_training_study_1",
+        "checkpoint_monitor_key": "val0_epoch/stress_rmse", # Monitor stress RMSE for saving checkpoints
     }
 
     # --- 3. Run All Experimental Phases ---

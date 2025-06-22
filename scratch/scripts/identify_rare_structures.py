@@ -40,19 +40,6 @@ def find_rare_structures_by_category(db_manager: DatabaseManager, rare_tags: Lis
             logger.error(f"An error occurred while querying for tag '{tag}': {e}")
     return rare_ids
 
-def get_all_config_types(db_manager: DatabaseManager) -> List[str]:
-    """Retrieves all unique config_type values from the database."""
-    try:
-        # Assuming a method exists to get distinct metadata values.
-        # This is a hypothetical method for demonstration. If it doesn't exist,
-        # a more complex query would be needed.
-        config_types = db_manager.get_distinct_metadata_values("config_type")
-        return sorted(config_types)
-    except Exception as e:
-        logger.error(f"Could not programmatically fetch config types: {e}")
-        logger.warning("Falling back to manual list. Please check db_manager functionality.")
-        return []
-
 def find_high_property_structures(
     db_manager: DatabaseManager,
     structure_ids: List[int],
@@ -75,7 +62,7 @@ def find_high_property_structures(
     property_data = []
 
     # Fetch data in batches to avoid overwhelming memory
-    batch_size = 500
+    batch_size = 2500
     for i in tqdm(range(0, len(structure_ids), batch_size), desc="Fetching properties"):
         batch_ids = structure_ids[i:i+batch_size]
         try:
@@ -145,40 +132,43 @@ def main():
     logger.info("Initializing database connection...")
     db_manager = DatabaseManager()
 
-    # --- 2. Discover and Define Strategies for Identifying Rare Structures ---
-    all_config_types = get_all_config_types(db_manager)
-    if all_config_types:
-        logger.info(f"Available config_types in database: {all_config_types}")
-    else:
-        logger.warning("Could not find any config_types in the database.")
-
-    # Strategy 1: Categorical Filtering
-    # REVIEW & EDIT this list based on the available types printed above.
-    categorical_rare_tags = ['A15', 'C15', 'bcc_distorted', 'comp-explore', 
-                             'di-SIA', 'di-sia', 'di-vacancy', 'dia', 'dia_aa', 
-                             'dimer', 'elasticity', 'gamma_surface', 'gamma_surface_aa', 
-                             'hcp', 'hcp_aa', 'liquid', 'liquid_aa', 'neb', 
-                             'neb_aa-mc', 'phonon', 'phonon_aa', 'short_range', 
-                             'short_range_aa', 'short_range_dimer', 'sia', 'surf_liquid', 
-                             'surf_liquid_aa', 'surface_100', 'surface_110', 'surface_111', 
-                             'surface_111_aa', 'surface_112', 'tri-vacancy', 'vac_aa-mc', 
-                             'vacancy', 'vacancy-alloy']
-    rare_structure_ids = find_rare_structures_by_category(db_manager, categorical_rare_tags)
-    # Add any tags that contain "aa" (for active learning)
-    aa_tags = {tag for tag in all_config_types if "aa" in tag.lower()}
-    if aa_tags:
-        logger.info(f"Automatically adding active learning tags: {sorted(list(aa_tags))}")
-        # Use a set to handle duplicates gracefully
-        updated_tags = set(categorical_rare_tags).union(aa_tags)
-        rare_structure_ids = find_rare_structures_by_category(db_manager, sorted(list(updated_tags)))
-    else:
-        rare_structure_ids = find_rare_structures_by_category(db_manager, categorical_rare_tags)
-    # Strategy 2: Property-Based Filtering
-    # Define weights for how much each property contributes to the "extremity score"
-    property_weights = {"energy": 1.0, "forces": 10.0, "stress": 100.0}
+    # --- 2. Define Strategies for Identifying Rare Structures ---
     
-    # Define the pool of structures to analyze by finding all structures that have a VASP calculation.
-    logger.info("Finding candidate structures for property-based filtering...")
+    # --- Strategy 1: Automatic Categorical Filtering by Rarity ---
+    logger.info("--- Starting Strategy 1: Categorical Rarity ---")
+    config_type_counts = db_manager.get_metadata_key_counts("config_type")
+    
+    if not config_type_counts:
+        logger.warning("Could not find any config_types in the database. Skipping categorical analysis.")
+        auto_rare_tags = set()
+    else:
+        logger.info(f"Found {len(config_type_counts)} unique config_types with counts.")
+        logger.info(f"Config types: {config_type_counts}")
+        counts = np.array(list(config_type_counts.values()))
+        rarity_quantile = 0.25 
+        threshold = np.quantile(counts, rarity_quantile)
+        auto_rare_tags = {tag for tag, count in config_type_counts.items() if count <= threshold}
+        logger.info(f"Automatically identified {len(auto_rare_tags)} rare categories (bottom {rarity_quantile*100}%%, <= {threshold:.0f} structures).")
+
+    # --- Strategy 2: Manual Override & Heuristics ---
+    logger.info("--- Starting Strategy 2: Manual Overrides ---")
+    manual_override_tags = {
+        tag for tag in config_type_counts.keys() if "short_range" in tag.lower()
+    }
+    logger.info(f"Identified {len(manual_override_tags)} tags to include via manual override (e.g., 'aa' heuristic).")
+
+    # Combine automatic and manual tags
+    final_rare_tags = sorted(list(auto_rare_tags.union(manual_override_tags)))
+    logger.info(f"Combined list contains {len(final_rare_tags)} unique tags to query.")
+    rare_structure_ids = find_rare_structures_by_category(db_manager, final_rare_tags)
+    logger.info(f"Found {len(rare_structure_ids)} structures from categorical and manual selection.")
+
+
+    # --- Strategy 3: Property-Based Filtering ---
+    logger.info("--- Starting Strategy 3: Property-Based Outliers ---")
+    property_weights = {"energy": 0.1, "forces": 0.8, "stress": 0.1}
+    
+    logger.info("Finding all structures with VASP calculations for property analysis...")
     all_ids = set(db_manager.get_all_structure_ids())
     ids_without_vasp = set(db_manager.find_structures_without_calculation(calculator='vasp'))
     candidate_ids = sorted(list(all_ids - ids_without_vasp))
@@ -186,26 +176,21 @@ def main():
     if candidate_ids:
         logger.info(f"Found {len(candidate_ids)} candidates for property analysis.")
         high_prop_ids = find_high_property_structures(db_manager, candidate_ids, property_weights, quantile=0.95)
+        
         initial_count = len(rare_structure_ids)
         rare_structure_ids.update(high_prop_ids)
-        logger.info(f"Added {len(rare_structure_ids) - initial_count} new structures from property-based filtering.")
+        newly_added = len(rare_structure_ids) - initial_count
+        
+        logger.info(f"Added {newly_added} new structures from property-based filtering.")
+        if newly_added > 0:
+            logger.info("These are structures that are physically extreme but not in a rare category.")
     else:
         logger.warning("No candidate structures found for property-based filtering.")
 
-    # Strategy 3: Structural Outlier Detection (Future Implementation)
-    # TODO: Add logic to find geometric outliers using SOAP/UMAP.
-    # Example:
-    # geometric_outlier_ids = find_umap_outliers(db_manager)
-    # rare_structure_ids.update(geometric_outlier_ids)
-    
-    # Strategy 4: Active Learning from existing MLIP (Future Implementation)
-    # TODO: Use an existing model to find high-loss configs.
-    # Example:
-    # high_loss_ids = find_high_loss_configs(db_manager, model_path="path/to/model.pth")
-    # rare_structure_ids.update(high_loss_ids)
+    # Strategy 4 & 5: Future Implementations (UMAP, Active Learning)
+    # ...
 
-
-    # --- 3. Save the Final List of Rare IDs ---
+    # --- 4. Save the Final List of Rare IDs ---
     output_path = Path("./rare_structure_ids.json")
     final_id_list = sorted(list(rare_structure_ids))
 

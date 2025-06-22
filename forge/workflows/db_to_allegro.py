@@ -490,9 +490,9 @@ def prepare_allegro_job(
     val_metrics = []
     # Standard metrics
     val_metrics.extend([
-        {"name": "per_atom_energy_mae", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": "mae"},
-        {"name": "forces_mae", "field": "forces", "metric": "mae"},
-        {"name": "stress_mae", "field": "stress", "metric": "mae", "ignore_nan": True},
+        {"name": "per_atom_energy_mae", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
+        {"name": "forces_mae", "field": "forces", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
+        {"name": "stress_mae", "field": "stress", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}, "ignore_nan": True},
     ])
     # Extra metrics
     if extra_val_metrics:

@@ -85,7 +85,7 @@ def main():
         "val_ratio": 0.1,
         "test_ratio": 0.1,
         "seed": 42,
-        "max_epochs": 1000,
+        "max_epochs": 400,
     }
 
     # --- 3. Run All Experimental Phases ---

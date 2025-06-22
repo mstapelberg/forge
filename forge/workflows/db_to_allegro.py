@@ -363,23 +363,79 @@ def prepare_allegro_job(
              logger.warning(f"Test file {test_file_rel} was not created (might be intended if test_ratio was 0).")
              config_data_test_path = test_file_rel # Still add path to config
 
-    # --- Generate config.yaml -------------------------------------------------
-    logger.info(f"[{job_name}] Generating Hydra/Lightning-style config.yaml…")
+    # --- NEW: Load the base configuration from YAML ---
+    base_config_path = Path(__file__).parent / "allegro_configs" / "base.yaml"
+    if not base_config_path.exists():
+        raise FileNotFoundError(f"Base configuration file not found at {base_config_path}")
+
+    logger.info(f"[{job_name}] Loading base configuration from: {base_config_path}")
+    with open(base_config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    # --- Override base config with provided arguments ---
+    logger.info(f"[{job_name}] Overriding base config with job-specific parameters...")
 
     if not chemical_symbols:
         raise ValueError(f"[{job_name}] Could not determine chemical symbols.")
 
-    # ----------  schedule / loss defaults  -------------------
-    effective_schedule = schedule if schedule is not None else {
-        "factor": 0.5,
-        "patience": 10,
-    }
+    # Update basic keys
+    config['job_name'] = job_name
+    config['seed'] = seed
+    config['chemical_symbols'] = chemical_symbols
+    config['model_type_names'] = chemical_symbols
+    config['training_module']['model']['type_names'] = chemical_symbols
+    config['data']['stats_manager']['type_names'] = chemical_symbols
+    config['data']['transforms'][1]['chemical_symbols'] = chemical_symbols
+    config['training_module']['model']['pair_potential']['chemical_species'] = chemical_symbols
 
-    effective_loss_coeffs = loss_coeffs if loss_coeffs is not None else {
-        "total_energy": {"coeff": 1.0, "per_atom": True},
-        "forces": {"coeff": 50.0},
-        "stress": {"coeff": 25.0},
-    }
+    # Update data paths
+    config['data']['train_file_path'] = config_data_train_path
+    config['data']['val_file_path'] = config_data_val_path
+    config['data']['test_file_path'] = config_data_test_path
+
+    # Update model hyperparameters
+    config['training_module']['model']['r_max'] = r_max
+    config['cutoff_radius'] = r_max
+    config['training_module']['model']['l_max'] = l_max
+    config['training_module']['model']['num_layers'] = num_layers
+    config['training_module']['model']['num_scalar_features'] = num_scalar_features
+    config['training_module']['model']['num_tensor_features'] = num_tensor_features
+    config['training_module']['model']['allegro_mlp_hidden_layers_depth'] = mlp_depth
+    config['training_module']['model']['allegro_mlp_hidden_layers_width'] = mlp_width
+    
+    # Update trainer and optimizer parameters
+    config['trainer']['max_epochs'] = max_epochs
+    config['training_module']['optimizer']['lr'] = lr
+    if 'logger' in config['trainer'] and 'name' in config['trainer']['logger']:
+        config['trainer']['logger']['name'] = job_name # Update WandB run name
+
+    # --- NEW: Use loss coefficients from base config unless overridden ---
+    if loss_coeffs:
+        effective_loss_coeffs = loss_coeffs
+    else:
+        # Try to parse from the base config's metrics list
+        try:
+            parsed_coeffs = {}
+            base_metrics = config.get('training_module', {}).get('loss', {}).get('metrics', [])
+            for metric in base_metrics:
+                field = metric.get('field', {})
+                field_name = field if isinstance(field, str) else field.get('field')
+                
+                if 'energy' in field_name:
+                    parsed_coeffs['total_energy'] = {'coeff': metric.get('coeff')}
+                elif 'forces' in field_name:
+                    parsed_coeffs['forces'] = {'coeff': metric.get('coeff')}
+                elif 'stress' in field_name:
+                    parsed_coeffs['stress'] = {'coeff': metric.get('coeff')}
+            
+            if 'total_energy' in parsed_coeffs or 'forces' in parsed_coeffs:
+                 effective_loss_coeffs = parsed_coeffs
+                 logger.info("Successfully parsed loss coefficients from base.yaml.")
+            else:
+                 raise ValueError("No valid coefficients found in base config")
+        except (ValueError, TypeError, AttributeError):
+            logger.warning("Could not parse loss coefficients from base.yaml, using default values.")
+            effective_loss_coeffs = {"total_energy": {"coeff": 1.0}, "forces": {"coeff": 10.0}, "stress": {"coeff": 100.0}}
 
     # --- NEW: Dynamically build loss function configuration ---
     loss_metrics = []
@@ -388,6 +444,7 @@ def prepare_allegro_job(
         "mse": "nequip.train.MeanSquaredError",
         "focal": "forge.workflows.allegro_utils.custom_losses.FocalMSELoss",
         "huber": "nequip.train.HuberLoss",
+        "stratified_huber": "nequip.train.StratifiedHuberForceLoss", # Add stratified huber
     }
     
     if loss_function not in loss_function_map:
@@ -400,7 +457,7 @@ def prepare_allegro_job(
         "name": f"per_atom_energy_{loss_function}",
         "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"},
         "metric": {"_target_": loss_target},
-        "coeff": effective_loss_coeffs["total_energy"]["coeff"],
+        "coeff": effective_loss_coeffs.get("total_energy", {}).get("coeff", 1.0),
     }
     if loss_params:
         energy_metric["metric"].update(loss_params)
@@ -411,14 +468,14 @@ def prepare_allegro_job(
         "name": f"forces_{loss_function}",
         "field": "forces",
         "metric": {"_target_": loss_target},
-        "coeff": effective_loss_coeffs["forces"]["coeff"],
+        "coeff": effective_loss_coeffs.get("forces", {}).get("coeff", 10.0),
     }
     if loss_params:
         forces_metric["metric"].update(loss_params)
     loss_metrics.append(forces_metric)
 
     # Stress (optional, only if coeff is provided)
-    if "stress" in effective_loss_coeffs and effective_loss_coeffs["stress"]["coeff"] > 0:
+    if "stress" in effective_loss_coeffs and effective_loss_coeffs.get("stress", {}).get("coeff", 0) > 0:
         stress_metric = {
             "name": f"stress_{loss_function}",
             "field": "stress",
@@ -488,159 +545,26 @@ def prepare_allegro_job(
             cb_params = (callback_params or {}).get(cb_name, {})
             all_callbacks.append({"_target_": callback_map[cb_name], **cb_params})
 
-    # >>> HYDRA TEMPLATE BUILD  -------------------------------------------------
-    data_prefix = job_name
-    gpu_count   = 1
-    num_nodes   = 1
+    # --- Apply the dynamically generated sections to the config ---
+    config['training_module']['loss'] = {"_target_": "nequip.train.MetricsManager", "metrics": loss_metrics}
+    config['training_module']['val_metrics'] = {"_target_": "nequip.train.MetricsManager", "metrics": val_metrics}
+    config['data']['train_dataloader'] = train_dataloader_config
+    config['data']['val_dataloader']['batch_size'] = batch_size
+    config['trainer']['callbacks'] = all_callbacks
+    if extra_trainer_params:
+        config['trainer'].update(extra_trainer_params)
 
-    # schedule numbers
-    sched_start_epoch = effective_schedule.get("start_epoch",
-                                               int(0.8 * max_epochs))
-    sched_energy = effective_schedule.get("factor", 0.5)
-    sched_forces = sched_energy
-    sched_stress = sched_energy
-
-    # loss scalars
-    loss_E = effective_loss_coeffs["total_energy"]["coeff"]
-    loss_F = effective_loss_coeffs["forces"]["coeff"]
-    loss_S = effective_loss_coeffs["stress"]["coeff"]
-
-    template_cfg = {
-        "run": ["val", "test", "train", "val", "test"],
-
-        # ---------------- basic keys ----------------
-        "cutoff_radius": r_max,
-        "chemical_symbols": chemical_symbols,
-        "model_type_names": chemical_symbols,
-        "seed": seed,
-        "job_name": job_name,
-
-        # ---------------- data block ----------------
-        "data": {
-            "_target_": "nequip.data.datamodule.ASEDataModule",
-            "train_file_path": config_data_train_path,
-            "val_file_path":   config_data_val_path,
-            "test_file_path":  config_data_test_path,
-            "ase_args": {"format": "extxyz"},
-            "key_mapping": {"REF_energy": "total_energy",
-                            "REF_force":  "forces",
-                            "REF_stress": "stress"},
-            "transforms": [
-                {"_target_": "nequip.data.transforms.NeighborListTransform",
-                 "r_max": r_max},
-                {"_target_":
-                     "nequip.data.transforms.ChemicalSpeciesToAtomTypeMapper",
-                 "chemical_symbols": chemical_symbols},
-            ],
-            "seed": seed,
-            "train_dataloader": train_dataloader_config,
-            "val_dataloader":   {"_target_": "torch.utils.data.DataLoader",
-                                 "batch_size": batch_size},
-            "test_dataloader":  "${data.val_dataloader}",
-            "stats_manager": {
-                "_target_": "nequip.data.CommonDataStatisticsManager",
-                "type_names": chemical_symbols,
-            },
-        },
-
-        # ---------------- trainer -------------------
-        "trainer": {
-            "_target_": "lightning.Trainer",
-            "accelerator": "gpu",
-            "devices": gpu_count,
-            "num_nodes": num_nodes,
-            "max_epochs": max_epochs,
-            "check_val_every_n_epoch": 1,
-            "log_every_n_steps": 5,
-            "callbacks": all_callbacks,
-            "logger": {
-                "_target_": "lightning.pytorch.loggers.wandb.WandbLogger",
-                "project": project,
-                "name": job_name,
-                "save_dir": "results",
-            },
-            **(extra_trainer_params or {}),
-        },
-
-        # --------------- training module -------------
-        "training_module": {
-            "_target_": "nequip.train.EMALightningModule",
-            "loss": {
-                "_target_": "nequip.train.MetricsManager",
-                "metrics": loss_metrics,
-            },
-            "val_metrics": {
-                "_target_": "nequip.train.MetricsManager",
-                "metrics": val_metrics
-            },
-            "test_metrics": "${training_module.val_metrics}",
-
-            "optimizer": {
-                "_target_": "torch.optim.Adam",
-                "lr": lr,
-            },
-
-            # --------------- model --------------------
-            "model": {
-                "_target_": "allegro.model.AllegroModel",
-                "seed": seed,
-                "model_dtype": "float32",
-                "type_names": chemical_symbols,
-                "r_max": r_max,
-
-                "scalar_embed": {
-                    "_target_": "allegro.nn.TwoBodyBesselScalarEmbed",
-                    "num_bessels": 8,
-                    "bessel_trainable": False,
-                    "polynomial_cutoff_p": 6,
-                    "two_body_embedding_dim": 32,
-                    "two_body_mlp_hidden_layers_depth": 2,
-                    "two_body_mlp_hidden_layers_width": 64,
-                    "two_body_mlp_nonlinearity": "silu",
-                },
-
-                "l_max": l_max,
-                "parity_setting": "o3_full",
-                "num_layers": num_layers,
-                "num_scalar_features": num_scalar_features,
-                "num_tensor_features": num_tensor_features,
-                "tp_path_channel_coupling": False,
-                "allegro_mlp_hidden_layers_depth": mlp_depth,
-                "allegro_mlp_hidden_layers_width": mlp_width,
-
-                "avg_num_neighbors": "${training_data_stats:num_neighbors_mean}",
-                "per_type_energy_shifts":
-                    "${training_data_stats:per_atom_energy_mean}",
-                "per_type_energy_scales":
-                    "${training_data_stats:forces_rms}",
-                "per_type_energy_scales_trainable": False,
-                "per_type_energy_shifts_trainable": False,
-
-                "pair_potential": {
-                    "_target_": "nequip.nn.pair_potential.ZBL",
-                    "units": "metal",
-                    "chemical_species": chemical_symbols,
-                },
-            },
-        },
-
-        # ---------------- misc ----------------------
-        "global_options": {"allow_tf32": False},
-    }
-    # -----------------------------------------------------------------
-    # <<< HYDRA TEMPLATE BUILD  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-    # -----------------------------------------------------------------
-
+    # --- Write the final config.yaml ---
     yaml_path = job_dir / "config.yaml"
     try:
         with yaml_path.open("w") as f:
-            yaml.dump(template_cfg, f, sort_keys=False)
-        logger.info(f"[{job_name}] Wrote Hydra-template config: {yaml_path}")
+            # Use a custom dumper to handle complex objects if necessary, but default should be fine
+            yaml.dump(config, f, sort_keys=False, default_flow_style=False)
+        logger.info(f"[{job_name}] Wrote final config, built from base: {yaml_path}")
     except Exception as e:
         logger.error(f"Failed to write config.yaml: {e}", exc_info=True)
         raise
 
-    # return split IDs only for standalone mode
     return saved_structure_ids if not is_hpo_mode else {}
 
 # Remove the old template-based generation logic

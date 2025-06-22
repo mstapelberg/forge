@@ -1334,35 +1334,37 @@ class DatabaseManager:
 
         return results
 
-    def get_distinct_metadata_values(self, metadata_key: str) -> List[str]:
-        """Retrieves all unique non-null values for a given key in the metadata JSONB column.
+    def get_metadata_key_counts(self, metadata_key: str) -> Dict[str, int]:
+        """Gets the count of each unique value for a given metadata key.
 
         Args:
-            metadata_key: The key within the metadata to find distinct values for.
-                          Nested keys are NOT supported by this simple method.
+            metadata_key (str): The key within the metadata to count values for.
 
         Returns:
-            A list of unique string values for the given key.
+            Dict[str, int]: A dictionary mapping each unique value to its count.
         """
         if self.dry_run:
-            print(f"[DRY RUN] Would fetch distinct values for metadata key '{metadata_key}'")
-            return [f"dummy_value_1_for_{metadata_key}", f"dummy_value_2_for_{metadata_key}"]
+            print(f"[DRY RUN] Would fetch counts for metadata key '{metadata_key}'")
+            return {f"dummy_value_1": 10, f"dummy_value_2": 20}
 
         if self.conn is None:
             raise ConnectionError("Database is not connected.")
 
-        # The `->>` operator extracts the value as text.
-        query = f"SELECT DISTINCT metadata->>%s FROM structures WHERE metadata->>%s IS NOT NULL"
-        
+        query = f"""
+            SELECT metadata->>%s as key, COUNT(*) as count
+            FROM structures
+            WHERE metadata->>%s IS NOT NULL
+            GROUP BY key
+            ORDER BY count DESC;
+        """
         try:
             with self.conn.cursor() as cur:
                 cur.execute(query, (metadata_key, metadata_key))
-                results = [row[0] for row in cur.fetchall()]
-            return results
+                return {row[0]: row[1] for row in cur.fetchall()}
         except psycopg2.Error as e:
-            print(f"[ERROR] Failed to get distinct metadata values for key '{metadata_key}': {e}")
+            print(f"[ERROR] Failed to get metadata key counts for '{metadata_key}': {e}")
             self.conn.rollback()
-            return []
+            return {}
 
     def get_all_structure_ids(self) -> List[int]:
         """Retrieves all structure IDs from the database, ordered by creation time.

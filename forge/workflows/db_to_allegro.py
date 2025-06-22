@@ -496,10 +496,10 @@ def prepare_allegro_job(
         {"name": "per_atom_energy_mae", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
         {"name": "forces_mae", "field": "forces", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
         {"name": "stress_mae", "field": "stress", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}, "ignore_nan": True},
-        # RMSE
-        {"name": "per_atom_energy_rmse", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.RootMeanSquaredError"}},
-        {"name": "forces_rmse", "field": "forces", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}},
-        {"name": "stress_rmse", "field": "stress", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "ignore_nan": True},
+        # RMSE - These will be used for the weighted sum
+        {"name": "per_atom_energy_rmse", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "coeff": 1.0},
+        {"name": "forces_rmse", "field": "forces", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "coeff": 1.0},
+        {"name": "stress_rmse", "field": "stress", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "ignore_nan": True, "coeff": 1.0},
     ])
     # Extra metrics
     if extra_val_metrics:

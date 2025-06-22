@@ -537,26 +537,42 @@ def prepare_allegro_job(
         raise ValueError(f"Unsupported sampler '{sampler}'.")
 
     # --- NEW: Build callbacks using the robust, supported scheduler ---
-    all_callbacks = []
-    # Find and update the ModelCheckpoint from the base config, if it exists
-    checkpoint_callback = next((item for item in config.get('trainer', {}).get('callbacks', []) if 'ModelCheckpoint' in item.get('_target_', '')), None)
+    # Ensure callbacks list exists in the config
+    if 'callbacks' not in config.get('trainer', {}):
+        config.setdefault('trainer', {})['callbacks'] = []
+    
+    # Find and update the ModelCheckpoint, or add a default one
+    checkpoint_callback = next((cb for cb in config['trainer']['callbacks'] if 'ModelCheckpoint' in cb.get('_target_', '')), None)
     if checkpoint_callback:
-        checkpoint_callback['dirpath'] = f"results/{job_name}" # Ensure dirpath is correct
-        checkpoint_callback['monitor'] = checkpoint_monitor_key # Update monitor key
-        all_callbacks.append(checkpoint_callback)
-    else: # Add a default one if not in base
-        all_callbacks.append({
+        checkpoint_callback['dirpath'] = f"results/{job_name}"
+        checkpoint_callback['monitor'] = checkpoint_monitor_key
+    else:
+        config['trainer']['callbacks'].append({
             "_target_": "lightning.pytorch.callbacks.ModelCheckpoint", 
             "dirpath": f"results/{job_name}", 
             "monitor": checkpoint_monitor_key,
             "save_last": True
         })
 
-    # Add the loss scheduler if a schedule is provided
+    # Add or update the LossCoefficientScheduler
+    config['trainer']['callbacks'] = [cb for cb in config['trainer']['callbacks'] if 'LossCoefficientScheduler' not in cb.get('_target_', '')]
     if loss_schedule:
-        all_callbacks.append({
+        config['trainer']['callbacks'].append({
             "_target_": "nequip.train.callbacks.LossCoefficientScheduler",
             "schedule": loss_schedule
+        })
+
+    # Add default monitoring callbacks if they don't already exist
+    if not any('LearningRateMonitor' in cb.get('_target_', '') for cb in config['trainer']['callbacks']):
+        config['trainer']['callbacks'].append({
+            "_target_": "lightning.pytorch.callbacks.LearningRateMonitor",
+            "logging_interval": "epoch",
+        })
+    if not any('LossCoefficientMonitor' in cb.get('_target_', '') for cb in config['trainer']['callbacks']):
+        config['trainer']['callbacks'].append({
+            "_target_": "nequip.train.callbacks.LossCoefficientMonitor",
+            "frequency": 1,
+            "interval": "epoch",
         })
 
     # --- Apply the dynamically generated sections to the config ---
@@ -564,7 +580,6 @@ def prepare_allegro_job(
     config['training_module']['val_metrics'] = {"_target_": "nequip.train.MetricsManager", "metrics": val_metrics}
     config['data']['train_dataloader'] = train_dataloader_config
     config['data']['val_dataloader']['batch_size'] = batch_size
-    config['trainer']['callbacks'] = all_callbacks
     if extra_trainer_params:
         config['trainer'].update(extra_trainer_params)
 

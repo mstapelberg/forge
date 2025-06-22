@@ -55,7 +55,8 @@ def _extract_chemical_symbols(
         logger.warning(f"Failed getting atoms with calculation for symbol extraction: {e_calc}. Trying without calc.")
         try:
             # Fallback to getting just atoms if calc retrieval fails
-            atoms_list = db_manager.get_batch_atoms(structure_ids)
+            atoms_map = db_manager.get_structures_batch(structure_ids)
+            atoms_list = list(atoms_map.values())
         except Exception as e_atoms:
             logger.error(f"Failed getting atoms even without calculation: {e_atoms}")
             return [] # Cannot determine symbols

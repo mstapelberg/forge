@@ -582,14 +582,19 @@ def prepare_allegro_job(
     # --- Apply the dynamically generated sections to the config ---
     config['training_module']['loss'] = {"_target_": "nequip.train.MetricsManager", "metrics": loss_metrics}
     config['training_module']['val_metrics'] = {"_target_": "nequip.train.MetricsManager", "metrics": val_metrics}
-    config['data']['train_dataloader'] = train_dataloader_config
     
+    # Correctly name the dataloader parameter keys
+    config['data']['train_dataloader_params'] = train_dataloader_config
+    config['data']['val_dataloader_params'] = config['data'].pop('val_dataloader')
+    config['data']['val_dataloader_params']['batch_size'] = batch_size
+    # Remove the old key if it exists
+    config['data'].pop('train_dataloader', None)
+
     # --- NEW: Use the custom datamodule if a sampler is specified ---
     if sampler_config:
         config['data']['_target_'] = "forge.workflows.allegro_utils.data.CustomSamplingASEDataModule"
         config['data']['sampler_config'] = sampler_config
 
-    config['data']['val_dataloader']['batch_size'] = batch_size
     if extra_trainer_params:
         config['trainer'].update(extra_trainer_params)
 

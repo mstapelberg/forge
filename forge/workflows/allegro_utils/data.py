@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from nequip.data.datamodule import ASEDataModule
 from torch.utils.data import DataLoader
@@ -19,7 +19,6 @@ class CustomSamplingASEDataModule(ASEDataModule):
     parent constructor, to avoid breaking the parent's initialization.
     """
     def __init__(self, **kwargs):
-        print(f"[DEBUG] kwargs received by CustomSamplingASEDataModule.__init__: {kwargs.keys()}")
         # Pop our custom key before passing the rest to the parent.
         sampler_config = kwargs.pop("sampler_config", None)
         
@@ -27,27 +26,6 @@ class CustomSamplingASEDataModule(ASEDataModule):
         super().__init__(**kwargs)
         
         self.sampler_config = sampler_config
-        print("[DEBUG] CustomSamplingASEDataModule.__init__ finished.")
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        """Override setup to inspect the state of train_dataset."""
-        print(f"[DEBUG] In CustomSamplingASEDataModule.setup(stage='{stage}')")
-        if hasattr(self, 'train_dataset'):
-            print(f"[DEBUG] Before super().setup(), type of self.train_dataset: {type(self.train_dataset)}")
-        else:
-            print("[DEBUG] Before super().setup(), self.train_dataset does not exist.")
-        
-        # Call the parent setup method, which is responsible for creating the dataset
-        super().setup(stage)
-        
-        if hasattr(self, 'train_dataset'):
-            print(f"[DEBUG] After super().setup(), type of self.train_dataset: {type(self.train_dataset)}")
-            if hasattr(self.train_dataset, 'collate_fn'):
-                print("[DEBUG] SUCCESS: self.train_dataset now has a collate_fn.")
-            else:
-                print("[DEBUG] WARNING: self.train_dataset does NOT have a collate_fn after setup.")
-        else:
-            print("[DEBUG] WARNING: After super().setup(), self.train_dataset still does not exist.")
 
     def train_dataloader(self) -> DataLoader:
         """Builds the training DataLoader with the custom sampler if provided."""

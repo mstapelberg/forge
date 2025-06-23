@@ -82,11 +82,74 @@ class CustomSamplingASEDataModuleV2(ASEDataModule):
         if self._custom_sampler is not None:
             logger.info("Recreating train dataloader with custom sampler")
             
+            # Check if we're in distributed training
+            if hasattr(dataloader, 'sampler') and hasattr(dataloader.sampler, '__class__'):
+                sampler_class_name = dataloader.sampler.__class__.__name__
+                is_distributed = 'DistributedSampler' in sampler_class_name
+            else:
+                is_distributed = False
+            
+            # If distributed, we need to wrap our custom sampler
+            final_sampler = self._custom_sampler
+            if is_distributed:
+                logger.info("Detected distributed training - wrapping custom sampler with DistributedSampler")
+                from torch.utils.data.distributed import DistributedSampler
+                
+                # Create a wrapper that combines DistributedSampler with our custom sampler
+                class DistributedCustomSampler(DistributedSampler):
+                    """Wrapper that applies distributed sampling to our custom sampler's indices."""
+                    def __init__(self, custom_sampler, num_replicas=None, rank=None, shuffle=True, seed=0, drop_last=False):
+                        # Get the indices from the custom sampler
+                        self.custom_sampler = custom_sampler
+                        self.indices = list(custom_sampler.indices)  # Get pre-computed indices
+                        
+                        # Initialize distributed sampler with a dummy dataset of the right length
+                        class DummyDataset:
+                            def __len__(self):
+                                return len(self.indices)
+                        
+                        super().__init__(
+                            dataset=DummyDataset(),
+                            num_replicas=num_replicas,
+                            rank=rank,
+                            shuffle=shuffle,
+                            seed=seed,
+                            drop_last=drop_last
+                        )
+                    
+                    def __iter__(self):
+                        # Get distributed indices from parent
+                        distributed_indices = list(super().__iter__())
+                        # Map back to the custom sampler's indices
+                        for idx in distributed_indices:
+                            yield self.indices[idx]
+                    
+                    def __len__(self):
+                        return super().__len__()
+                
+                # Get distributed parameters from original sampler if available
+                orig_sampler = dataloader.sampler
+                num_replicas = getattr(orig_sampler, 'num_replicas', None)
+                rank = getattr(orig_sampler, 'rank', None)
+                shuffle = getattr(orig_sampler, 'shuffle', True)
+                seed = getattr(orig_sampler, 'seed', 0)
+                drop_last = getattr(orig_sampler, 'drop_last', False)
+                
+                final_sampler = DistributedCustomSampler(
+                    custom_sampler=self._custom_sampler,
+                    num_replicas=num_replicas,
+                    rank=rank,
+                    shuffle=shuffle,
+                    seed=seed,
+                    drop_last=drop_last
+                )
+                logger.info(f"Created distributed sampler with {len(final_sampler)} samples for this rank")
+            
             # Extract key parameters from the existing dataloader
             dl_params = {
                 'dataset': dataloader.dataset,
                 'batch_size': dataloader.batch_size,
-                'sampler': self._custom_sampler,
+                'sampler': final_sampler,
                 'num_workers': dataloader.num_workers,
                 'collate_fn': dataloader.collate_fn,
                 'pin_memory': dataloader.pin_memory,
@@ -103,6 +166,6 @@ class CustomSamplingASEDataModuleV2(ASEDataModule):
             
             # Create new dataloader with custom sampler
             dataloader = DataLoader(**dl_params)
-            logger.info("Successfully created dataloader with custom sampler")
+            logger.info(f"Successfully created dataloader with custom sampler - {len(dataloader)} batches")
         
         return dataloader 

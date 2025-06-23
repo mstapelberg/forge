@@ -45,8 +45,11 @@ class RareWeightedSampler(Sampler[int]):
         """Constructs the indices and weights for the sampler."""
         self.indices = []
         self.weights = []
+        rare_count = 0
         for i in range(len(self.data_source)):
             num_replicas = self.replica if i in self.rare_idx else 1
+            if i in self.rare_idx:
+                rare_count += 1
             self.indices.extend([i] * num_replicas)
             
             weight = 1.0
@@ -56,6 +59,13 @@ class RareWeightedSampler(Sampler[int]):
                 weight += self.alpha * force_norm
             
             self.weights.extend([weight] * num_replicas)
+        
+        # Log statistics about the sampler
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"RareWeightedSampler built: {len(self.data_source)} unique samples, "
+                   f"{len(self.indices)} total indices after replication, "
+                   f"{rare_count} rare samples with {self.replica}x replication")
 
     def __iter__(self) -> Iterator[int]:
         """Returns an iterator over the dataset indices."""

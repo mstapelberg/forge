@@ -387,8 +387,18 @@ def _save_structures_to_xyz(
             atoms = atoms_map[struct_id]
             # Check if calculation data was successfully attached by the batch method
             if 'calculation_info' in atoms.info and 'energy' in atoms.info:
+                # --- NEW: Calculate and add force_norm ---
+                try:
+                    forces = atoms.get_forces()
+                    if forces is not None and forces.shape[0] > 0:
+                        force_norm = np.max(np.linalg.norm(forces, axis=1))
+                        atoms.info['force_norm'] = float(force_norm)
+                except Exception as e:
+                    logger.warning(f"Could not calculate force_norm for struct {struct_id}: {e}")
+                # -----------------------------------------
+
                 # Prepare atoms for writing (remove potentially large/unneeded info)
-                keys_to_keep = {'energy', 'stress', 'structure_id', 'calculation_info'}
+                keys_to_keep = {'energy', 'stress', 'structure_id', 'calculation_info', 'force_norm'}
                 atoms.info = {k: v for k, v in atoms.info.items() if k in keys_to_keep or not k.startswith('_')}
 
                 structures_to_write.append(atoms)

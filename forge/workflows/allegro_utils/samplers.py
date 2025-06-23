@@ -51,8 +51,8 @@ class RareWeightedSampler(Sampler[int]):
             
             weight = 1.0
             if self.alpha is not None and self.alpha > 0:
-                # Assuming dataset[i] returns a Data object with a metadata dict
-                force_norm = self.data_source[i].metadata.get("force_norm", 0.0)
+                # NequIP stores info fields as top-level attributes on the Data object
+                force_norm = getattr(self.data_source[i], "force_norm", 0.0)
                 weight += self.alpha * force_norm
             
             self.weights.extend([weight] * num_replicas)

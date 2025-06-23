@@ -32,10 +32,25 @@ class CustomSamplingASEDataModule(ASEDataModule):
         
         self.sampler_config = sampler_config
 
+    def setup(self, stage: Optional[str] = None) -> None:
+        """Override setup to inspect the state of train_dataset."""
+        print("[DEBUG] In CustomSamplingASEDataModule.setup()")
+        print(f"[DEBUG] Before super().setup(), type of self.train_dataset: {type(self.train_dataset)}")
+        # Call the parent setup method, which is responsible for creating the dataset
+        super().setup(stage)
+        print(f"[DEBUG] After super().setup(), type of self.train_dataset: {type(self.train_dataset)}")
+        # If the type after setup is still a list or ListConfig, the parent setup is not working as expected.
+        if hasattr(self.train_dataset, 'collate_fn'):
+            print("[DEBUG] self.train_dataset now has a collate_fn.")
+        else:
+            print("[DEBUG] WARNING: self.train_dataset does NOT have a collate_fn after setup.")
+
     def train_dataloader(self) -> DataLoader:
         """Builds the training DataLoader with the custom sampler if provided."""
         if self.train_dataset is None:
             raise RuntimeError("The training dataset has not been prepared. Call `setup()` first.")
+
+        print(f"[DEBUG] In train_dataloader, type of self.train_dataset: {type(self.train_dataset)}")
 
         if self.sampler_config is None:
             # If no sampler is configured, use the default behavior

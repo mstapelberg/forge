@@ -600,15 +600,27 @@ def prepare_allegro_job(
     if sampler_config:
         logger.info(f"[{job_name}] Using custom sampler: {sampler}")
         logger.debug(f"[{job_name}] Sampler config: {sampler_config}")
-        config['data']['_target_'] = "forge.workflows.allegro_utils.data.CustomSamplingASEDataModule"
+        
+        # Try V2 implementation first (more robust)
+        use_v2 = True
+        if use_v2:
+            config['data']['_target_'] = "forge.workflows.allegro_utils.data_v2.CustomSamplingASEDataModuleV2"
+            logger.info(f"[{job_name}] Using CustomSamplingASEDataModuleV2 for better compatibility")
+        else:
+            config['data']['_target_'] = "forge.workflows.allegro_utils.data.CustomSamplingASEDataModule"
+        
         config['data']['sampler_config'] = sampler_config
         
         # Verify custom module is importable
         try:
-            from forge.workflows.allegro_utils.data import CustomSamplingASEDataModule
-            logger.debug(f"[{job_name}] Successfully imported CustomSamplingASEDataModule")
+            if use_v2:
+                from forge.workflows.allegro_utils.data_v2 import CustomSamplingASEDataModuleV2
+                logger.debug(f"[{job_name}] Successfully imported CustomSamplingASEDataModuleV2")
+            else:
+                from forge.workflows.allegro_utils.data import CustomSamplingASEDataModule
+                logger.debug(f"[{job_name}] Successfully imported CustomSamplingASEDataModule")
         except ImportError as e:
-            logger.error(f"[{job_name}] Failed to import CustomSamplingASEDataModule: {e}")
+            logger.error(f"[{job_name}] Failed to import custom datamodule: {e}")
             raise
 
     if extra_trainer_params:

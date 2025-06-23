@@ -389,7 +389,7 @@ def _save_structures_to_xyz(
             if 'calculation_info' in atoms.info and 'energy' in atoms.info:
                 # --- NEW: Calculate and add force_norm ---
                 try:
-                    forces = atoms.get_forces()
+                    forces = atoms.arrays['forces']
                     if forces is not None and forces.shape[0] > 0:
                         force_norm = np.max(np.linalg.norm(forces, axis=1))
                         atoms.info['force_norm'] = float(force_norm)

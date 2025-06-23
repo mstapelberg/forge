@@ -46,5 +46,5 @@ class CustomSamplingASEDataModule(ASEDataModule):
             sampler=sampler,
             batch_sampler=None, # Sampler and batch_sampler are mutually exclusive
             shuffle=False, # Shuffle is mutually exclusive with a sampler
-            collate_fn=self.collate_fn, # Use the collate_fn from the parent class
+            collate_fn=self.train_dataset.collate_fn, # The collate_fn lives on the *dataset*
         ) 

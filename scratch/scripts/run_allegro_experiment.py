@@ -107,15 +107,28 @@ def main():
     with DatabaseManager() as db:
         run_and_summarize(base_experiment_dir / phase1_args["job_name"], db_manager=db, **phase1_args)
 
-    # Phase 2: Data-centric (Rare-weighted Sampler)
+    # Phase 2: Data-centric (Rare-weighted Sampler) - with implementation choice
     phase2_args = {
         **base_args,
-        "job_name": "phase2_rare_sampling",
+        "job_name": "phase2_rare_sampling_v3",
         "sampler": "rare_weighted",
-        "sampler_params": {"replica": 5, "alpha": 0.25, "rare_idx": rare_structure_indices}
+        "sampler_params": {"replica": 5, "alpha": 0.25, "rare_idx": rare_structure_indices},
+        "sampler_implementation": "v3"  # Can change to 'v2' to test V2 implementation
     }
     with DatabaseManager() as db:
         run_and_summarize(base_experiment_dir / phase2_args["job_name"], db_manager=db, **phase2_args)
+    
+    # Phase 2b: Same but with V2 implementation for comparison
+    phase2b_args = {
+        **base_args,
+        "job_name": "phase2_rare_sampling_v2",
+        "sampler": "rare_weighted",
+        "sampler_params": {"replica": 5, "alpha": 0.25, "rare_idx": rare_structure_indices},
+        "sampler_implementation": "v2"  # Using V2 implementation
+    }
+    # Uncomment to test V2:
+    # with DatabaseManager() as db:
+    #     run_and_summarize(base_experiment_dir / phase2b_args["job_name"], db_manager=db, **phase2b_args)
 
     # Phase 3: Batch Size Sweep (Larger Batch Size)
     phase3_args = {

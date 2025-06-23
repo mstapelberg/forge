@@ -120,6 +120,7 @@ def prepare_allegro_job(
     loss_schedule: Optional[Dict[int, Dict[str, float]]] = None, # For LossCoefficientScheduler
     sampler: Optional[str] = None, # 'rare_weighted'
     sampler_params: Optional[Dict[str, Any]] = None,
+    sampler_implementation: str = 'v3', # 'v2' or 'v3' for custom sampler
     extra_val_metrics: Optional[List[str]] = None, # 'tail_mse'
     extra_val_metric_params: Optional[Dict[str, Any]] = None,
     extra_trainer_params: Optional[Dict[str, Any]] = None,
@@ -601,9 +602,10 @@ def prepare_allegro_job(
         logger.info(f"[{job_name}] Using custom sampler: {sampler}")
         logger.debug(f"[{job_name}] Sampler config: {sampler_config}")
         
-        # Try V3 implementation (precomputes indices before distribution)
-        use_v3 = True
-        if use_v3:
+        # Choose implementation based on parameter
+        implementation = sampler_implementation
+        
+        if implementation == 'v3':
             config['data']['_target_'] = "forge.workflows.allegro_utils.data_v3.CustomSamplingASEDataModuleV3"
             logger.info(f"[{job_name}] Using CustomSamplingASEDataModuleV3 for distributed training compatibility")
         else:
@@ -615,7 +617,7 @@ def prepare_allegro_job(
         
         # Verify custom module is importable
         try:
-            if use_v3:
+            if implementation == 'v3':
                 from forge.workflows.allegro_utils.data_v3 import CustomSamplingASEDataModuleV3
                 logger.debug(f"[{job_name}] Successfully imported CustomSamplingASEDataModuleV3")
             else:

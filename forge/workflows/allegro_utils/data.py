@@ -41,7 +41,7 @@ class CustomSamplingASEDataModule(ASEDataModule):
         
         # Instantiate the DataLoader, providing the dataset AND our custom sampler
         return instantiate(
-            self.train_dataloader_params,
+            self.train_dataloader_config,
             dataset=self.train_dataset,
             sampler=sampler,
             batch_sampler=None, # Sampler and batch_sampler are mutually exclusive

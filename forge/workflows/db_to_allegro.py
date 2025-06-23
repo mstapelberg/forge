@@ -583,21 +583,48 @@ def prepare_allegro_job(
     config['training_module']['loss'] = {"_target_": "nequip.train.MetricsManager", "metrics": loss_metrics}
     config['training_module']['val_metrics'] = {"_target_": "nequip.train.MetricsManager", "metrics": val_metrics}
     
-    # Correctly name the dataloader parameter keys
-    config['data']['train_dataloader_params'] = train_dataloader_config
-    config['data']['val_dataloader_params'] = config['data'].pop('val_dataloader')
-    config['data']['val_dataloader_params']['batch_size'] = batch_size
-    # Remove the old key if it exists
-    config['data'].pop('train_dataloader', None)
+    # Update dataloader configurations
+    config['data']['train_dataloader'] = train_dataloader_config
+    
+    # Update val_dataloader batch_size if it exists
+    if 'val_dataloader' in config['data'] and isinstance(config['data']['val_dataloader'], dict):
+        config['data']['val_dataloader']['batch_size'] = batch_size
+    
+    # Fix test_dataloader interpolation if it references val_dataloader
+    if 'test_dataloader' in config['data'] and config['data']['test_dataloader'] == '${data.val_dataloader}':
+        # test_dataloader should reference val_dataloader, which still exists
+        logger.debug(f"[{job_name}] test_dataloader correctly references val_dataloader")
+        # No change needed - the reference is correct
 
     # --- NEW: Use the custom datamodule if a sampler is specified ---
     if sampler_config:
+        logger.info(f"[{job_name}] Using custom sampler: {sampler}")
+        logger.debug(f"[{job_name}] Sampler config: {sampler_config}")
         config['data']['_target_'] = "forge.workflows.allegro_utils.data.CustomSamplingASEDataModule"
         config['data']['sampler_config'] = sampler_config
+        
+        # Verify custom module is importable
+        try:
+            from forge.workflows.allegro_utils.data import CustomSamplingASEDataModule
+            logger.debug(f"[{job_name}] Successfully imported CustomSamplingASEDataModule")
+        except ImportError as e:
+            logger.error(f"[{job_name}] Failed to import CustomSamplingASEDataModule: {e}")
+            raise
 
     if extra_trainer_params:
         config['trainer'].update(extra_trainer_params)
 
+    # --- Add debugging information ---
+    logger.debug(f"[{job_name}] Final config data section keys: {list(config.get('data', {}).keys())}")
+    if 'data' in config:
+        for key in ['train_dataloader', 'val_dataloader', 'test_dataloader']:
+            if key in config['data']:
+                value = config['data'][key]
+                if isinstance(value, dict):
+                    logger.debug(f"[{job_name}] {key} is a dict with keys: {list(value.keys())}")
+                else:
+                    logger.debug(f"[{job_name}] {key} = {value}")
+    
     # --- Write the final config.yaml ---
     yaml_path = job_dir / "config.yaml"
     try:

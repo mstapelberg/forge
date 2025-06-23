@@ -17,14 +17,19 @@ class CustomSamplingASEDataModule(ASEDataModule):
     sampler with the prepared training dataset before creating the DataLoader.
 
     Args:
-        sampler_config (Optional[Dict[str, Any]]): A dictionary containing the
-            Hydra-style configuration for the sampler, including its `_target_`
-            path and parameters. If None, the default DataLoader is created.
         **kwargs: All other arguments are passed directly to the parent
             `ASEDataModule`.
     """
-    def __init__(self, sampler_config: Optional[Dict[str, Any]] = None, **kwargs):
+    def __init__(self, **kwargs):
+        # Pop our custom key before passing the rest to the parent.
+        # This is the key to fixing the bug: we must not pass unexpected
+        # arguments to the parent ASEDataModule constructor.
+        sampler_config = kwargs.pop("sampler_config", None)
+        
+        # Now, kwargs contains only arguments that ASEDataModule expects.
+        # Initialize the parent class correctly.
         super().__init__(**kwargs)
+        
         self.sampler_config = sampler_config
 
     def train_dataloader(self) -> DataLoader:

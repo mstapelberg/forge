@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional
 
 from nequip.data.datamodule import ASEDataModule
 from torch.utils.data import DataLoader
-from hydra._internal.utils import instantiate
+from hydra.utils import instantiate
 
 from .samplers import RareWeightedSampler
 

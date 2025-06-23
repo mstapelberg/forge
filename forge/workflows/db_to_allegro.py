@@ -528,8 +528,11 @@ def prepare_allegro_job(
         "_target_": "torch.utils.data.DataLoader",
         "batch_size": batch_size
     }
+    
+    # --- NEW: Build sampler config separately ---
+    sampler_config = None
     if sampler == 'rare_weighted':
-        train_dataloader_config["sampler"] = {
+        sampler_config = {
             "_target_": "forge.workflows.allegro_utils.samplers.RareWeightedSampler",
             **(sampler_params or {})
         }
@@ -579,6 +582,8 @@ def prepare_allegro_job(
     config['training_module']['loss'] = {"_target_": "nequip.train.MetricsManager", "metrics": loss_metrics}
     config['training_module']['val_metrics'] = {"_target_": "nequip.train.MetricsManager", "metrics": val_metrics}
     config['data']['train_dataloader'] = train_dataloader_config
+    if sampler_config:
+        config['data']['train_sampler'] = sampler_config # Add sampler at the correct level
     config['data']['val_dataloader']['batch_size'] = batch_size
     if extra_trainer_params:
         config['trainer'].update(extra_trainer_params)

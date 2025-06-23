@@ -18,7 +18,7 @@ class RareWeightedSampler(Sampler[int]):
     It is designed to be compatible with NequIP's `ASEDataModule`.
 
     Args:
-        dataset (Dataset): The dataset from which to sample. It is expected that
+        data_source (Dataset): The dataset from which to sample. It is expected that
             each item has a `.metadata` attribute that may contain a "force_norm" key
             if force-weighting is used.
         rare_idx (List[int]): A list of integer indices corresponding to the
@@ -29,8 +29,9 @@ class RareWeightedSampler(Sampler[int]):
             If None, weighting is disabled. The weight is calculated as
             `1.0 + alpha * force_norm`. Defaults to None.
     """
-    def __init__(self, dataset: Dataset, rare_idx: List[int], replica: int = 1, alpha: Optional[float] = None):
-        self.dataset = dataset
+    def __init__(self, data_source: Dataset, rare_idx: List[int], replica: int = 1, alpha: Optional[float] = None):
+        super().__init__(data_source)
+        self.data_source = data_source
         self.rare_idx = set(rare_idx)
         self.replica = replica
         self.alpha = alpha
@@ -44,14 +45,14 @@ class RareWeightedSampler(Sampler[int]):
         """Constructs the indices and weights for the sampler."""
         self.indices = []
         self.weights = []
-        for i in range(len(self.dataset)):
+        for i in range(len(self.data_source)):
             num_replicas = self.replica if i in self.rare_idx else 1
             self.indices.extend([i] * num_replicas)
             
             weight = 1.0
             if self.alpha is not None and self.alpha > 0:
                 # Assuming dataset[i] returns a Data object with a metadata dict
-                force_norm = self.dataset[i].metadata.get("force_norm", 0.0)
+                force_norm = self.data_source[i].metadata.get("force_norm", 0.0)
                 weight += self.alpha * force_norm
             
             self.weights.extend([weight] * num_replicas)

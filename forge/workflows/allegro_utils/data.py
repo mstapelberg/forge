@@ -1,7 +1,6 @@
 from typing import Dict, Any, Optional
 
 from nequip.data.datamodule import ASEDataModule
-from nequip.utils.torch_geometric import Batch
 from torch.utils.data import DataLoader
 from hydra._internal.utils import instantiate
 

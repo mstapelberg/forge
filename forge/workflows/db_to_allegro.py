@@ -601,24 +601,26 @@ def prepare_allegro_job(
         logger.info(f"[{job_name}] Using custom sampler: {sampler}")
         logger.debug(f"[{job_name}] Sampler config: {sampler_config}")
         
-        # Try V2 implementation first (more robust)
-        use_v2 = True
-        if use_v2:
-            config['data']['_target_'] = "forge.workflows.allegro_utils.data_v2.CustomSamplingASEDataModuleV2"
-            logger.info(f"[{job_name}] Using CustomSamplingASEDataModuleV2 for better compatibility")
+        # Try V3 implementation (precomputes indices before distribution)
+        use_v3 = True
+        if use_v3:
+            config['data']['_target_'] = "forge.workflows.allegro_utils.data_v3.CustomSamplingASEDataModuleV3"
+            logger.info(f"[{job_name}] Using CustomSamplingASEDataModuleV3 for distributed training compatibility")
         else:
-            config['data']['_target_'] = "forge.workflows.allegro_utils.data.CustomSamplingASEDataModule"
+            # Fallback to V2
+            config['data']['_target_'] = "forge.workflows.allegro_utils.data_v2.CustomSamplingASEDataModuleV2"
+            logger.info(f"[{job_name}] Using CustomSamplingASEDataModuleV2")
         
         config['data']['sampler_config'] = sampler_config
         
         # Verify custom module is importable
         try:
-            if use_v2:
+            if use_v3:
+                from forge.workflows.allegro_utils.data_v3 import CustomSamplingASEDataModuleV3
+                logger.debug(f"[{job_name}] Successfully imported CustomSamplingASEDataModuleV3")
+            else:
                 from forge.workflows.allegro_utils.data_v2 import CustomSamplingASEDataModuleV2
                 logger.debug(f"[{job_name}] Successfully imported CustomSamplingASEDataModuleV2")
-            else:
-                from forge.workflows.allegro_utils.data import CustomSamplingASEDataModule
-                logger.debug(f"[{job_name}] Successfully imported CustomSamplingASEDataModule")
         except ImportError as e:
             logger.error(f"[{job_name}] Failed to import custom datamodule: {e}")
             raise

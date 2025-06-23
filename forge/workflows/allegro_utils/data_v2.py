@@ -39,42 +39,36 @@ class CustomSamplingASEDataModuleV2(ASEDataModule):
         
         This is called by Lightning before requesting dataloaders.
         """
-        # Call parent setup first to ensure datasets are created
-        super().setup(stage=stage)
-        
-        # Now that datasets are created, we can instantiate the sampler if needed
+        # Store the sampler config but don't create sampler yet
+        # We'll create it in train_dataloader() when we have access to the full dataset
         if stage == "fit" and self._sampler_config is not None:
-            if hasattr(self, 'train_dataset') and self.train_dataset is not None:
-                logger.info("Creating custom sampler for training dataset")
-                try:
-                    # Instantiate the sampler with the actual dataset
-                    self._custom_sampler = instantiate(
-                        self._sampler_config, 
-                        data_source=self.train_dataset
-                    )
-                    logger.info(f"Successfully created sampler: {type(self._custom_sampler)}")
-                    
-                    # Modify the train_dataloader configuration to use our sampler
-                    # This assumes train_dataloader is a config dict
-                    if hasattr(self, 'train_dataloader') and isinstance(self.train_dataloader, (dict, DictConfig)):
-                        # Store original shuffle setting
-                        self._original_shuffle = self.train_dataloader.get('shuffle', None)
-                        
-                        # When using a sampler, shuffle must be False
-                        self.train_dataloader['shuffle'] = False
-                        # Remove any batch_sampler if present
-                        self.train_dataloader.pop('batch_sampler', None)
-                        
-                        logger.info("Modified train_dataloader config to prepare for custom sampler")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to create custom sampler: {e}", exc_info=True)
-                    self._custom_sampler = None
-            else:
-                logger.warning("train_dataset not available in setup, cannot create sampler")
+            logger.info(f"Will create custom sampler with config: {self._sampler_config}")
+            # Modify dataloader config to disable shuffle when using sampler
+            if hasattr(self, 'train_dataloader') and isinstance(self.train_dataloader, (dict, DictConfig)):
+                self._original_shuffle = self.train_dataloader.get('shuffle', None)
+                self.train_dataloader['shuffle'] = False
+                self.train_dataloader.pop('batch_sampler', None)
+        
+        # Call parent setup to create datasets
+        super().setup(stage=stage)
 
     def train_dataloader(self) -> DataLoader:
         """Create training dataloader, potentially with custom sampler."""
+        # First, check if we need to create a custom sampler
+        if self._sampler_config is not None and self._custom_sampler is None:
+            # Get the full dataset before it's distributed
+            if hasattr(self, 'train_dataset') and self.train_dataset is not None:
+                logger.info(f"Creating custom sampler with dataset of size: {len(self.train_dataset)}")
+                try:
+                    self._custom_sampler = instantiate(
+                        self._sampler_config,
+                        data_source=self.train_dataset
+                    )
+                    logger.info(f"Successfully created sampler: {type(self._custom_sampler)} with {len(self._custom_sampler)} indices")
+                except Exception as e:
+                    logger.error(f"Failed to create custom sampler: {e}", exc_info=True)
+                    self._custom_sampler = None
+        
         # Get the base dataloader from parent
         dataloader = super().train_dataloader()
         

@@ -33,6 +33,7 @@ from forge.workflows.allegro_utils.callbacks import CurriculumCallback, GradNorm
 from forge.workflows.allegro_utils.custom_losses import FocalMSELoss
 from forge.workflows.allegro_utils.custom_metrics import TailMSE
 from forge.workflows.allegro_utils.samplers import RareWeightedSampler
+from forge.workflows.allegro_utils.data import CustomSamplingASEDataModule
 # ---
 
 def _extract_chemical_symbols(
@@ -582,8 +583,12 @@ def prepare_allegro_job(
     config['training_module']['loss'] = {"_target_": "nequip.train.MetricsManager", "metrics": loss_metrics}
     config['training_module']['val_metrics'] = {"_target_": "nequip.train.MetricsManager", "metrics": val_metrics}
     config['data']['train_dataloader'] = train_dataloader_config
+    
+    # --- NEW: Use the custom datamodule if a sampler is specified ---
     if sampler_config:
-        config['data']['train_sampler'] = sampler_config # Add sampler at the correct level
+        config['data']['_target_'] = "forge.workflows.allegro_utils.data.CustomSamplingASEDataModule"
+        config['data']['sampler_config'] = sampler_config
+
     config['data']['val_dataloader']['batch_size'] = batch_size
     if extra_trainer_params:
         config['trainer'].update(extra_trainer_params)

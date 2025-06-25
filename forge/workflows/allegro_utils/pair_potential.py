@@ -104,7 +104,6 @@ class NLH(GraphModuleMixin, torch.nn.Module):
         type_names (List[str]): list of type names known by the model, ``[atom1, atom2, atom3]``
         chemical_species (List[str]): list of chemical symbols, e.g. ``[C, H, O]``
         units (str): `LAMMPS units <https://docs.lammps.org/units.html>`_ that the data is in; ``metal`` and ``real`` are presently supported -- raise a GitHub issue if more is desired
-        nlh_coeffs_pickle_path (str): Path to the pickled coefficient dictionary.
     """
 
     def __init__(
@@ -112,7 +111,6 @@ class NLH(GraphModuleMixin, torch.nn.Module):
         type_names: List[str],
         chemical_species: List[str],
         units: str,
-        nlh_coeffs_pickle_path: str = "forge/workflows/allegro_utils/nlh_coeffs.pkl",
         irreps_in=None,
     ):
         super().__init__()
@@ -130,7 +128,10 @@ class NLH(GraphModuleMixin, torch.nn.Module):
                 f"Your chemical symbols don't seem valid (minimum atomic number is {min(atomic_numbers_list)} < 1); did you try to use fake chemical symbols for arbitrary atom types?"
             )
         
-        pickle_path = Path(nlh_coeffs_pickle_path)
+        # Determine the path to the pickle file relative to this file
+        base_path = Path(__file__).parent
+        pickle_path = base_path / "nlh_coeffs.pkl"
+
         if not pickle_path.exists():
             raise FileNotFoundError(
                 f"NLH coefficient pickle file not found at {pickle_path}. "

@@ -54,7 +54,7 @@ Loss functions extend NequIP's base metrics:
 │         Loss Functions              │
 ├─────────────────────────────────────┤
 │ FocalMSELoss                        │
-│ - Down-weights easy samples        │
+│ - Down-weights easy samples         │
 │                                     │
 │ WeightedMSELoss                     │
 │ - Applies per-sample weights        │

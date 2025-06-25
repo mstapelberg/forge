@@ -1,0 +1,10 @@
+# @package _global_
+trainer:
+  accumulate_grad_batches: ${hydra.sweeper.params.accum}
+  gradient_clip_val: 0.15
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      accum: 1,4,32

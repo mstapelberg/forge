@@ -1334,6 +1334,61 @@ class DatabaseManager:
 
         return results
 
+    def get_metadata_key_counts(self, metadata_key: str) -> Dict[str, int]:
+        """Gets the count of each unique value for a given metadata key.
+
+        Args:
+            metadata_key (str): The key within the metadata to count values for.
+
+        Returns:
+            Dict[str, int]: A dictionary mapping each unique value to its count.
+        """
+        if self.dry_run:
+            print(f"[DRY RUN] Would fetch counts for metadata key '{metadata_key}'")
+            return {f"dummy_value_1": 10, f"dummy_value_2": 20}
+
+        if self.conn is None:
+            raise ConnectionError("Database is not connected.")
+
+        query = f"""
+            SELECT metadata->>%s as key, COUNT(*) as count
+            FROM structures
+            WHERE metadata->>%s IS NOT NULL
+            GROUP BY key
+            ORDER BY count DESC;
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, (metadata_key, metadata_key))
+                return {row[0]: row[1] for row in cur.fetchall()}
+        except psycopg2.Error as e:
+            print(f"[ERROR] Failed to get metadata key counts for '{metadata_key}': {e}")
+            self.conn.rollback()
+            return {}
+
+    def get_all_structure_ids(self) -> List[int]:
+        """Retrieves all structure IDs from the database, ordered by creation time.
+
+        Returns:
+            List[int]: A list of all structure IDs.
+        """
+        if self.dry_run:
+            print("[DRY RUN] Would fetch all structure IDs.")
+            return list(range(1, 101)) # Return a dummy list
+
+        if self.conn is None:
+            raise ConnectionError("Database is not connected.")
+
+        query = "SELECT structure_id FROM structures ORDER BY created_at ASC"
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query)
+                return [row[0] for row in cur.fetchall()]
+        except psycopg2.Error as e:
+            print(f"[ERROR] Failed to get all structure IDs: {e}")
+            self.conn.rollback()
+            return []
+
     def remove_structure(self, structure_id: int, dry_run_override: Optional[bool] = None) -> None:
         """Removes a single structure and its calculations by wrapping the batch method."""
         self.remove_structures_batch([structure_id], dry_run_override=dry_run_override)

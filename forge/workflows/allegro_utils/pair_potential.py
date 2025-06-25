@@ -9,8 +9,8 @@ from e3nn.util.jit import compile_mode
 
 from nequip.data import AtomicDataDict
 from nequip.data.misc import chemical_symbols_to_atomic_numbers_dict
-from ._graph_mixin import GraphModuleMixin
-from .utils import scatter, with_edge_vectors_
+from nequip.nn._graph_mixin import GraphModuleMixin
+from nequip.nn.utils import scatter, with_edge_vectors_
 from nequip.utils.compile import conditional_torchscript_jit
 
 

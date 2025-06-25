@@ -5,8 +5,8 @@ import random
 import math
 from pathlib import Path
 from typing import TypedDict, List, Dict, Optional, Union, Any
-import logging # Add logging
-import yaml # <-- Add PyYAML import
+import logging
+import yaml
 
 from ase.data import atomic_numbers
 from forge.core.database import DatabaseManager
@@ -23,113 +23,478 @@ from forge.workflows.db_to_mace import (
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Remove GPUConfig as it's no longer used
-# class GPUConfig(TypedDict):
-#     count: int
-#     type: str
-
-# --- NEW: Import custom components for type hinting and path resolution ---
+# --- Import custom components for type hinting and path resolution ---
 from forge.workflows.allegro_utils.callbacks import CurriculumCallback, GradNormCallback
 from forge.workflows.allegro_utils.custom_losses import FocalMSELoss
 from forge.workflows.allegro_utils.custom_metrics import TailMSE
 from forge.workflows.allegro_utils.samplers import RareWeightedSampler
-from forge.workflows.allegro_utils.data import CustomSamplingASEDataModule
+from forge.workflows.allegro_utils.data_v3 import CustomSamplingASEDataModuleV3
 # ---
 
 def _extract_chemical_symbols(
     db_manager: DatabaseManager,
     structure_ids: List[int]
 ) -> List[str]:
-    """
-    Batch-fetch all atoms, collect unique chemical symbols, and sort by atomic number.
-    Returns empty list if structure_ids is empty.
+    """Extracts, sorts, and returns unique chemical symbols from a list of structures.
+
+    This function fetches the ASE Atoms objects corresponding to the provided
+    structure IDs from the database. It first attempts to retrieve them with
+
+    associated VASP calculation data, falling back to fetching just the
+    structures if that fails. It then gathers all unique chemical symbols
+    from the structures and sorts them by their atomic number.
+
+    Args:
+        db_manager (DatabaseManager): An instance of the database manager to
+            query for structures.
+        structure_ids (List[int]): A list of structure IDs to process.
+
+    Returns:
+        List[str]: A sorted list of unique chemical symbols (e.g., ['Cr', 'Ti', 'V']).
+            Returns an empty list if no structures are found or no symbols can be
+            extracted.
     """
     if not structure_ids:
         return []
-    # logger.debug(f"Extracting symbols for {len(structure_ids)} IDs") # Verbose
     try:
-        # Try getting atoms with calculation first
         atoms_list = db_manager.get_batch_atoms_with_calculation(
             structure_ids, calculator='vasp'
         )
     except Exception as e_calc:
         logger.warning(f"Failed getting atoms with calculation for symbol extraction: {e_calc}. Trying without calc.")
         try:
-            # Fallback to getting just atoms if calc retrieval fails
             atoms_map = db_manager.get_structures_batch(structure_ids)
             atoms_list = list(atoms_map.values())
         except Exception as e_atoms:
             logger.error(f"Failed getting atoms even without calculation: {e_atoms}")
-            return [] # Cannot determine symbols
+            return []
 
     syms = set()
-    processed_ids = set()
     for atoms in atoms_list:
-        # Check if atoms object is valid
-        if hasattr(atoms, 'get_chemical_symbols') and hasattr(atoms, 'info'):
-            struct_id = atoms.info.get('structure_id', 'unknown')
-            processed_ids.add(struct_id)
-            try:
-                syms.update(atoms.get_chemical_symbols())
-            except Exception as e:
-                logger.warning(f"Failed to get symbols for structure {struct_id}: {e}")
+        if hasattr(atoms, 'get_chemical_symbols'):
+            syms.update(atoms.get_chemical_symbols())
         else:
             logger.warning("Invalid object received instead of ASE Atoms in symbol extraction.")
-
-    # Check if all requested IDs were processed
-    requested_ids = set(structure_ids)
-    missing_ids = requested_ids - processed_ids
-    if missing_ids:
-        logger.warning(f"Could not retrieve atom objects for {len(missing_ids)} structure IDs during symbol extraction (e.g., {list(missing_ids)[:5]})")
 
     if not syms:
         logger.warning("No chemical symbols found for the provided structure IDs.")
         return []
 
-    # Sort symbols by atomic number
     try:
-        sorted_syms = sorted(list(syms), key=lambda s: atomic_numbers[s])
-        # logger.debug(f"Found symbols: {sorted_syms}") # Verbose
-        return sorted_syms
+        return sorted(list(syms), key=lambda s: atomic_numbers[s])
     except KeyError as e:
         logger.error(f"Unknown chemical symbol encountered: {e}. Cannot sort symbols.")
         return list(syms)
-    except Exception as e:
-        logger.error(f"Unexpected error sorting symbols: {e}")
-        return list(syms)
+
+def _prepare_data_for_allegro(
+    db_manager: DatabaseManager,
+    job_name: str,
+    job_dir: Path,
+    data_train_path: Optional[Union[str, Path]],
+    data_val_path: Optional[Union[str, Path]],
+    data_test_path: Optional[Union[str, Path]],
+    chemical_symbols_list: Optional[List[str]],
+    seed: int,
+    num_structures: Optional[int],
+    structure_ids: Optional[List[int]],
+    train_ratio: Optional[float],
+    val_ratio: Optional[float],
+    test_ratio: Optional[float],
+) -> Dict[str, Any]:
+    """Prepares data for an Allegro job, supporting both HPO and standalone modes.
+
+    In HPO (Hyper-Parameter Optimization) mode, triggered when `data_train_path`
+    is provided, this function uses existing data files. It resolves their
+    absolute paths and extracts chemical symbols if they are not provided.
+
+    In standalone mode, it selects structures from the database based on
+    `structure_ids` or `num_structures`, splits them into training, validation,
+    and test sets, and saves them to new `.xyz` files within the job directory.
+
+    Args:
+        db_manager (DatabaseManager): The database manager for structure retrieval.
+        job_name (str): The name of the job, used for naming output files.
+        job_dir (Path): The directory for the job's output.
+        data_train_path (Optional[Union[str, Path]]): Path to the training data.
+            If provided, activates HPO mode.
+        data_val_path (Optional[Union[str, Path]]): Path to the validation data.
+        data_test_path (Optional[Union[str, Path]]): Path to the test data.
+        chemical_symbols_list (Optional[List[str]]): A predefined list of chemical
+            symbols. If None, they are extracted from the data.
+        seed (int): The random seed for data splitting in standalone mode.
+        num_structures (Optional[int]): The number of structures to sample from
+            the database in standalone mode.
+        structure_ids (Optional[List[int]]): Specific structure IDs to use in
+            standalone mode.
+        train_ratio (Optional[float]): The fraction of data for the training set.
+        val_ratio (Optional[float]): The fraction of data for the validation set.
+        test_ratio (Optional[float]): The fraction of data for the test set.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing:
+            - "train_path": Path to the training data file.
+            - "val_path": Path to the validation data file.
+            - "test_path": Path to the test data file.
+            - "chemical_symbols": A list of unique, sorted chemical symbols.
+            - "structure_splits": A dict with the train/val/test structure IDs.
+                Empty in HPO mode.
+
+    Raises:
+        ValueError: If required arguments for a specific mode are missing.
+        FileNotFoundError: If a provided data file in HPO mode does not exist.
+    """
+    is_hpo_mode = data_train_path is not None
+    job_data_dir = job_dir / "data"
+    
+    if is_hpo_mode:
+        logger.info(f"[{job_name}] Running in HPO mode. Using provided data paths.")
+        if not data_val_path or not data_test_path:
+            raise ValueError("In HPO mode, data_train_path, data_val_path, and data_test_path must all be provided.")
+
+        train_path = Path(data_train_path).resolve()
+        val_path = Path(data_val_path).resolve()
+        test_path = Path(data_test_path).resolve()
+        
+        if not train_path.exists(): raise FileNotFoundError(f"Provided train data not found: {train_path}")
+        if not val_path.exists(): raise FileNotFoundError(f"Provided validation data not found: {val_path}")
+        if not test_path.exists() and test_path.stat().st_size > 0:
+            logger.warning(f"Provided test data not found: {test_path}")
+
+        if not chemical_symbols_list:
+            logger.warning(f"[{job_name}] Chemical symbols not provided. Extracting from splits file...")
+            splits_json_path = train_path.parent / "structure_splits.json"
+            if splits_json_path.exists():
+                with open(splits_json_path, 'r') as f:
+                    split_ids_info = json.load(f)
+                all_ids = list(set(split_ids_info.get('train', []) + split_ids_info.get('val', [])))
+                chemical_symbols = _extract_chemical_symbols(db_manager, all_ids)
+            else:
+                logger.warning(f"Cannot find {splits_json_path}. Proceeding with empty symbol list.")
+                chemical_symbols = []
+        else:
+            chemical_symbols = chemical_symbols_list
+
+        return {
+            "train_path": str(train_path),
+            "val_path": str(val_path),
+            "test_path": str(test_path),
+            "chemical_symbols": chemical_symbols,
+            "structure_splits": {},
+        }
+    else:
+        logger.info(f"[{job_name}] Running in Standalone mode. Preparing data in {job_dir}.")
+        job_data_dir.mkdir(parents=True, exist_ok=True)
+
+        if structure_ids is None and num_structures is None:
+            raise ValueError("Must specify either structure_ids or num_structures in standalone mode.")
+        if train_ratio is None or val_ratio is None or test_ratio is None:
+            raise ValueError("All ratios must be provided in standalone mode.")
+
+        if structure_ids:
+            final_ids = structure_ids
+        else:
+            all_db_ids = _get_vasp_structures(db_manager)
+            num_to_sample = min(num_structures, len(all_db_ids))
+            random.seed(seed)
+            final_ids = random.sample(all_db_ids, num_to_sample)
+        
+        if not final_ids:
+            raise ValueError("No structures selected for standalone run.")
+
+        chemical_symbols = _extract_chemical_symbols(db_manager, final_ids)
+        
+        structure_splits = _prepare_structure_splits(
+            db_manager, final_ids, job_name, job_dir, job_data_dir,
+            train_ratio, val_ratio, test_ratio, seed
+        )
+
+        return {
+            "train_path": f"data/{job_name}_train.xyz",
+            "val_path": f"data/{job_name}_val.xyz",
+            "test_path": f"data/{job_name}_test.xyz",
+            "chemical_symbols": chemical_symbols,
+            "structure_splits": structure_splits,
+        }
+
+def _build_loss_metrics(loss_function: str, loss_params: Optional[Dict[str, Any]], loss_coeffs: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Constructs the loss metrics list for the Allegro configuration.
+
+    This function dynamically builds the list of metrics that will be used for
+    the loss function during training. It supports multiple loss types
+    (e.g., 'mse', 'huber') and applies them to energy, forces, and optionally
+    stress, each with a specific coefficient.
+
+    Args:
+        loss_function (str): The name of the loss function to use (e.g., 'mse').
+        loss_params (Optional[Dict[str, Any]]): A dictionary of parameters for the
+            loss function (e.g., `{'delta': 1.0}` for Huber loss).
+        loss_coeffs (Optional[Dict[str, Any]]): A dictionary specifying the
+            coefficients for 'total_energy', 'forces', and 'stress' losses.
+            If None, default values are used.
+
+    Returns:
+        List[Dict[str, Any]]: A list of dictionaries, where each dictionary
+            defines a component of the total loss function for the NequIP
+            MetricsManager.
+
+    Raises:
+        ValueError: If an unsupported `loss_function` is provided.
+    """
+    loss_function_map = {
+        "mse": "nequip.train.MeanSquaredError",
+        "focal": "forge.workflows.allegro_utils.custom_losses.FocalMSELoss",
+        "huber": "nequip.train.HuberLoss",
+        "stratified_huber": "nequip.train.StratifiedHuberForceLoss",
+        "weighted_mse": "forge.workflows.allegro_utils.weighted_loss.WeightedMSELoss",
+    }
+    if loss_function not in loss_function_map:
+        raise ValueError(f"Unsupported loss function '{loss_function}'.")
+    loss_target = loss_function_map[loss_function]
+    
+    effective_loss_coeffs = loss_coeffs or {"total_energy": {"coeff": 1.0}, "forces": {"coeff": 10.0}, "stress": {"coeff": 100.0}}
+    
+    metrics = []
+    energy_metric = {
+        "name": f"per_atom_energy_{loss_function}",
+        "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"},
+        "metric": {"_target_": loss_target, **(loss_params or {})},
+        "coeff": effective_loss_coeffs.get("total_energy", {}).get("coeff", 1.0),
+    }
+    metrics.append(energy_metric)
+    forces_metric = {
+        "name": f"forces_{loss_function}",
+        "field": "forces",
+        "metric": {"_target_": loss_target, **(loss_params or {})},
+        "coeff": effective_loss_coeffs.get("forces", {}).get("coeff", 10.0),
+    }
+    metrics.append(forces_metric)
+    if "stress" in effective_loss_coeffs and effective_loss_coeffs.get("stress", {}).get("coeff", 0) > 0:
+        stress_metric = {
+            "name": f"stress_{loss_function}",
+            "field": "stress",
+            "metric": {"_target_": loss_target, **(loss_params or {})},
+            "coeff": effective_loss_coeffs["stress"]["coeff"],
+        }
+        metrics.append(stress_metric)
+    return metrics
+
+def _build_validation_metrics(extra_val_metrics: Optional[List[str]], extra_val_metric_params: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Constructs the validation metrics list for the Allegro configuration.
+
+    This function starts with a default set of validation metrics (MAE and RMSE
+    for energy, forces, and stress) and appends additional, optional metrics
+    as specified.
+
+    Args:
+        extra_val_metrics (Optional[List[str]]): A list of names of extra
+            validation metrics to include (e.g., 'tail_mse').
+        extra_val_metric_params (Optional[Dict[str, Any]]): A dictionary of
+            parameters for the extra validation metrics, keyed by the metric name.
+
+    Returns:
+        List[Dict[str, Any]]: A list of dictionaries defining the validation
+            metrics for the NequIP MetricsManager.
+    """
+    val_metrics = [
+        {"name": "per_atom_energy_mae", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
+        {"name": "forces_mae", "field": "forces", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
+        {"name": "stress_mae", "field": "stress", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}, "ignore_nan": True},
+        {"name": "per_atom_energy_rmse", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "coeff": 1.0},
+        {"name": "forces_rmse", "field": "forces", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "coeff": 1.0},
+        {"name": "stress_rmse", "field": "stress", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "ignore_nan": True, "coeff": 1.0},
+    ]
+    if extra_val_metrics:
+        metric_map = {"tail_mse": "forge.workflows.allegro_utils.custom_metrics.TailMSE"}
+        for metric_name in extra_val_metrics:
+            if metric_name in metric_map:
+                params = (extra_val_metric_params or {}).get(metric_name, {})
+                val_metrics.append({"name": f"forces_{metric_name}", "field": "forces", "metric": {"_target_": metric_map[metric_name], **params}})
+                val_metrics.append({"name": f"per_atom_energy_{metric_name}", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": metric_map[metric_name], **params}})
+    return val_metrics
+    
+def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_monitor_key: str, loss_schedule: Optional[Dict[int, Dict[str, float]]]):
+    """Updates or adds the necessary training callbacks to the configuration.
+
+    This function ensures that the configuration's trainer section has the
+    required callbacks for model checkpointing, learning rate monitoring, and
+    loss coefficient monitoring. It also adds a loss coefficient scheduler if
+    a schedule is provided.
+
+    Args:
+        config (Dict[str, Any]): The Allegro configuration dictionary, which will
+            be modified in place.
+        job_name (str): The name of the job, used to define the checkpoint directory.
+        checkpoint_monitor_key (str): The validation metric to monitor for saving
+            the best model checkpoint.
+        loss_schedule (Optional[Dict[int, Dict[str, float]]]): An optional schedule
+            for the LossCoefficientScheduler.
+    """
+    if 'callbacks' not in config.get('trainer', {}):
+        config.setdefault('trainer', {})['callbacks'] = []
+
+    checkpoint_callback = next((cb for cb in config['trainer']['callbacks'] if 'ModelCheckpoint' in cb.get('_target_', '')), None)
+    if checkpoint_callback:
+        checkpoint_callback['dirpath'] = f"results/{job_name}"
+        checkpoint_callback['monitor'] = checkpoint_monitor_key
+    else:
+        config['trainer']['callbacks'].append({
+            "_target_": "lightning.pytorch.callbacks.ModelCheckpoint", "dirpath": f"results/{job_name}", 
+            "monitor": checkpoint_monitor_key, "save_last": True
+        })
+
+    config['trainer']['callbacks'] = [cb for cb in config['trainer']['callbacks'] if 'LossCoefficientScheduler' not in cb.get('_target_', '')]
+    if loss_schedule:
+        config['trainer']['callbacks'].append({
+            "_target_": "nequip.train.callbacks.LossCoefficientScheduler", "schedule": loss_schedule
+        })
+    
+    if not any('LearningRateMonitor' in cb.get('_target_', '') for cb in config['trainer']['callbacks']):
+        config['trainer']['callbacks'].append({"_target_": "lightning.pytorch.callbacks.LearningRateMonitor", "logging_interval": "epoch"})
+    if not any('LossCoefficientMonitor' in cb.get('_target_', '') for cb in config['trainer']['callbacks']):
+        config['trainer']['callbacks'].append({"_target_": "nequip.train.callbacks.LossCoefficientMonitor", "frequency": 1, "interval": "epoch"})
+
+def _build_allegro_config(
+    job_name: str,
+    seed: int,
+    data_paths: Dict[str, Any],
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Builds the complete Allegro/NequIP configuration dictionary.
+
+    This function loads a base configuration from a YAML file, then populates
+    and overrides it with job-specific parameters. This includes setting data
+    paths, chemical species, model hyperparameters, loss functions, metrics,
+    and callbacks.
+
+    Args:
+        job_name (str): The unique name for the job.
+        seed (int): The random seed for the training run.
+        data_paths (Dict[str, Any]): A dictionary containing the paths to the
+            train, validation, and test datasets, as well as the list of
+            chemical symbols.
+        **kwargs: A dictionary of keyword arguments containing all other
+            hyperparameters and settings for the job (e.g., `r_max`, `l_max`,
+            `batch_size`, `loss_function`).
+
+    Returns:
+        Dict[str, Any]: The fully-populated Allegro configuration dictionary.
+
+    Raises:
+        ValueError: If chemical symbols cannot be determined or if an
+            unsupported sampler is requested.
+        FileNotFoundError: If the `base.yaml` configuration file cannot be found.
+    """
+    base_config_path = Path(__file__).parent / "allegro_configs" / "base.yaml"
+    with open(base_config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    chemical_symbols = data_paths["chemical_symbols"]
+    if not chemical_symbols:
+        raise ValueError(f"[{job_name}] Could not determine chemical symbols.")
+
+    config.update({
+        'job_name': job_name, 'seed': seed, 'chemical_symbols': chemical_symbols,
+        'model_type_names': chemical_symbols,
+    })
+    
+    # Update nested keys that depend on chemical symbols
+    config['training_module']['model']['type_names'] = chemical_symbols
+    config['data']['stats_manager']['type_names'] = chemical_symbols
+    config['data']['transforms'][1]['chemical_symbols'] = chemical_symbols
+    config['training_module']['model']['pair_potential']['chemical_species'] = chemical_symbols
+    
+    # Update data paths
+    config['data']['train_file_path'] = data_paths["train_path"]
+    config['data']['val_file_path'] = data_paths["val_path"]
+    config['data']['test_file_path'] = data_paths["test_path"]
+
+    # Update hyperparameters from kwargs
+    config['training_module']['model']['r_max'] = kwargs['r_max']
+    config['cutoff_radius'] = kwargs['r_max']
+    config['training_module']['model']['l_max'] = kwargs['l_max']
+    config['training_module']['model']['num_layers'] = kwargs['num_layers']
+    config['training_module']['model']['num_scalar_features'] = kwargs['num_scalar_features']
+    config['training_module']['model']['num_tensor_features'] = kwargs['num_tensor_features']
+    config['training_module']['model']['allegro_mlp_hidden_layers_depth'] = kwargs.get('mlp_depth', 2)
+    config['training_module']['model']['allegro_mlp_hidden_layers_width'] = kwargs.get('mlp_width', 512)
+    config['trainer']['max_epochs'] = kwargs['max_epochs']
+    config['training_module']['optimizer']['lr'] = kwargs['lr']
+    
+    if kwargs.get('wandb_project'):
+        config['wandb_name'] = kwargs['wandb_project']
+        if 'logger' in config['trainer'] and 'project' in config['trainer']['logger']:
+            config['trainer']['logger']['project'] = kwargs['wandb_project']
+    if 'logger' in config['trainer'] and 'name' in config['trainer']['logger']:
+        config['trainer']['logger']['name'] = job_name
+
+    loss_metrics = _build_loss_metrics(
+        kwargs['loss_function'], kwargs.get('loss_params'), kwargs.get('loss_coeffs')
+    )
+    config['training_module']['loss'] = {"_target_": "nequip.train.MetricsManager", "metrics": loss_metrics}
+
+    val_metrics = _build_validation_metrics(
+        kwargs.get('extra_val_metrics'), kwargs.get('extra_val_metric_params')
+    )
+    config['training_module']['val_metrics'] = {"_target_": "nequip.train.MetricsManager", "metrics": val_metrics}
+    
+    config['data']['train_dataloader'] = {
+        "_target_": "torch.utils.data.DataLoader",
+        "batch_size": kwargs['batch_size']
+    }
+    if 'val_dataloader' in config['data']:
+        config['data']['val_dataloader']['batch_size'] = kwargs['batch_size']
+
+    if kwargs.get('sampler'):
+        sampler_map = {'rare_weighted': "forge.workflows.allegro_utils.samplers.RareWeightedSampler"}
+        sampler_target = sampler_map.get(kwargs['sampler'])
+        if not sampler_target:
+            raise ValueError(f"Unsupported sampler '{kwargs['sampler']}'")
+        config['data']['_target_'] = "forge.workflows.allegro_utils.data_v3.CustomSamplingASEDataModuleV3"
+        config['data']['sampler_config'] = {
+            "_target_": sampler_target,
+            **(kwargs.get('sampler_params') or {})
+        }
+    
+    _update_trainer_callbacks(
+        config, job_name, kwargs['checkpoint_monitor_key'], kwargs.get('loss_schedule')
+    )
+
+    if kwargs.get('extra_trainer_params'):
+        config['trainer'].update(kwargs['extra_trainer_params'])
+        
+    return config
 
 def prepare_allegro_job(
     db_manager: DatabaseManager,
     job_name: str,
     job_dir: Union[str, Path],
-    # --- Arguments for HPO/Pre-split Mode ---
+    # HPO/Pre-split Mode Arguments
     data_train_path: Optional[Union[str, Path]] = None,
     data_val_path: Optional[Union[str, Path]] = None,
     data_test_path: Optional[Union[str, Path]] = None,
-    chemical_symbols_list: Optional[List[str]] = None, # <-- Will be provided by HPO sweep
-    # --- Arguments for Standalone Mode (ignored if data paths provided) ---
+    chemical_symbols_list: Optional[List[str]] = None,
+    # Standalone Mode Arguments
     seed: int = 0,
     num_structures: Optional[int] = None,
     structure_ids: Optional[List[int]] = None,
-    train_ratio: Optional[float] = None,
-    val_ratio: Optional[float] = None,
-    test_ratio: Optional[float] = None,
-    # --- NEW: Arguments for custom training components ---
-    loss_function: str = "mse", # 'mse' or 'focal' or 'huber'
+    train_ratio: Optional[float] = 0.8,
+    val_ratio: Optional[float] = 0.1,
+    test_ratio: Optional[float] = 0.1,
+    # Custom Training Component Arguments
+    loss_function: str = "mse",
     loss_params: Optional[Dict[str, Any]] = None,
-    loss_schedule: Optional[Dict[int, Dict[str, float]]] = None, # For LossCoefficientScheduler
-    sampler: Optional[str] = None, # 'rare_weighted'
+    loss_schedule: Optional[Dict[int, Dict[str, float]]] = None,
+    sampler: Optional[str] = None,
     sampler_params: Optional[Dict[str, Any]] = None,
-    sampler_implementation: str = 'v3', # 'v2' or 'v3' for custom sampler
-    extra_val_metrics: Optional[List[str]] = None, # 'tail_mse'
+    extra_val_metrics: Optional[List[str]] = None,
     extra_val_metric_params: Optional[Dict[str, Any]] = None,
     extra_trainer_params: Optional[Dict[str, Any]] = None,
-    checkpoint_monitor_key: str = "val0_epoch/stress_rmse", # Metric to monitor for saving checkpoints
-    # --- Allegro Hyperparameters (used in config.yaml) ---
+    checkpoint_monitor_key: str = "val0_epoch/stress_rmse",
+    # Allegro Hyperparameters
     max_epochs: int = 400,
     batch_size: int = 4,
     wandb_project: Optional[str] = None,
-    loss_coeffs: Optional[Dict[str, float]] = None, # Loss coefficients
+    loss_coeffs: Optional[Dict[str, Any]] = None,
     lr: float = 0.001,
     r_max: float = 5.0,
     l_max: int = 2,
@@ -138,522 +503,111 @@ def prepare_allegro_job(
     num_tensor_features: int = 64,
     mlp_depth: int = 2,
     mlp_width: int = 512,
-    # devices: Optional[int] = None, # Devices determined by runner/SLURM
-    # num_nodes: int = 1, # Nodes determined by runner/SLURM
-    # --- Removed Parameters ---
-    # gpu_config removed (handled by runner/SLURM)
-    # num_ensemble removed (handled by HPO script)
-    # base_name removed (unused)
-    # external_data_source_dir removed
 ) -> Dict[str, List[int]]:
-    """
-    Prepare Allegro training config (config.yaml) from database or pre-split data.
+    """Prepares an Allegro training job by generating a complete `config.yaml`.
 
-    Operates in two modes:
-    1. HPO Mode: If `data_train_path` is provided, uses the given absolute paths
-       and `chemical_symbols_list` (if provided) to generate `config.yaml`.
-       Ignores `seed`, `num_structures`, `structure_ids`, `*_ratio`.
-    2. Standalone Mode: If `data_train_path` is None, performs structure
-       selection, splitting, saving to `job_dir/data/`, and symbol extraction.
-       Uses relative paths in `config.yaml`. Requires `num_structures` or
-       `structure_ids`, and `*_ratio`.
+    This function serves as the main entry point for creating an Allegro job.
+    It orchestrates the two main steps:
+    1.  Data Preparation (`_prepare_data_for_allegro`): Handles the sourcing,
+        splitting, and saving of training/validation/test datasets.
+    2.  Configuration Building (`_build_allegro_config`): Constructs the
+        final `config.yaml` from a base template and the specific parameters
+        of the job.
+
+    The function supports two primary modes of operation:
+    -   **Standalone Mode**: When no data paths are provided, it fetches structures
+        directly from the database.
+    -   **HPO Mode**: When `data_train_path` is provided, it uses pre-existing
+        data splits, which is typical for hyper-parameter optimization sweeps.
 
     Args:
-        db_manager: DatabaseManager instance.
-        job_name: Unique name for this specific run (used for filenames if splitting).
-        job_dir: Directory for this specific run (config.yaml is saved here).
-        data_train_path: Absolute path to pre-generated training data (HPO mode).
-        data_val_path: Absolute path to pre-generated validation data (HPO mode).
-        data_test_path: Absolute path to pre-generated test data (HPO mode).
-        chemical_symbols_list: List of chemical symbols (optional in HPO mode).
-        seed: Random seed for standalone splitting/selection.
-        num_structures: Number of structures to select (standalone mode).
-        structure_ids: List of structure IDs to use (standalone mode).
-        train_ratio: Training fraction (standalone mode).
-        val_ratio: Validation fraction (standalone mode).
-        test_ratio: Testing fraction (standalone mode).
-        loss_function: The loss function to use ('mse', 'focal', or 'huber').
-        loss_params: Parameters for the chosen loss function.
-        loss_schedule: A dictionary defining epochs and new loss coefficients for the scheduler.
-        sampler: The data sampler to use (e.g., 'rare_weighted').
-        sampler_params: Parameters for the chosen sampler.
-        extra_val_metrics: List of extra validation metrics to add (e.g., 'tail_mse').
-        extra_val_metric_params: Parameters for the validation metrics.
-        extra_trainer_params: Extra parameters to pass to the lightning.Trainer.
-        checkpoint_monitor_key: The metric key for ModelCheckpoint to monitor.
-        max_epochs: Training epochs.
-        batch_size: DataLoader batch size.
-        wandb_project: Name of the WandB project.
-        loss_coeffs: Loss coefficients.
-        lr: Learning rate.
-        r_max: Cutoff radius.
-        l_max: Max angular momentum.
-        num_layers: Number of layers.
-        num_scalar_features: Scalar feature dimension.
-        num_tensor_features: Tensor feature dimension.
-        mlp_depth: MLP depth.
-        mlp_width: MLP width.
+        db_manager (DatabaseManager): An instance of the database manager.
+        job_name (str): A unique name for the training job.
+        job_dir (Union[str, Path]): The directory where the job's `config.yaml`
+            and any generated data will be saved.
+        data_train_path (Optional[Union[str, Path]]): Path to pre-split training
+            data. Supplying this activates HPO mode.
+        data_val_path (Optional[Union[str, Path]]): Path to pre-split validation data.
+        data_test_path (Optional[Union[str, Path]]): Path to pre-split test data.
+        chemical_symbols_list (Optional[List[str]]): A pre-defined list of
+            chemical symbols.
+        seed (int): Random seed for reproducibility.
+        num_structures (Optional[int]): Number of structures to sample from the DB.
+        structure_ids (Optional[List[int]]): Specific list of structure IDs to use.
+        train_ratio (Optional[float]): Fraction of data for the training set.
+        val_ratio (Optional[float]): Fraction of data for the validation set.
+        test_ratio (Optional[float]): Fraction of data for the test set.
+        loss_function (str): The loss function to use (e.g., 'mse', 'huber').
+        loss_params (Optional[Dict[str, Any]]): Parameters for the loss function.
+        loss_schedule (Optional[Dict[int, Dict[str, float]]]): Schedule for the
+            LossCoefficientScheduler.
+        sampler (Optional[str]): The data sampler to use (e.g., 'rare_weighted').
+        sampler_params (Optional[Dict[str, Any]]): Parameters for the sampler.
+        extra_val_metrics (Optional[List[str]]): Additional validation metrics.
+        extra_val_metric_params (Optional[Dict[str, Any]]): Parameters for extra metrics.
+        extra_trainer_params (Optional[Dict[str, Any]]): Extra parameters for the
+            PyTorch Lightning Trainer.
+        checkpoint_monitor_key (str): Metric to monitor for saving checkpoints.
+        max_epochs (int): Maximum number of training epochs.
+        batch_size (int): Batch size for training and validation.
+        wandb_project (Optional[str]): Name of the Weights & Biases project.
+        loss_coeffs (Optional[Dict[str, Any]]): Coefficients for the loss terms.
+        lr (float): Learning rate.
+        r_max (float): Cutoff radius for atomic environments.
+        l_max (int): Maximum angular momentum for spherical harmonics.
+        num_layers (int): Number of interaction layers in the model.
+        num_scalar_features (int): Dimension of scalar features.
+        num_tensor_features (int): Dimension of tensor features.
+        mlp_depth (int): Depth of the MLPs in the model.
+        mlp_width (int): Width of the MLPs in the model.
 
     Returns:
-        Dict mapping 'train', 'val', 'test' to lists of structure_ids used.
-        Returns IDs from `structure_splits.json` if run in standalone mode.
-        Returns empty dict if run in HPO mode (IDs are handled by HPO script).
-
-    Raises:
-        ValueError: If invalid arguments are provided for the chosen mode.
-        FileNotFoundError: If data files/dirs are missing in HPO mode.
+        Dict[str, List[int]]: A dictionary mapping 'train', 'val', 'test' to lists
+        of the structure IDs used in each set. Returns an empty dictionary in
+        HPO mode, as the splits are external.
     """
     logger.debug(f"[{job_name}] Entered prepare_allegro_job")
     job_dir = Path(job_dir)
-    job_data_dir = job_dir / "data" # Target directory for data if splitting internally
-    job_dir.mkdir(parents=True, exist_ok=True) # Ensure job_dir exists for config.yaml
+    job_dir.mkdir(parents=True, exist_ok=True)
 
-    saved_structure_ids: Dict[str, List[int]] = {'train': [], 'val': [], 'test': []}
-    chemical_symbols: Optional[List[str]] = chemical_symbols_list # Prioritize passed list
-    config_data_train_path: str = ""
-    config_data_val_path: str = ""
-    config_data_test_path: str = ""
-    is_hpo_mode = data_train_path is not None
-
-    if is_hpo_mode:
-        # --- HPO Mode ---
-        logger.info(f"[{job_name}] Running in HPO mode. Using provided data paths.")
-        logger.debug(f"[{job_name}] Provided paths: train='{data_train_path}', val='{data_val_path}', test='{data_test_path}'")
-        if not data_val_path or not data_test_path:
-            raise ValueError("In HPO mode, data_train_path, data_val_path, and data_test_path must all be provided.")
-
-        data_train_path = Path(data_train_path)
-        data_val_path = Path(data_val_path)
-        data_test_path = Path(data_test_path)
-
-        # Log absolute paths
-        abs_train_path = data_train_path.resolve()
-        abs_val_path = data_val_path.resolve()
-        abs_test_path = data_test_path.resolve()
-        logger.debug(f"[{job_name}] Resolved absolute paths: train='{abs_train_path}', val='{abs_val_path}', test='{abs_test_path}'")
-
-        if not data_train_path.exists(): raise FileNotFoundError(f"Provided train data not found: {data_train_path}")
-        if not data_val_path.exists(): raise FileNotFoundError(f"Provided validation data not found: {data_val_path}")
-        # Test file might be empty if test_ratio was 0
-        if not data_test_path.exists() and data_test_path.stat().st_size > 0:
-            logger.warning(f"Provided test data not found: {data_test_path}")
-
-        # Use absolute paths in config for HPO mode
-        config_data_train_path = str(abs_train_path)
-        config_data_val_path = str(abs_val_path)
-        config_data_test_path = str(abs_test_path)
-
-        # --- MODIFIED: Symbol Handling ---
-        if chemical_symbols is None or not chemical_symbols: # Check if symbols were NOT passed
-            logger.warning(f"[{job_name}] Chemical symbols not provided by caller. Attempting extraction from training data splits file (less efficient)...")
-            # Fallback to original logic (less efficient)
-            abs_train_path = Path(data_train_path).resolve()
-            splits_json_path = abs_train_path.parent / "structure_splits.json"
-            logger.debug(f"[{job_name}] Looking for splits file at: {splits_json_path}")
-            if splits_json_path.exists():
-                logger.debug(f"[{job_name}] Found splits file.")
-                try:
-                    with open(splits_json_path, 'r') as f:
-                        split_ids_info = json.load(f)
-                    logger.debug(f"[{job_name}] Successfully loaded splits JSON.")
-                    all_ids = list(set(split_ids_info.get('train', []) +
-                                       split_ids_info.get('val', []) +
-                                       split_ids_info.get('test', [])))
-                    logger.debug(f"[{job_name}] Extracted {len(all_ids)} unique IDs from splits file.")
-                    if not all_ids:
-                        logger.warning(f"No structure IDs found in {splits_json_path} for symbol extraction.")
-                        chemical_symbols = []
-                    else:
-                        logger.debug(f"[{job_name}] Calling _extract_chemical_symbols (Fallback)...")
-                        chemical_symbols = _extract_chemical_symbols(db_manager, all_ids)
-                        logger.debug(f"[{job_name}] _extract_chemical_symbols returned: {chemical_symbols}")
-                except Exception as e:
-                    logger.error(f"Failed to load {splits_json_path} or extract symbols: {e}. Cannot determine chemical symbols.", exc_info=True)
-                    chemical_symbols = [] # Set empty on error
-            else:
-                logger.warning(f"Cannot find splits file at {splits_json_path} to extract symbols in HPO mode fallback. Proceeding with empty symbol list.")
-                chemical_symbols = []
-            # --- End of Fallback Logic ---
-        else:
-            logger.info(f"[{job_name}] Using chemical symbols provided by caller: {chemical_symbols}")
-        # --- End of MODIFIED Symbol Handling ---
-
-    else:
-        # --- Standalone Mode ---
-        logger.info(f"[{job_name}] Running in Standalone mode. Preparing data in {job_dir}.")
-        job_data_dir.mkdir(parents=True, exist_ok=True) # Ensure data subdir exists
-
-        # 1) Validate input for splitting
-        if structure_ids is not None and num_structures is not None:
-            raise ValueError("Cannot specify both structure_ids and num_structures")
-        if structure_ids is None and num_structures is None:
-            raise ValueError("Must specify either structure_ids or num_structures in standalone mode.")
-        if train_ratio is None or val_ratio is None or test_ratio is None:
-            raise ValueError("train_ratio, val_ratio, and test_ratio must be provided in standalone mode.")
-        if not (0.99 <= train_ratio + val_ratio + test_ratio <= 1.01):
-            # Allow slight deviation, but normalize if needed (like in HPO script)
-             logger.warning(f"Provided train/val/test ratios sum to {train_ratio + val_ratio + test_ratio}. Normalizing.")
-             total_ratio = train_ratio + val_ratio + test_ratio
-             train_ratio /= total_ratio
-             val_ratio /= total_ratio
-             test_ratio /= total_ratio
-
-        # 2) Fetch or randomly sample structure IDs
-        if structure_ids:
-            final_ids = structure_ids
-        else:
-            assert num_structures is not None # Help type checker
-            logger.info(f"Fetching up to {num_structures} structures...")
-            all_db_ids = _get_vasp_structures(db_manager)
-            if len(all_db_ids) < num_structures:
-                 logger.warning(f"Requested {num_structures} structures, but only {len(all_db_ids)} found. Using all available.")
-                 final_ids = all_db_ids
-            else:
-                 random.seed(seed)
-                 final_ids = random.sample(all_db_ids, num_structures)
-            logger.info(f"Selected {len(final_ids)} structures.")
-
-        if not final_ids:
-             raise ValueError("No structures selected for standalone run. Cannot proceed.")
-        all_used_ids = final_ids
-
-        # 3) Determine chemical symbols from the dataset
-        if chemical_symbols is None: # Only calculate if not already provided (unlikely in standalone)
-             chemical_symbols = _extract_chemical_symbols(db_manager, all_used_ids)
-
-        # 4) Split structures and write .xyz via db_to_mace helper
-        # Saves xyz into job_data_dir (using job_name as prefix) and json into job_dir
-        saved_structure_ids = _prepare_structure_splits(
-            db_manager=db_manager,
-            structure_ids=final_ids,
-            job_name=job_name, # Allegro uses job_name as data prefix
-            job_dir=job_dir, # Use run dir for json file
-            data_dir=job_data_dir, # Use run data dir for xyz files
-            train_ratio=train_ratio,
-            val_ratio=val_ratio,
-            test_ratio=test_ratio,
-            seed=seed
-        )
-        # Note: _prepare_structure_splits now returns the *intended* splits,
-        # need to check if files actually exist for path setting.
-
-        # Define relative paths for config.yaml
-        train_file_rel = f"data/{job_name}_train.xyz"
-        val_file_rel = f"data/{job_name}_val.xyz"
-        test_file_rel = f"data/{job_name}_test.xyz"
-
-        # Check if files were created before setting paths
-        if (job_dir / train_file_rel).exists():
-            config_data_train_path = train_file_rel
-        else:
-            logger.error(f"Training file {train_file_rel} was not created successfully.")
-            # Decide whether to raise error or allow config generation with missing path
-            raise FileNotFoundError(f"Training file {train_file_rel} failed to generate.")
-
-        if (job_dir / val_file_rel).exists():
-            config_data_val_path = val_file_rel
-        else:
-             logger.error(f"Validation file {val_file_rel} was not created successfully.")
-             raise FileNotFoundError(f"Validation file {val_file_rel} failed to generate.")
-
-        if (job_dir / test_file_rel).exists():
-             config_data_test_path = test_file_rel
-        else:
-             # Test set might be empty, don't raise error but log
-             logger.warning(f"Test file {test_file_rel} was not created (might be intended if test_ratio was 0).")
-             config_data_test_path = test_file_rel # Still add path to config
-
-    # --- NEW: Load the base configuration from YAML ---
-    base_config_path = Path(__file__).parent / "allegro_configs" / "base.yaml"
-    if not base_config_path.exists():
-        raise FileNotFoundError(f"Base configuration file not found at {base_config_path}")
-
-    logger.info(f"[{job_name}] Loading base configuration from: {base_config_path}")
-    with open(base_config_path, 'r') as f:
-        config = yaml.safe_load(f)
-
-    # --- Override base config with provided arguments ---
-    logger.info(f"[{job_name}] Overriding base config with job-specific parameters...")
-
-    if not chemical_symbols:
-        raise ValueError(f"[{job_name}] Could not determine chemical symbols.")
-
-    # Update basic keys
-    config['job_name'] = job_name
-    config['seed'] = seed
-    config['chemical_symbols'] = chemical_symbols
-    config['model_type_names'] = chemical_symbols
-    config['training_module']['model']['type_names'] = chemical_symbols
-    config['data']['stats_manager']['type_names'] = chemical_symbols
-    config['data']['transforms'][1]['chemical_symbols'] = chemical_symbols
-    config['training_module']['model']['pair_potential']['chemical_species'] = chemical_symbols
-
-    # Update data paths
-    config['data']['train_file_path'] = config_data_train_path
-    config['data']['val_file_path'] = config_data_val_path
-    config['data']['test_file_path'] = config_data_test_path
-
-    # Update model hyperparameters
-    config['training_module']['model']['r_max'] = r_max
-    config['cutoff_radius'] = r_max
-    config['training_module']['model']['l_max'] = l_max
-    config['training_module']['model']['num_layers'] = num_layers
-    config['training_module']['model']['num_scalar_features'] = num_scalar_features
-    config['training_module']['model']['num_tensor_features'] = num_tensor_features
-    config['training_module']['model']['allegro_mlp_hidden_layers_depth'] = mlp_depth
-    config['training_module']['model']['allegro_mlp_hidden_layers_width'] = mlp_width
+    # Step 1: Prepare data paths and symbols
+    data_details = _prepare_data_for_allegro(
+        db_manager=db_manager, job_name=job_name, job_dir=job_dir,
+        data_train_path=data_train_path, data_val_path=data_val_path,
+        data_test_path=data_test_path, chemical_symbols_list=chemical_symbols_list,
+        seed=seed, num_structures=num_structures, structure_ids=structure_ids,
+        train_ratio=train_ratio, val_ratio=val_ratio, test_ratio=test_ratio,
+    )
     
-    # Update trainer and optimizer parameters
-    config['trainer']['max_epochs'] = max_epochs
-    config['training_module']['optimizer']['lr'] = lr
-    if wandb_project:
-        config['wandb_name'] = wandb_project
-        if 'logger' in config['trainer'] and 'project' in config['trainer']['logger']:
-            config['trainer']['logger']['project'] = wandb_project
-    if 'logger' in config['trainer'] and 'name' in config['trainer']['logger']:
-        config['trainer']['logger']['name'] = job_name # Update WandB run name
-
-    # --- NEW: Use loss coefficients from base config unless overridden ---
-    if loss_coeffs:
-        effective_loss_coeffs = loss_coeffs
-    else:
-        # Try to parse from the base config's metrics list
-        try:
-            parsed_coeffs = {}
-            base_metrics = config.get('training_module', {}).get('loss', {}).get('metrics', [])
-            for metric in base_metrics:
-                field = metric.get('field', {})
-                field_name = field if isinstance(field, str) else field.get('field')
-                
-                if 'energy' in field_name:
-                    parsed_coeffs['total_energy'] = {'coeff': metric.get('coeff')}
-                elif 'forces' in field_name:
-                    parsed_coeffs['forces'] = {'coeff': metric.get('coeff')}
-                elif 'stress' in field_name:
-                    parsed_coeffs['stress'] = {'coeff': metric.get('coeff')}
-            
-            if 'total_energy' in parsed_coeffs or 'forces' in parsed_coeffs:
-                 effective_loss_coeffs = parsed_coeffs
-                 logger.info("Successfully parsed loss coefficients from base.yaml.")
-            else:
-                 raise ValueError("No valid coefficients found in base config")
-        except (ValueError, TypeError, AttributeError):
-            logger.warning("Could not parse loss coefficients from base.yaml, using default values.")
-            effective_loss_coeffs = {"total_energy": {"coeff": 1.0}, "forces": {"coeff": 10.0}, "stress": {"coeff": 100.0}}
-
-    # --- NEW: Dynamically build loss function configuration ---
-    loss_metrics = []
-    
-    loss_function_map = {
-        "mse": "nequip.train.MeanSquaredError",
-        "focal": "forge.workflows.allegro_utils.custom_losses.FocalMSELoss",
-        "huber": "nequip.train.HuberLoss",
-        "stratified_huber": "nequip.train.StratifiedHuberForceLoss", # Add stratified huber
+    # Explicitly gather all keyword arguments for the config builder
+    # to avoid the `locals()` trap.
+    config_kwargs = {
+        'data_train_path': data_train_path, 'data_val_path': data_val_path,
+        'data_test_path': data_test_path, 'chemical_symbols_list': chemical_symbols_list,
+        'num_structures': num_structures, 'structure_ids': structure_ids,
+        'train_ratio': train_ratio, 'val_ratio': val_ratio, 'test_ratio': test_ratio,
+        'loss_function': loss_function, 'loss_params': loss_params,
+        'loss_schedule': loss_schedule, 'sampler': sampler,
+        'sampler_params': sampler_params, 'extra_val_metrics': extra_val_metrics,
+        'extra_val_metric_params': extra_val_metric_params,
+        'extra_trainer_params': extra_trainer_params,
+        'checkpoint_monitor_key': checkpoint_monitor_key, 'max_epochs': max_epochs,
+        'batch_size': batch_size, 'wandb_project': wandb_project,
+        'loss_coeffs': loss_coeffs, 'lr': lr, 'r_max': r_max, 'l_max': l_max,
+        'num_layers': num_layers, 'num_scalar_features': num_scalar_features,
+        'num_tensor_features': num_tensor_features, 'mlp_depth': mlp_depth,
+        'mlp_width': mlp_width,
     }
-    
-    if loss_function not in loss_function_map:
-        raise ValueError(f"Unsupported loss function '{loss_function}'. Available: {list(loss_function_map.keys())}")
 
-    loss_target = loss_function_map[loss_function]
-    
-    # Energy
-    energy_metric = {
-        "name": f"per_atom_energy_{loss_function}",
-        "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"},
-        "metric": {"_target_": loss_target},
-        "coeff": effective_loss_coeffs.get("total_energy", {}).get("coeff", 1.0),
-    }
-    if loss_params:
-        energy_metric["metric"].update(loss_params)
-    loss_metrics.append(energy_metric)
-    
-    # Forces
-    forces_metric = {
-        "name": f"forces_{loss_function}",
-        "field": "forces",
-        "metric": {"_target_": loss_target},
-        "coeff": effective_loss_coeffs.get("forces", {}).get("coeff", 10.0),
-    }
-    if loss_params:
-        forces_metric["metric"].update(loss_params)
-    loss_metrics.append(forces_metric)
+    # Step 2: Build the configuration dictionary
+    config = _build_allegro_config(
+        job_name=job_name, seed=seed, data_paths=data_details, **config_kwargs
+    )
 
-    # Stress (optional, only if coeff is provided)
-    if "stress" in effective_loss_coeffs and effective_loss_coeffs.get("stress", {}).get("coeff", 0) > 0:
-        stress_metric = {
-            "name": f"stress_{loss_function}",
-            "field": "stress",
-            "metric": {"_target_": loss_target},
-            "coeff": effective_loss_coeffs["stress"]["coeff"],
-        }
-        if loss_params:
-            stress_metric["metric"].update(loss_params)
-        loss_metrics.append(stress_metric)
-
-    # --- NEW: Dynamically build validation metrics ---
-    val_metrics = []
-    # Standard metrics - now including both MAE and RMSE
-    val_metrics.extend([
-        # MAE
-        {"name": "per_atom_energy_mae", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
-        {"name": "forces_mae", "field": "forces", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
-        {"name": "stress_mae", "field": "stress", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}, "ignore_nan": True},
-        # RMSE - These will be used for the weighted sum
-        {"name": "per_atom_energy_rmse", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "coeff": 1.0},
-        {"name": "forces_rmse", "field": "forces", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "coeff": 1.0},
-        {"name": "stress_rmse", "field": "stress", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "ignore_nan": True, "coeff": 1.0},
-    ])
-    # Extra metrics
-    if extra_val_metrics:
-        metric_map = {"tail_mse": "forge.workflows.allegro_utils.custom_metrics.TailMSE"}
-        for metric_name in extra_val_metrics:
-            if metric_name not in metric_map:
-                raise ValueError(f"Unsupported validation metric '{metric_name}'.")
-            
-            metric_params = (extra_val_metric_params or {}).get(metric_name, {})
-            
-            # Add for forces
-            val_metrics.append({
-                "name": f"forces_{metric_name}",
-                "field": "forces",
-                "metric": {"_target_": metric_map[metric_name], **metric_params}
-            })
-            # Add for energy
-            val_metrics.append({
-                "name": f"per_atom_energy_{metric_name}",
-                "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"},
-                "metric": {"_target_": metric_map[metric_name], **metric_params}
-            })
-
-    # --- NEW: Dynamically build dataloader config ---
-    train_dataloader_config = {
-        "_target_": "torch.utils.data.DataLoader",
-        "batch_size": batch_size
-    }
-    
-    # --- NEW: Build sampler config separately ---
-    sampler_config = None
-    if sampler == 'rare_weighted':
-        sampler_config = {
-            "_target_": "forge.workflows.allegro_utils.samplers.RareWeightedSampler",
-            **(sampler_params or {})
-        }
-    elif sampler is not None:
-        raise ValueError(f"Unsupported sampler '{sampler}'.")
-
-    # --- NEW: Build callbacks using the robust, supported scheduler ---
-    # Ensure callbacks list exists in the config
-    if 'callbacks' not in config.get('trainer', {}):
-        config.setdefault('trainer', {})['callbacks'] = []
-    
-    # Find and update the ModelCheckpoint, or add a default one
-    checkpoint_callback = next((cb for cb in config['trainer']['callbacks'] if 'ModelCheckpoint' in cb.get('_target_', '')), None)
-    if checkpoint_callback:
-        checkpoint_callback['dirpath'] = f"results/{job_name}"
-        checkpoint_callback['monitor'] = checkpoint_monitor_key
-    else:
-        config['trainer']['callbacks'].append({
-            "_target_": "lightning.pytorch.callbacks.ModelCheckpoint", 
-            "dirpath": f"results/{job_name}", 
-            "monitor": checkpoint_monitor_key,
-            "save_last": True
-        })
-
-    # Add or update the LossCoefficientScheduler
-    config['trainer']['callbacks'] = [cb for cb in config['trainer']['callbacks'] if 'LossCoefficientScheduler' not in cb.get('_target_', '')]
-    if loss_schedule:
-        config['trainer']['callbacks'].append({
-            "_target_": "nequip.train.callbacks.LossCoefficientScheduler",
-            "schedule": loss_schedule
-        })
-
-    # Add default monitoring callbacks if they don't already exist
-    if not any('LearningRateMonitor' in cb.get('_target_', '') for cb in config['trainer']['callbacks']):
-        config['trainer']['callbacks'].append({
-            "_target_": "lightning.pytorch.callbacks.LearningRateMonitor",
-            "logging_interval": "epoch",
-        })
-    if not any('LossCoefficientMonitor' in cb.get('_target_', '') for cb in config['trainer']['callbacks']):
-        config['trainer']['callbacks'].append({
-            "_target_": "nequip.train.callbacks.LossCoefficientMonitor",
-            "frequency": 1,
-            "interval": "epoch",
-        })
-
-    # --- Apply the dynamically generated sections to the config ---
-    config['training_module']['loss'] = {"_target_": "nequip.train.MetricsManager", "metrics": loss_metrics}
-    config['training_module']['val_metrics'] = {"_target_": "nequip.train.MetricsManager", "metrics": val_metrics}
-    
-    # Update dataloader configurations
-    config['data']['train_dataloader'] = train_dataloader_config
-    
-    # Update val_dataloader batch_size if it exists
-    if 'val_dataloader' in config['data'] and isinstance(config['data']['val_dataloader'], dict):
-        config['data']['val_dataloader']['batch_size'] = batch_size
-    
-    # Fix test_dataloader interpolation if it references val_dataloader
-    if 'test_dataloader' in config['data'] and config['data']['test_dataloader'] == '${data.val_dataloader}':
-        # test_dataloader should reference val_dataloader, which still exists
-        logger.debug(f"[{job_name}] test_dataloader correctly references val_dataloader")
-        # No change needed - the reference is correct
-
-    # --- NEW: Use the custom datamodule if a sampler is specified ---
-    if sampler_config:
-        logger.info(f"[{job_name}] Using custom sampler: {sampler}")
-        logger.debug(f"[{job_name}] Sampler config: {sampler_config}")
-        
-        # Choose implementation based on parameter
-        implementation = sampler_implementation
-        
-        if implementation == 'v3':
-            config['data']['_target_'] = "forge.workflows.allegro_utils.data_v3.CustomSamplingASEDataModuleV3"
-            logger.info(f"[{job_name}] Using CustomSamplingASEDataModuleV3 for distributed training compatibility")
-        else:
-            # Fallback to V2
-            config['data']['_target_'] = "forge.workflows.allegro_utils.data_v2.CustomSamplingASEDataModuleV2"
-            logger.info(f"[{job_name}] Using CustomSamplingASEDataModuleV2")
-        
-        config['data']['sampler_config'] = sampler_config
-        
-        # Verify custom module is importable
-        try:
-            if implementation == 'v3':
-                from forge.workflows.allegro_utils.data_v3 import CustomSamplingASEDataModuleV3
-                logger.debug(f"[{job_name}] Successfully imported CustomSamplingASEDataModuleV3")
-            else:
-                from forge.workflows.allegro_utils.data_v2 import CustomSamplingASEDataModuleV2
-                logger.debug(f"[{job_name}] Successfully imported CustomSamplingASEDataModuleV2")
-        except ImportError as e:
-            logger.error(f"[{job_name}] Failed to import custom datamodule: {e}")
-            raise
-
-    if extra_trainer_params:
-        config['trainer'].update(extra_trainer_params)
-
-    # --- Add debugging information ---
-    logger.debug(f"[{job_name}] Final config data section keys: {list(config.get('data', {}).keys())}")
-    if 'data' in config:
-        for key in ['train_dataloader', 'val_dataloader', 'test_dataloader']:
-            if key in config['data']:
-                value = config['data'][key]
-                if isinstance(value, dict):
-                    logger.debug(f"[{job_name}] {key} is a dict with keys: {list(value.keys())}")
-                else:
-                    logger.debug(f"[{job_name}] {key} = {value}")
-    
-    # --- Write the final config.yaml ---
+    # Step 3: Write the final config.yaml
     yaml_path = job_dir / "config.yaml"
-    try:
-        with yaml_path.open("w") as f:
-            # Use a custom dumper to handle complex objects if necessary, but default should be fine
-            yaml.dump(config, f, sort_keys=False, default_flow_style=False)
-        logger.info(f"[{job_name}] Wrote final config, built from base: {yaml_path}")
-    except Exception as e:
-        logger.error(f"Failed to write config.yaml: {e}", exc_info=True)
-        raise
+    with yaml_path.open("w") as f:
+        yaml.dump(config, f, sort_keys=False, default_flow_style=False)
+    logger.info(f"[{job_name}] Wrote final config: {yaml_path}")
 
-    return saved_structure_ids if not is_hpo_mode else {}
-
-# Remove the old template-based generation logic
-# (Removed make_run function, template loading, common_replacements, generation loop)
-# ... (rest of file, including _extract_chemical_symbols if it wasn't moved/changed) ...
+    return data_details.get("structure_splits", {})

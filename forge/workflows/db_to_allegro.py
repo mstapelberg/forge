@@ -25,11 +25,29 @@ logger = logging.getLogger(__name__)
 
 # --- Import custom components for type hinting and path resolution ---
 from forge.workflows.allegro_utils.callbacks import CurriculumCallback, GradNormCallback
-from forge.workflows.allegro_utils.custom_losses import FocalMSELoss
-from forge.workflows.allegro_utils.custom_metrics import TailMSE
+from forge.workflows.allegro_utils.custom_metrics import (
+    FocalMSELoss, TailMSE, TailHuberLoss, ForceAngleLoss, StressShearMAE, StressAngleLoss
+)
 from forge.workflows.allegro_utils.samplers import RareWeightedSampler
 from forge.workflows.allegro_utils.data_v3 import CustomSamplingASEDataModuleV3
 # ---
+
+# A mapping of metric names to their full import paths for dynamic instantiation.
+METRIC_MAP = {
+    # Nequip standard metrics
+    "mse": "nequip.train.MeanSquaredError",
+    "mae": "nequip.train.MeanAbsoluteError",
+    "rmse": "nequip.train.RootMeanSquaredError",
+    "huber": "nequip.train.HuberLoss",
+    "stratified_huber": "nequip.train.StratifiedHuberForceLoss",
+    # Custom metrics
+    "focal_mse": "forge.workflows.allegro_utils.custom_metrics.FocalMSELoss",
+    "tail_mse": "forge.workflows.allegro_utils.custom_metrics.TailMSE",
+    "tail_huber": "forge.workflows.allegro_utils.custom_metrics.TailHuberLoss",
+    "force_angle": "forge.workflows.allegro_utils.custom_metrics.ForceAngleLoss",
+    "stress_shear_mae": "forge.workflows.allegro_utils.custom_metrics.StressShearMAE",
+    "stress_angle": "forge.workflows.allegro_utils.custom_metrics.StressAngleLoss",
+}
 
 def _extract_chemical_symbols(
     db_manager: DatabaseManager,
@@ -216,100 +234,122 @@ def _prepare_data_for_allegro(
             "structure_splits": structure_splits,
         }
 
-def _build_loss_metrics(loss_function: str, loss_params: Optional[Dict[str, Any]], loss_coeffs: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Constructs the loss metrics list for the Allegro configuration.
+def _build_loss_metrics(loss_coeffs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Constructs the loss metrics list from a detailed configuration dictionary.
 
-    This function dynamically builds the list of metrics that will be used for
-    the loss function during training. It supports multiple loss types
-    (e.g., 'mse', 'huber') and applies them to energy, forces, and optionally
-    stress, each with a specific coefficient.
+    This function builds the list of metrics for the loss function based on
+    a dictionary that specifies the metric, coefficient, and parameters for
+    each field (e.g., 'total_energy', 'forces', 'stress').
 
     Args:
-        loss_function (str): The name of the loss function to use (e.g., 'mse').
-        loss_params (Optional[Dict[str, Any]]): A dictionary of parameters for the
-            loss function (e.g., `{'delta': 1.0}` for Huber loss).
-        loss_coeffs (Optional[Dict[str, Any]]): A dictionary specifying the
-            coefficients for 'total_energy', 'forces', and 'stress' losses.
-            If None, default values are used.
+        loss_coeffs (Dict[str, Any]): A dictionary where keys are fields
+            ('total_energy', 'forces', 'stress') and values are another
+            dictionary specifying 'coeff', 'metric' name, and optional 'params'.
+            Example:
+            {
+                "forces": {"coeff": 50.0, "metric": "tail_huber", "params": {"quantile": 0.9}},
+                "total_energy": {"coeff": 1.0, "metric": "focal_mse"}
+            }
 
     Returns:
-        List[Dict[str, Any]]: A list of dictionaries, where each dictionary
-            defines a component of the total loss function for the NequIP
-            MetricsManager.
+        List[Dict[str, Any]]: A list of dictionaries formatted for the
+            NequIP MetricsManager.
 
     Raises:
-        ValueError: If an unsupported `loss_function` is provided.
+        ValueError: If a metric name in the config is not found in METRIC_MAP.
     """
-    loss_function_map = {
-        "mse": "nequip.train.MeanSquaredError",
-        "focal": "forge.workflows.allegro_utils.custom_losses.FocalMSELoss",
-        "huber": "nequip.train.HuberLoss",
-        "stratified_huber": "nequip.train.StratifiedHuberForceLoss",
-        "weighted_mse": "forge.workflows.allegro_utils.weighted_loss.WeightedMSELoss",
-    }
-    if loss_function not in loss_function_map:
-        raise ValueError(f"Unsupported loss function '{loss_function}'.")
-    loss_target = loss_function_map[loss_function]
-    
-    effective_loss_coeffs = loss_coeffs or {"total_energy": {"coeff": 1.0}, "forces": {"coeff": 10.0}, "stress": {"coeff": 100.0}}
-    
     metrics = []
-    energy_metric = {
-        "name": f"per_atom_energy_{loss_function}",
-        "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"},
-        "metric": {"_target_": loss_target, **(loss_params or {})},
-        "coeff": effective_loss_coeffs.get("total_energy", {}).get("coeff", 1.0),
-    }
-    metrics.append(energy_metric)
-    forces_metric = {
-        "name": f"forces_{loss_function}",
-        "field": "forces",
-        "metric": {"_target_": loss_target, **(loss_params or {})},
-        "coeff": effective_loss_coeffs.get("forces", {}).get("coeff", 10.0),
-    }
-    metrics.append(forces_metric)
-    if "stress" in effective_loss_coeffs and effective_loss_coeffs.get("stress", {}).get("coeff", 0) > 0:
-        stress_metric = {
-            "name": f"stress_{loss_function}",
-            "field": "stress",
-            "metric": {"_target_": loss_target, **(loss_params or {})},
-            "coeff": effective_loss_coeffs["stress"]["coeff"],
+    for field, config in loss_coeffs.items():
+        coeff = config.get("coeff")
+        if coeff is None or coeff <= 0:
+            continue
+
+        metric_name = config.get("metric", "mse") # Default to mse
+        metric_params = config.get("params", {})
+
+        if metric_name not in METRIC_MAP:
+            raise ValueError(f"Unsupported loss metric '{metric_name}'. Must be one of {list(METRIC_MAP.keys())}")
+        
+        metric_target = METRIC_MAP[metric_name]
+
+        # Handle energy field modifications
+        if field == "total_energy":
+            field_entry = {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}
+            metric_entry_name = f"per_atom_energy_{metric_name}"
+        else:
+            field_entry = field
+            metric_entry_name = f"{field}_{metric_name}"
+            
+        metric_spec = {
+            "name": metric_entry_name,
+            "field": field_entry,
+            "metric": {"_target_": metric_target, **metric_params},
+            "coeff": coeff,
         }
-        metrics.append(stress_metric)
+        metrics.append(metric_spec)
+        
     return metrics
 
-def _build_validation_metrics(extra_val_metrics: Optional[List[str]], extra_val_metric_params: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _build_validation_metrics(
+    default_metrics: bool = True,
+    extra_val_metrics: Optional[List[Dict[str, Any]]] = None
+) -> List[Dict[str, Any]]:
     """Constructs the validation metrics list for the Allegro configuration.
 
-    This function starts with a default set of validation metrics (MAE and RMSE
-    for energy, forces, and stress) and appends additional, optional metrics
-    as specified.
+    This function starts with a default set of MAE and RMSE metrics and allows
+    adding custom validation metrics.
 
     Args:
-        extra_val_metrics (Optional[List[str]]): A list of names of extra
-            validation metrics to include (e.g., 'tail_mse').
-        extra_val_metric_params (Optional[Dict[str, Any]]): A dictionary of
-            parameters for the extra validation metrics, keyed by the metric name.
+        default_metrics (bool): Whether to include the default MAE and RMSE
+            metrics for energy, forces, and stress. Defaults to True.
+        extra_val_metrics (Optional[List[Dict[str, Any]]]): A list of dicts,
+            each defining a custom validation metric with 'name', 'field',
+            'metric', and optional 'params'. Example:
+            [{
+                "name": "forces_tail_huber", "field": "forces",
+                "metric": "tail_huber", "params": {"quantile": 0.9}
+            }]
 
     Returns:
         List[Dict[str, Any]]: A list of dictionaries defining the validation
             metrics for the NequIP MetricsManager.
+    
+    Raises:
+        ValueError: If a metric name in the config is not found in METRIC_MAP.
     """
-    val_metrics = [
-        {"name": "per_atom_energy_mae", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
-        {"name": "forces_mae", "field": "forces", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}},
-        {"name": "stress_mae", "field": "stress", "metric": {"_target_": "nequip.train.MeanAbsoluteError"}, "ignore_nan": True},
-        {"name": "per_atom_energy_rmse", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "coeff": 1.0},
-        {"name": "forces_rmse", "field": "forces", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "coeff": 1.0},
-        {"name": "stress_rmse", "field": "stress", "metric": {"_target_": "nequip.train.RootMeanSquaredError"}, "ignore_nan": True, "coeff": 1.0},
-    ]
+    val_metrics = []
+    if default_metrics:
+        val_metrics.extend([
+            {"name": "per_atom_energy_mae", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": METRIC_MAP["mae"]}},
+            {"name": "forces_mae", "field": "forces", "metric": {"_target_": METRIC_MAP["mae"]}},
+            {"name": "stress_mae", "field": "stress", "metric": {"_target_": METRIC_MAP["mae"]}, "ignore_nan": True},
+            {"name": "per_atom_energy_rmse", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": METRIC_MAP["rmse"]}, "coeff": 1.0},
+            {"name": "forces_rmse", "field": "forces", "metric": {"_target_": METRIC_MAP["rmse"]}, "coeff": 1.0},
+            {"name": "stress_rmse", "field": "stress", "metric": {"_target_": METRIC_MAP["rmse"]}, "ignore_nan": True, "coeff": 1.0},
+        ])
+
     if extra_val_metrics:
-        metric_map = {"tail_mse": "forge.workflows.allegro_utils.custom_metrics.TailMSE"}
-        for metric_name in extra_val_metrics:
-            if metric_name in metric_map:
-                params = (extra_val_metric_params or {}).get(metric_name, {})
-                val_metrics.append({"name": f"forces_{metric_name}", "field": "forces", "metric": {"_target_": metric_map[metric_name], **params}})
-                val_metrics.append({"name": f"per_atom_energy_{metric_name}", "field": {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}, "metric": {"_target_": metric_map[metric_name], **params}})
+        for metric_config in extra_val_metrics:
+            metric_name = metric_config.get("metric")
+            if not metric_name or metric_name not in METRIC_MAP:
+                raise ValueError(f"Unsupported validation metric '{metric_name}'. Must be one of {list(METRIC_MAP.keys())}")
+
+            field = metric_config["field"]
+            params = metric_config.get("params", {})
+            
+            if field == "total_energy":
+                field_entry = {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}
+                name = metric_config.get("name", f"per_atom_energy_{metric_name}")
+            else:
+                field_entry = field
+                name = metric_config.get("name", f"{field}_{metric_name}")
+
+            val_metrics.append({
+                "name": name,
+                "field": field_entry,
+                "metric": {"_target_": METRIC_MAP[metric_name], **params}
+            })
+            
     return val_metrics
     
 def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_monitor_key: str, loss_schedule: Optional[Dict[int, Dict[str, float]]]):
@@ -352,6 +392,9 @@ def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_
         config['trainer']['callbacks'].append({"_target_": "lightning.pytorch.callbacks.LearningRateMonitor", "logging_interval": "epoch"})
     if not any('LossCoefficientMonitor' in cb.get('_target_', '') for cb in config['trainer']['callbacks']):
         config['trainer']['callbacks'].append({"_target_": "nequip.train.callbacks.LossCoefficientMonitor", "frequency": 1, "interval": "epoch"})
+
+    if 'logger' in config['trainer'] and 'name' in config['trainer']['logger']:
+        config['trainer']['logger']['name'] = job_name
 
 def _build_allegro_config(
     job_name: str,
@@ -427,13 +470,12 @@ def _build_allegro_config(
     if 'logger' in config['trainer'] and 'name' in config['trainer']['logger']:
         config['trainer']['logger']['name'] = job_name
 
-    loss_metrics = _build_loss_metrics(
-        kwargs['loss_function'], kwargs.get('loss_params'), kwargs.get('loss_coeffs')
-    )
+    loss_metrics = _build_loss_metrics(kwargs['loss_coeffs'])
     config['training_module']['loss'] = {"_target_": "nequip.train.MetricsManager", "metrics": loss_metrics}
 
     val_metrics = _build_validation_metrics(
-        kwargs.get('extra_val_metrics'), kwargs.get('extra_val_metric_params')
+        kwargs.get('include_default_val_metrics', True),
+        kwargs.get('extra_val_metrics')
     )
     config['training_module']['val_metrics'] = {"_target_": "nequip.train.MetricsManager", "metrics": val_metrics}
     
@@ -481,20 +523,18 @@ def prepare_allegro_job(
     val_ratio: Optional[float] = 0.1,
     test_ratio: Optional[float] = 0.1,
     # Custom Training Component Arguments
-    loss_function: str = "mse",
-    loss_params: Optional[Dict[str, Any]] = None,
+    loss_coeffs: Optional[Dict[str, Any]] = None,
     loss_schedule: Optional[Dict[int, Dict[str, float]]] = None,
     sampler: Optional[str] = None,
     sampler_params: Optional[Dict[str, Any]] = None,
-    extra_val_metrics: Optional[List[str]] = None,
-    extra_val_metric_params: Optional[Dict[str, Any]] = None,
+    include_default_val_metrics: bool = True,
+    extra_val_metrics: Optional[List[Dict[str, Any]]] = None,
     extra_trainer_params: Optional[Dict[str, Any]] = None,
     checkpoint_monitor_key: str = "val0_epoch/stress_rmse",
     # Allegro Hyperparameters
     max_epochs: int = 400,
     batch_size: int = 4,
     wandb_project: Optional[str] = None,
-    loss_coeffs: Optional[Dict[str, Any]] = None,
     lr: float = 0.001,
     r_max: float = 5.0,
     l_max: int = 2,
@@ -537,21 +577,19 @@ def prepare_allegro_job(
         train_ratio (Optional[float]): Fraction of data for the training set.
         val_ratio (Optional[float]): Fraction of data for the validation set.
         test_ratio (Optional[float]): Fraction of data for the test set.
-        loss_function (str): The loss function to use (e.g., 'mse', 'huber').
-        loss_params (Optional[Dict[str, Any]]): Parameters for the loss function.
+        loss_coeffs (Optional[Dict[str, Any]]): Coefficients for the loss terms.
         loss_schedule (Optional[Dict[int, Dict[str, float]]]): Schedule for the
             LossCoefficientScheduler.
         sampler (Optional[str]): The data sampler to use (e.g., 'rare_weighted').
         sampler_params (Optional[Dict[str, Any]]): Parameters for the sampler.
-        extra_val_metrics (Optional[List[str]]): Additional validation metrics.
-        extra_val_metric_params (Optional[Dict[str, Any]]): Parameters for extra metrics.
+        include_default_val_metrics (bool): Whether to include default validation metrics.
+        extra_val_metrics (Optional[List[Dict[str, Any]]]): Additional validation metrics.
         extra_trainer_params (Optional[Dict[str, Any]]): Extra parameters for the
             PyTorch Lightning Trainer.
         checkpoint_monitor_key (str): Metric to monitor for saving checkpoints.
         max_epochs (int): Maximum number of training epochs.
         batch_size (int): Batch size for training and validation.
         wandb_project (Optional[str]): Name of the Weights & Biases project.
-        loss_coeffs (Optional[Dict[str, Any]]): Coefficients for the loss terms.
         lr (float): Learning rate.
         r_max (float): Cutoff radius for atomic environments.
         l_max (int): Maximum angular momentum for spherical harmonics.
@@ -586,14 +624,15 @@ def prepare_allegro_job(
         'data_test_path': data_test_path, 'chemical_symbols_list': chemical_symbols_list,
         'num_structures': num_structures, 'structure_ids': structure_ids,
         'train_ratio': train_ratio, 'val_ratio': val_ratio, 'test_ratio': test_ratio,
-        'loss_function': loss_function, 'loss_params': loss_params,
+        'loss_coeffs': loss_coeffs,
         'loss_schedule': loss_schedule, 'sampler': sampler,
-        'sampler_params': sampler_params, 'extra_val_metrics': extra_val_metrics,
-        'extra_val_metric_params': extra_val_metric_params,
+        'sampler_params': sampler_params,
+        'include_default_val_metrics': include_default_val_metrics,
+        'extra_val_metrics': extra_val_metrics,
         'extra_trainer_params': extra_trainer_params,
         'checkpoint_monitor_key': checkpoint_monitor_key, 'max_epochs': max_epochs,
         'batch_size': batch_size, 'wandb_project': wandb_project,
-        'loss_coeffs': loss_coeffs, 'lr': lr, 'r_max': r_max, 'l_max': l_max,
+        'lr': lr, 'r_max': r_max, 'l_max': l_max,
         'num_layers': num_layers, 'num_scalar_features': num_scalar_features,
         'num_tensor_features': num_tensor_features, 'mlp_depth': mlp_depth,
         'mlp_width': mlp_width,

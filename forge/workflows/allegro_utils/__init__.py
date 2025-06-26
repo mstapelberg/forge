@@ -10,8 +10,7 @@ distributed training environments.
 from .data_v3 import CustomSamplingASEDataModuleV3
 from .samplers import RareWeightedSampler
 from .callbacks import CurriculumCallback, GradNormCallback
-from .custom_losses import FocalMSELoss
-from .custom_metrics import TailMSE
+from .custom_metrics import TailMSE, FocalMSELoss, TailHuberLoss, ForceAngleLoss, StressShearMAE, StressAngleLoss
 from .weighted_loss import WeightedMSELoss, RareWeightedMetricsManager
 from .pair_potential import NLH
 
@@ -26,19 +25,16 @@ __all__ = [
     # Samplers
     'RareWeightedSampler',
     
-    # Loss Functions
-    'FocalMSELoss',
-    'WeightedMSELoss',
-    'RareWeightedMetricsManager',
-    
     # Metrics
     'TailMSE',
+    'TailHuberLoss',
+    'ForceAngleLoss',
+    'StressShearMAE',
+    'StressAngleLoss',
     
     # Callbacks
     'CurriculumCallback',
     'GradNormCallback',
-    'FocalMSELoss',
-    'TailMSE',
 
     # Pair Potential
     'NLH',

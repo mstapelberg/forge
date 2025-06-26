@@ -78,7 +78,9 @@ class _NLH(torch.nn.Module):
 
         # Select Z for each edge
         Z_unshaped = torch.index_select(Z, 0, edge_types_unshaped)
-        Zi, Zj = Z_unshaped.view(2, -1)
+        Z_paired = Z_unshaped.view(2, -1)
+        Zi = Z_paired[0]
+        Zj = Z_paired[1]
         
         # Look up coefficients
         idx = type_i * num_types + type_j
@@ -192,7 +194,7 @@ class NLH(GraphModuleMixin, torch.nn.Module):
             b_coeffs_flat=self.b_coeffs_flat,
         ).unsqueeze(-1)
         # apply cutoff
-        nlh_edge_eng = nlh_edge_eng * data[AtomicDataDict.EDGE_CUTOFF_KEY]
+        # nlh_edge_eng = nlh_edge_eng * data[AtomicDataDict.EDGE_CUTOFF_KEY]
         atomic_eng = scatter(
             nlh_edge_eng,
             edge_center,

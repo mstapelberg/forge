@@ -20,7 +20,9 @@ def parse_nlh_dat(file_path: Path) -> Dict[Tuple[int, int], Tuple[float, ...]]:
             parts = line.split()
             z1 = int(parts[0])
             z2 = int(parts[1])
-            six_coeffs = tuple(map(float, parts[2:8]))
+            p = [float(x) for x in parts[2:8]]
+            # The file format is a1, b1, a2, b2, a3, b3. We need (a1,a2,a3), (b1,b2,b3).
+            six_coeffs = (p[0], p[2], p[4], p[1], p[3], p[5])
             coeffs[(z1, z2)] = six_coeffs
             coeffs[(z2, z1)] = six_coeffs
     return coeffs

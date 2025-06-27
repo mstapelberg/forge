@@ -28,31 +28,20 @@ class Quantile(Metric):
         if not 0.0 <= q <= 1.0:
             raise ValueError(f"Quantile `q` must be between 0 and 1, but got {q}")
         self.q = q
-        self.add_state("data", default=[], dist_reduce_fx="cat")
+        self.add_state("data", default=torch.tensor([]), dist_reduce_fx="cat")
 
     def update(self, data: torch.Tensor) -> None:
-        """Append data to the state."""
+        """Append data to the state tensor."""
         if data.numel() > 0:
-            self.data.append(data.flatten())
+            # Ensure data is on the same device as the state tensor before concatenating
+            self.data = torch.cat([self.data, data.flatten().to(self.data.device)])
 
     def compute(self) -> torch.Tensor:
         """Compute the quantile of all collected data."""
-        if not self.data:
-            return torch.tensor(float('nan'))
-        
-        # On DDP, self.data will be a list of lists of tensors, so flatten it
-        if any(isinstance(i, list) for i in self.data):
-             all_data = [item for sublist in self.data for item in sublist]
-        else:
-            all_data = self.data
-        
-        if not all_data:
+        if self.data.numel() == 0:
             return torch.tensor(float('nan'))
             
-        data_cat = torch.cat(all_data)
-        if data_cat.numel() == 0:
-            return torch.tensor(float('nan'))
-        return torch.quantile(data_cat.to(torch.float32), self.q)
+        return torch.quantile(self.data.to(torch.float32), self.q)
 
     def __str__(self) -> str:
         return f"q_{self.q}"

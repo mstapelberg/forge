@@ -5,7 +5,10 @@ from nequip.data import AtomicDataDict
 from nequip.data.modifier import BaseModifier, PerAtomModifier, NumNeighbors
 from nequip.data.stats import Mean, RootMeanSquare, StandardDeviation, _MeanX
 from nequip.data.stats_manager import DataStatisticsManager
+from nequip.train.metrics import StratifiedHuberForceLoss
 from nequip.utils.logger import RankedLogger
+from tqdm.auto import tqdm
+import sys
 
 
 logger = RankedLogger(__name__, rank_zero_only=True)
@@ -28,20 +31,26 @@ class Quantile(Metric):
         if not 0.0 <= q <= 1.0:
             raise ValueError(f"Quantile `q` must be between 0 and 1, but got {q}")
         self.q = q
-        self.add_state("data", default=torch.tensor([]), dist_reduce_fx="cat")
+        # "sum" for lists is concatenation. This is the correct way for this state.
+        self.add_state("data", default=[], dist_reduce_fx="sum")
 
     def update(self, data: torch.Tensor) -> None:
         """Append data to the state tensor."""
         if data.numel() > 0:
-            # Ensure data is on the same device as the state tensor before concatenating
-            self.data = torch.cat([self.data, data.flatten().to(self.data.device)])
+            # Move to CPU to prevent device mismatches during DDP sync
+            self.data.append(data.flatten().cpu())
 
     def compute(self) -> torch.Tensor:
         """Compute the quantile of all collected data."""
-        if self.data.numel() == 0:
+        if not self.data:
+            return torch.tensor(float('nan'))
+
+        data_cat = torch.cat(self.data)
+        
+        if data_cat.numel() == 0:
             return torch.tensor(float('nan'))
             
-        return torch.quantile(self.data.to(torch.float32), self.q)
+        return torch.quantile(data_cat.to(torch.float32), self.q)
 
     def __str__(self) -> str:
         return f"q_{self.q}"
@@ -52,9 +61,29 @@ class ForceMagnitude(BaseModifier):
     def __init__(self, field: str = AtomicDataDict.FORCE_KEY):
         super().__init__(field=field)
 
-    def forward(self, data: AtomicDataDict.Type) -> torch.Tensor:
-        forces = super().forward(data)
-        return torch.linalg.norm(forces, dim=-1)
+    def forward(self, forces: torch.Tensor) -> torch.Tensor:
+        """Operates on the `forces` tensor directly.
+        
+        The `forces` argument is `data[self.field]`, which is automatically
+        extracted by the `BaseModifier.__call__` method since `self.field`
+        is set in `__init__`.
+        """
+        # --- Final Debugging Step ---
+        if torch.any(torch.isnan(forces)):
+            print(f"!!! DEBUG ForceMagnitude: NaN values found in input `forces` tensor!", file=sys.stderr)
+        if torch.any(torch.isinf(forces)):
+            print(f"!!! DEBUG ForceMagnitude: Inf values found in input `forces` tensor!", file=sys.stderr)
+        # --- End Final Debugging Step ---
+        
+        magnitudes = torch.linalg.norm(forces, dim=-1)
+        if torch.any(magnitudes < 0):
+            print(f"!!! DEBUG ForceMagnitude: Negative values found in input `forces` tensor!", file=sys.stderr)
+        # Replace any potential NaNs from zero-vectors with 0.0
+        magnitudes = torch.nan_to_num(magnitudes, nan=0.0)
+        return magnitudes
+
+    def _func(self, data: AtomicDataDict.Type) -> torch.Tensor:
+        return self.forward(data[self.field])
 
     def __str__(self) -> str:
         return "force_magnitude"
@@ -74,7 +103,7 @@ def ExtendedDataStatisticsManager(
     metrics = [
         # Common stats
         {"name": "num_neighbors_mean", "field": NumNeighbors(), "metric": Mean()},
-        {"name": "per_atom_energy_mean", "field": PerAtomModifier(AtomicDataDict.TOTAL_ENERGY_KEY), "metric": Mean()},
+        {"name": "per_atom_energy_mean", "field": PerAtomModifier(field=AtomicDataDict.TOTAL_ENERGY_KEY), "metric": Mean()},
         {"name": "forces_rms", "field": AtomicDataDict.FORCE_KEY, "metric": RootMeanSquare()},
         {"name": "per_type_forces_rms", "field": AtomicDataDict.FORCE_KEY, "metric": RootMeanSquare(), "per_type": True},
         # Extended stats for loss parameters
@@ -138,5 +167,28 @@ def ExtendedDataStatisticsManager(
         return stats
 
     base_manager.compute = extended_compute.__get__(base_manager, DataStatisticsManager)
+
+    # Monkey-patch the get_statistics method to add tqdm progress bar
+    def extended_get_statistics(self, data_source: Iterable[AtomicDataDict.Type]):
+        """A get_statistics method with a tqdm progress bar."""
+        if isinstance(data_source, dict):
+            raise TypeError(
+                f"The data source passed to get_statistics was a dictionary, not a DataLoader or other iterable. "
+                f"It seems you passed dataloader keyword arguments instead of an instantiated dataloader. "
+                f"Received dict with keys: {list(data_source.keys())}"
+            )
+            
+        pbar = tqdm(
+            data_source,
+            desc="Calculating statistics",
+            total=len(data_source) if hasattr(data_source, '__len__') else None,
+            disable=getattr(self, 'rank', 0) != 0 # Show progress bar only on rank 0
+        )
+        # The caller of get_statistics is responsible for calling .reset()
+        for data in pbar:
+            self(data) # This calls the forward method
+        return self.compute()
+
+    base_manager.get_statistics = extended_get_statistics.__get__(base_manager, DataStatisticsManager)
 
     return base_manager 

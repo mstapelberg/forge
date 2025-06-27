@@ -10,7 +10,10 @@ from nequip.train.metrics import StratifiedHuberForceLoss
 from nequip.utils.logger import RankedLogger
 from tqdm.auto import tqdm
 import sys
+import random
 
+random.seed(42)
+torch.manual_seed(42)
 
 logger = RankedLogger(__name__, rank_zero_only=True)
 
@@ -145,10 +148,10 @@ def ExtendedDataStatisticsManager(
         {"name": "forces_rms", "field": AtomicDataDict.FORCE_KEY, "metric": RootMeanSquare()},
         {"name": "per_type_forces_rms", "field": AtomicDataDict.FORCE_KEY, "metric": RootMeanSquare(), "per_type": True},
         # Extended stats for loss parameters
-        {"name": "force_magnitude_q10", "field": ForceMagnitude(), "metric": Quantile(0.10)},
-        {"name": "force_magnitude_q50", "field": ForceMagnitude(), "metric": Quantile(0.50)},
-        {"name": "force_magnitude_q90", "field": ForceMagnitude(), "metric": Quantile(0.90)},
-        {"name": "force_magnitude_q95", "field": ForceMagnitude(), "metric": Quantile(0.95)},
+        {"name": "force_magnitude_q10", "field": ForceMagnitude(), "metric": Quantile(0.10, buffer_size=1000)},
+        {"name": "force_magnitude_q50", "field": ForceMagnitude(), "metric": Quantile(0.50, buffer_size=1000)},
+        {"name": "force_magnitude_q90", "field": ForceMagnitude(), "metric": Quantile(0.90, buffer_size=1000)},
+        {"name": "force_magnitude_q95", "field": ForceMagnitude(), "metric": Quantile(0.95, buffer_size=1000)},
     ]
     
     base_manager = DataStatisticsManager(metrics, dataloader_kwargs, type_names)

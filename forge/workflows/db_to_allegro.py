@@ -282,14 +282,13 @@ def _build_loss_metrics(loss_coeffs: Dict[str, Any]) -> List[Dict[str, Any]]:
             raise ValueError(f"Unsupported loss metric '{metric_name}'. Must be one of {list(METRIC_MAP.keys())}")
         
         # Handle auto-parameterization
-        if metric_params:
-            if metric_name == "huber" and metric_params.get("delta") == "auto":
-                metric_params["delta"] = "${training_data_stats:huber_delta}"
-            if metric_name == "focal_mse" and metric_params.get("beta") == "auto":
-                metric_params["beta"] = "${training_data_stats:focal_beta}"
-            if metric_name == "auto_stratified_huber":
-                metric_params["boundaries"] = "${training_data_stats:stratified_huber_boundaries}"
-                metric_params["deltas"] = "${training_data_stats:stratified_huber_deltas}"
+        if metric_name == "huber" and metric_params.get("delta") == "auto":
+            metric_params["delta"] = "${training_data_stats:huber_delta}"
+        if metric_name == "focal_mse" and metric_params.get("beta") == "auto":
+            metric_params["beta"] = "${training_data_stats:focal_beta}"
+        if metric_name == "auto_stratified_huber":
+            metric_params["boundaries"] = "${training_data_stats:stratified_huber_boundaries}"
+            metric_params["deltas"] = "${training_data_stats:stratified_huber_deltas}"
 
         metric_target = METRIC_MAP[metric_name]
 

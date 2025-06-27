@@ -21,36 +21,56 @@ class Quantile(Metric):
     This metric accumulates all data points and computes the exact quantile
     upon `compute()`.
 
+    To avoid performance degradation from concatenating a large number of
+    tensors, this implementation uses a buffering strategy. Tensors are
+    first collected in a temporary list (`_buffer`) and then concatenated
+    into a larger tensor once the buffer size exceeds a threshold. This
+    keeps the main `data` list short.
+
     Args:
         q (float): The quantile to compute (must be between 0.0 and 1.0).
+        buffer_size (int): The number of tensors to buffer before concatenating.
         **kwargs: Additional keyword arguments for the torchmetrics.Metric class.
     """
     full_state_update: bool = False
 
-    def __init__(self, q: float, **kwargs):
+    def __init__(self, q: float, buffer_size: int = 100, **kwargs):
         super().__init__(**kwargs)
         if not 0.0 <= q <= 1.0:
             raise ValueError(f"Quantile `q` must be between 0 and 1, but got {q}")
         self.q = q
+        self.buffer_size = buffer_size
         # "sum" for lists is concatenation. This is the correct way for this state.
         self.add_state("data", default=[], dist_reduce_fx="sum")
+        self._buffer: List[torch.Tensor] = []
 
     def update(self, data: torch.Tensor) -> None:
-        """Append data to the state tensor."""
+        """Append data to the internal buffer and consolidate if full."""
         if data.numel() > 0:
-            # Move to CPU to prevent device mismatches during DDP sync
-            self.data.append(data.flatten().cpu())
+            self._buffer.append(data.flatten().cpu())
+            if len(self._buffer) >= self.buffer_size:
+                self._consolidate_buffer()
+
+    def _consolidate_buffer(self):
+        if not self._buffer:
+            return
+        # Move buffered tensors to the main data state
+        self.data.append(torch.cat(self._buffer))
+        self._buffer.clear()
 
     def compute(self) -> torch.Tensor:
         """Compute the quantile of all collected data."""
+        # Ensure any remaining tensors in the buffer are included
+        self._consolidate_buffer()
+        
         if not self.data:
             return torch.tensor(float('nan'))
 
         data_cat = torch.cat(self.data)
-        
+
         if data_cat.numel() == 0:
             return torch.tensor(float('nan'))
-            
+
         return torch.quantile(data_cat.to(torch.float32), self.q)
 
     def __str__(self) -> str:

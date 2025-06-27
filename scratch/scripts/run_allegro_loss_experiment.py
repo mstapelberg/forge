@@ -52,6 +52,7 @@ def main():
         all_ids = db_manager.find_structures_by_metadata({'generation': 0}, operator='>=')
         dimer_ids = db_manager.find_structures_by_metadata({'config_type': 'dimer'})
         structure_ids = [sid for sid in all_ids if sid not in dimer_ids]
+        structure_ids = structure_ids[:5000]
         logger.info(f"Found {len(structure_ids)} structures for the experiment.")
         
         rare_ids_path = Path("./rare_structure_ids.json")

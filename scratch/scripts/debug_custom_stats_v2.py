@@ -24,13 +24,13 @@ def main():
     with DatabaseManager() as db_manager:
         # Get enough structures for train, val_a, and val_b
         all_ids = db_manager.find_structures_by_metadata({'generation': 0}, operator='>=')
-        if len(all_ids) < 70:
+        if len(all_ids) < 2500:
             logger.error(f"Not enough structures found in DB ({len(all_ids)}). Need at least 70 for this test. Exiting.")
             return
 
         random.shuffle(all_ids)
-        val_b_ids = all_ids[:20]
-        structure_ids_for_split = all_ids[20:70] # Use next 50 for train/val_a
+        val_b_ids = all_ids[:250]
+        structure_ids_for_split = all_ids[250:2500] # Use next 50 for train/val_a
         logger.info(f"Using {len(structure_ids_for_split)} structures for train/val_a and {len(val_b_ids)} for val_b.")
 
         prepare_allegro_job(

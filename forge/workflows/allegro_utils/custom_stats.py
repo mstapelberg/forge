@@ -220,8 +220,12 @@ def ExtendedDataStatisticsManager(
     # Monkey-patch the get_statistics method to add tqdm progress bar
     def extended_get_statistics(self, data_source: Iterable[AtomicDataDict.Type]):
         """A get_statistics method that runs only on rank 0 in a distributed setting."""
-        rank = getattr(self, 'rank', 0)
-        world_size = getattr(self, 'world_size', 1)
+        if dist.is_available() and dist.is_initialized():
+            rank = dist.get_rank()
+            world_size = dist.get_world_size()
+        else:
+            rank = 0
+            world_size = 1
 
         stats = None
         # Only rank 0 does the actual computation

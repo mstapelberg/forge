@@ -1,4 +1,5 @@
 from typing import List, Dict, Union, Callable, Iterable, Optional
+import os
 import torch
 from torchmetrics import Metric
 from nequip.data import AtomicDataDict
@@ -100,6 +101,23 @@ def ExtendedDataStatisticsManager(
     - Quantiles of force magnitudes (q10, q50, q90, q95) for Huber/Focal loss params.
     - Derived values for `focal_beta` and `stratified_huber_deltas`.
     """
+    # --- Performance optimizations for statistics calculation ---
+    if 'num_workers' not in dataloader_kwargs:
+        try:
+            # Default to half the available CPU cores, capped at 8.
+            num_cpus = os.cpu_count()
+            num_workers = min(num_cpus // 2 if num_cpus else 0, 8)
+            if num_workers > 0:
+                dataloader_kwargs['num_workers'] = num_workers
+                logger.info(f"Automatically setting num_workers for statistics to {num_workers} for faster data loading.")
+        except NotImplementedError:
+            logger.warning("Could not determine the number of CPUs. Statistics calculation might be slow.")
+
+    if 'pin_memory' not in dataloader_kwargs and torch.cuda.is_available():
+        dataloader_kwargs['pin_memory'] = True
+        logger.info("Setting pin_memory=True for statistics calculation to speed up CPU-GPU data transfer.")
+    # --- End of performance optimizations ---
+    
     metrics = [
         # Common stats
         {"name": "num_neighbors_mean", "field": NumNeighbors(), "metric": Mean()},

@@ -4,9 +4,8 @@ from torchmetrics import Metric
 from nequip.data import AtomicDataDict
 from nequip.data.modifier import BaseModifier, PerAtomModifier, NumNeighbors
 from nequip.data.stats import Mean, RootMeanSquare, StandardDeviation, _MeanX
-from nequip.data.dataloader import Collater
+from nequip.data.stats_manager import DataStatisticsManager
 from nequip.utils.logger import RankedLogger
-from nequip.data.stats import DataStatisticsManager
 
 
 logger = RankedLogger(__name__, rank_zero_only=True)
@@ -63,7 +62,6 @@ class ForceMagnitude(BaseModifier):
     """A modifier to compute the magnitude of force vectors."""
     def __init__(self, field: str = AtomicDataDict.FORCE_KEY):
         super().__init__(field=field)
-        self.type = "node"
 
     def forward(self, data: AtomicDataDict.Type) -> torch.Tensor:
         forces = super().forward(data)

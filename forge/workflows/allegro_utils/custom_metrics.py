@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torchmetrics import Metric
 from nequip.data import AtomicDataDict
 from nequip.data.stats import _MeanX
+from nequip.train.metrics import StratifiedHuberForceLoss
 
 class TailMSE(_MeanX):
     """Computes a running mean of the Mean Squared Error on the tail of an error distribution.
@@ -58,6 +59,36 @@ class TailMSE(_MeanX):
         tail_err = err[tail_mask]
         squared_errors = tail_err.pow(2)
         super().update(squared_errors)
+
+class AutoStratifiedHuberLoss(StratifiedHuberForceLoss):
+    """A StratifiedHuberForceLoss that constructs its delta_dict from lists.
+
+    This class is a convenience wrapper around NequIP's `StratifiedHuberForceLoss`.
+    Instead of requiring a pre-constructed `delta_dict`, it takes two lists,
+    `boundaries` and `deltas`, and builds the dictionary for you.
+
+    This is particularly useful when the boundaries and deltas are computed
+    dynamically and injected into a configuration file.
+
+    Args:
+        boundaries (List[float]): A list of lower bounds for force magnitudes.
+        deltas (List[float]): A list of delta values for the Huber loss in each stratum.
+        **kwargs: Additional keyword arguments for the parent class.
+    """
+    def __init__(self, boundaries: List[float], deltas: List[float], **kwargs):
+        if len(boundaries) + 1 != len(deltas):
+            raise ValueError(
+                f"Number of deltas must be one greater than the number of boundaries. "
+                f"Got {len(deltas)} deltas and {len(boundaries)} boundaries."
+            )
+        
+        # The first delta corresponds to the region below the first boundary.
+        # The first boundary in the dict should be 0.
+        delta_dict = {0.0: deltas[0]}
+        for i, boundary in enumerate(boundaries):
+            delta_dict[boundary] = deltas[i+1]
+        
+        super().__init__(delta_dict=delta_dict, **kwargs)
 
 class TailHuberLoss(_MeanX):
     """Computes a running mean of the Huber loss on the tail of the force error distribution.

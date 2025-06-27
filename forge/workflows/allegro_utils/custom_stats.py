@@ -1,6 +1,7 @@
 from typing import List, Dict, Union, Callable, Iterable, Optional
 import os
 import torch
+import torch.distributed as dist
 from torchmetrics import Metric
 from nequip.data import AtomicDataDict
 from nequip.data.modifier import BaseModifier, PerAtomModifier, NumNeighbors
@@ -125,6 +126,13 @@ def ExtendedDataStatisticsManager(
     - Derived values for `focal_beta` and `stratified_huber_deltas`.
     """
     # --- Performance optimizations for statistics calculation ---
+    if 'batch_size' not in dataloader_kwargs:
+        # Statistics calculation is often I/O or CPU bound, not GPU memory bound,
+        # so a larger batch size can significantly speed up data loading.
+        stats_batch_size = 32  # A reasonable default
+        dataloader_kwargs['batch_size'] = stats_batch_size
+        logger.info(f"Automatically setting batch_size for statistics to {stats_batch_size} for faster calculation.")
+
     if 'num_workers' not in dataloader_kwargs:
         try:
             # Default to half the available CPU cores, capped at 8.
@@ -211,24 +219,37 @@ def ExtendedDataStatisticsManager(
 
     # Monkey-patch the get_statistics method to add tqdm progress bar
     def extended_get_statistics(self, data_source: Iterable[AtomicDataDict.Type]):
-        """A get_statistics method with a tqdm progress bar."""
-        if isinstance(data_source, dict):
-            raise TypeError(
-                f"The data source passed to get_statistics was a dictionary, not a DataLoader or other iterable. "
-                f"It seems you passed dataloader keyword arguments instead of an instantiated dataloader. "
-                f"Received dict with keys: {list(data_source.keys())}"
+        """A get_statistics method that runs only on rank 0 in a distributed setting."""
+        rank = getattr(self, 'rank', 0)
+        world_size = getattr(self, 'world_size', 1)
+
+        stats = None
+        # Only rank 0 does the actual computation
+        if rank == 0:
+            if isinstance(data_source, dict):
+                raise TypeError(
+                    f"The data source passed to get_statistics was a dictionary, not a DataLoader or other iterable. "
+                    f"It seems you passed dataloader keyword arguments instead of an instantiated dataloader. "
+                    f"Received dict with keys: {list(data_source.keys())}"
+                )
+                
+            pbar = tqdm(
+                data_source,
+                desc="Calculating statistics",
+                total=len(data_source) if hasattr(data_source, '__len__') else None,
             )
-            
-        pbar = tqdm(
-            data_source,
-            desc="Calculating statistics",
-            total=len(data_source) if hasattr(data_source, '__len__') else None,
-            disable=getattr(self, 'rank', 0) != 0 # Show progress bar only on rank 0
-        )
-        # The caller of get_statistics is responsible for calling .reset()
-        for data in pbar:
-            self(data) # This calls the forward method
-        return self.compute()
+            # The caller of get_statistics is responsible for calling .reset()
+            for data in pbar:
+                self(data) # This calls the forward method
+            stats = self.compute()
+
+        # In a distributed setting, broadcast the stats from rank 0 to all other ranks.
+        if world_size > 1:
+            stats_list = [stats]  # broadcast_object_list works on a list
+            dist.broadcast_object_list(stats_list, src=0)
+            stats = stats_list[0]
+        
+        return stats
 
     base_manager.get_statistics = extended_get_statistics.__get__(base_manager, DataStatisticsManager)
 

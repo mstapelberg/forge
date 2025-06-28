@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # --- Import custom components for type hinting and path resolution ---
 from forge.workflows.allegro_utils.callbacks import CurriculumCallback, GradNormCallback
 from forge.workflows.allegro_utils.custom_metrics import (
-    FocalMSELoss, TailMSE, TailHuberLoss, ForceAngleLoss, StressShearMAE, StressAngleLoss
+    FocalMSELoss, TailMSE, TailHuberLoss, ForceAngleLoss, StressShearMAE, StressAngleLoss, AutoStratifiedHuberLoss
 )
 from forge.workflows.allegro_utils.samplers import RareWeightedSampler
 from forge.workflows.allegro_utils.data_v3 import CustomSamplingASEDataModuleV3
@@ -47,6 +47,7 @@ METRIC_MAP = {
     "force_angle": "forge.workflows.allegro_utils.custom_metrics.ForceAngleLoss",
     "stress_shear_mae": "forge.workflows.allegro_utils.custom_metrics.StressShearMAE",
     "stress_angle": "forge.workflows.allegro_utils.custom_metrics.StressAngleLoss",
+    "auto_stratified_huber": "forge.workflows.allegro_utils.custom_metrics.AutoStratifiedHuberLoss",
 }
 
 def _extract_chemical_symbols(
@@ -115,6 +116,7 @@ def _prepare_data_for_allegro(
     seed: int,
     num_structures: Optional[int],
     structure_ids: Optional[List[int]],
+    val_b_ids: Optional[List[int]],
     train_ratio: Optional[float],
     val_ratio: Optional[float],
     test_ratio: Optional[float],
@@ -144,6 +146,8 @@ def _prepare_data_for_allegro(
             the database in standalone mode.
         structure_ids (Optional[List[int]]): Specific structure IDs to use in
             standalone mode.
+        val_b_ids (Optional[List[int]]): A specific list of structure IDs to use for
+            a second, 'hard' validation set (val_b).
         train_ratio (Optional[float]): The fraction of data for the training set.
         val_ratio (Optional[float]): The fraction of data for the validation set.
         test_ratio (Optional[float]): The fraction of data for the test set.
@@ -151,7 +155,7 @@ def _prepare_data_for_allegro(
     Returns:
         Dict[str, Any]: A dictionary containing:
             - "train_path": Path to the training data file.
-            - "val_path": Path to the validation data file.
+            - "val_path": Path(s) to the validation data file(s).
             - "test_path": Path to the test data file.
             - "chemical_symbols": A list of unique, sorted chemical symbols.
             - "structure_splits": A dict with the train/val/test structure IDs.
@@ -216,6 +220,13 @@ def _prepare_data_for_allegro(
             random.seed(seed)
             final_ids = random.sample(all_db_ids, num_to_sample)
         
+        val_paths = [f"data/{job_name}_val.xyz"] # Val-A, will be created by _prepare_structure_splits
+        if val_b_ids:
+            logger.info(f"Using {len(val_b_ids)} structures for Val-B set.")
+            _save_structures_to_xyz(db_manager, val_b_ids, job_data_dir / f"{job_name}_val_b.xyz")
+            final_ids = [sid for sid in final_ids if sid not in val_b_ids]
+            val_paths.append(f"data/{job_name}_val_b.xyz")
+
         if not final_ids:
             raise ValueError("No structures selected for standalone run.")
 
@@ -228,7 +239,7 @@ def _prepare_data_for_allegro(
 
         return {
             "train_path": f"data/{job_name}_train.xyz",
-            "val_path": f"data/{job_name}_val.xyz",
+            "val_path": val_paths,
             "test_path": f"data/{job_name}_test.xyz",
             "chemical_symbols": chemical_symbols,
             "structure_splits": structure_splits,
@@ -270,6 +281,15 @@ def _build_loss_metrics(loss_coeffs: Dict[str, Any]) -> List[Dict[str, Any]]:
         if metric_name not in METRIC_MAP:
             raise ValueError(f"Unsupported loss metric '{metric_name}'. Must be one of {list(METRIC_MAP.keys())}")
         
+        # Handle auto-parameterization
+        if metric_name == "huber" and metric_params.get("delta") == "auto":
+            metric_params["delta"] = "${training_data_stats:huber_delta}"
+        if metric_name == "focal_mse" and metric_params.get("beta") == "auto":
+            metric_params["beta"] = "${training_data_stats:focal_beta}"
+        if metric_name == "auto_stratified_huber":
+            metric_params["boundaries"] = "${training_data_stats:stratified_huber_boundaries}"
+            metric_params["deltas"] = "${training_data_stats:stratified_huber_deltas}"
+
         metric_target = METRIC_MAP[metric_name]
 
         # Handle energy field modifications
@@ -352,7 +372,7 @@ def _build_validation_metrics(
             
     return val_metrics
     
-def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_monitor_key: str, loss_schedule: Optional[Dict[int, Dict[str, float]]]):
+def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_monitor_key: str, loss_schedule: Optional[Dict[int, Dict[str, float]]], use_soft_adapt: bool = False, soft_adapt_params: Optional[Dict[str, Any]] = None):
     """Updates or adds the necessary training callbacks to the configuration.
 
     This function ensures that the configuration's trainer section has the
@@ -368,9 +388,15 @@ def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_
             the best model checkpoint.
         loss_schedule (Optional[Dict[int, Dict[str, float]]]): An optional schedule
             for the LossCoefficientScheduler.
+        use_soft_adapt (bool): Whether to use the SoftAdapt callback.
+        soft_adapt_params (Optional[Dict[str, Any]]): Parameters for SoftAdapt.
     """
     if 'callbacks' not in config.get('trainer', {}):
         config.setdefault('trainer', {})['callbacks'] = []
+
+    # Ensure LossCoefficientScheduler and SoftAdapt are not used together
+    if loss_schedule and use_soft_adapt:
+        raise ValueError("LossCoefficientScheduler and SoftAdapt cannot be used simultaneously.")
 
     checkpoint_callback = next((cb for cb in config['trainer']['callbacks'] if 'ModelCheckpoint' in cb.get('_target_', '')), None)
     if checkpoint_callback:
@@ -388,6 +414,16 @@ def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_
             "_target_": "nequip.train.callbacks.LossCoefficientScheduler", "schedule": loss_schedule
         })
     
+    # Add SoftAdapt callback if requested
+    config['trainer']['callbacks'] = [cb for cb in config['trainer']['callbacks'] if 'SoftAdapt' not in cb.get('_target_', '')]
+    if use_soft_adapt:
+        if not soft_adapt_params:
+            soft_adapt_params = {}
+        config['trainer']['callbacks'].append({
+            "_target_": "nequip.train.callbacks.SoftAdapt",
+            **soft_adapt_params
+        })
+
     if not any('LearningRateMonitor' in cb.get('_target_', '') for cb in config['trainer']['callbacks']):
         config['trainer']['callbacks'].append({"_target_": "lightning.pytorch.callbacks.LearningRateMonitor", "logging_interval": "epoch"})
     if not any('LossCoefficientMonitor' in cb.get('_target_', '') for cb in config['trainer']['callbacks']):
@@ -451,6 +487,10 @@ def _build_allegro_config(
     config['data']['val_file_path'] = data_paths["val_path"]
     config['data']['test_file_path'] = data_paths["test_path"]
 
+    # Add val_b if it exists
+    if data_paths.get("val_b_path"):
+        config['data']['val_b_file_path'] = data_paths["val_b_path"]
+
     # Update hyperparameters from kwargs
     config['training_module']['model']['r_max'] = kwargs['r_max']
     config['cutoff_radius'] = kwargs['r_max']
@@ -498,7 +538,10 @@ def _build_allegro_config(
         }
     
     _update_trainer_callbacks(
-        config, job_name, kwargs['checkpoint_monitor_key'], kwargs.get('loss_schedule')
+        config, job_name, kwargs['checkpoint_monitor_key'], 
+        kwargs.get('loss_schedule'),
+        kwargs.get('use_soft_adapt', False),
+        kwargs.get('soft_adapt_params')
     )
 
     if kwargs.get('extra_trainer_params'):
@@ -519,6 +562,7 @@ def prepare_allegro_job(
     seed: int = 0,
     num_structures: Optional[int] = None,
     structure_ids: Optional[List[int]] = None,
+    val_b_ids: Optional[List[int]] = None,
     train_ratio: Optional[float] = 0.8,
     val_ratio: Optional[float] = 0.1,
     test_ratio: Optional[float] = 0.1,
@@ -530,6 +574,8 @@ def prepare_allegro_job(
     include_default_val_metrics: bool = True,
     extra_val_metrics: Optional[List[Dict[str, Any]]] = None,
     extra_trainer_params: Optional[Dict[str, Any]] = None,
+    use_soft_adapt: bool = False,
+    soft_adapt_params: Optional[Dict[str, Any]] = None,
     checkpoint_monitor_key: str = "val0_epoch/stress_rmse",
     # Allegro Hyperparameters
     max_epochs: int = 400,
@@ -574,6 +620,7 @@ def prepare_allegro_job(
         seed (int): Random seed for reproducibility.
         num_structures (Optional[int]): Number of structures to sample from the DB.
         structure_ids (Optional[List[int]]): Specific list of structure IDs to use.
+        val_b_ids (Optional[List[int]]): IDs for the 'hard' validation set.
         train_ratio (Optional[float]): Fraction of data for the training set.
         val_ratio (Optional[float]): Fraction of data for the validation set.
         test_ratio (Optional[float]): Fraction of data for the test set.
@@ -586,6 +633,8 @@ def prepare_allegro_job(
         extra_val_metrics (Optional[List[Dict[str, Any]]]): Additional validation metrics.
         extra_trainer_params (Optional[Dict[str, Any]]): Extra parameters for the
             PyTorch Lightning Trainer.
+        use_soft_adapt (bool): Whether to use the SoftAdapt callback.
+        soft_adapt_params (Optional[Dict[str, Any]]): Parameters for SoftAdapt.
         checkpoint_monitor_key (str): Metric to monitor for saving checkpoints.
         max_epochs (int): Maximum number of training epochs.
         batch_size (int): Batch size for training and validation.
@@ -614,6 +663,7 @@ def prepare_allegro_job(
         data_train_path=data_train_path, data_val_path=data_val_path,
         data_test_path=data_test_path, chemical_symbols_list=chemical_symbols_list,
         seed=seed, num_structures=num_structures, structure_ids=structure_ids,
+        val_b_ids=val_b_ids,
         train_ratio=train_ratio, val_ratio=val_ratio, test_ratio=test_ratio,
     )
     
@@ -623,6 +673,7 @@ def prepare_allegro_job(
         'data_train_path': data_train_path, 'data_val_path': data_val_path,
         'data_test_path': data_test_path, 'chemical_symbols_list': chemical_symbols_list,
         'num_structures': num_structures, 'structure_ids': structure_ids,
+        'val_b_ids': val_b_ids,
         'train_ratio': train_ratio, 'val_ratio': val_ratio, 'test_ratio': test_ratio,
         'loss_coeffs': loss_coeffs,
         'loss_schedule': loss_schedule, 'sampler': sampler,
@@ -630,6 +681,8 @@ def prepare_allegro_job(
         'include_default_val_metrics': include_default_val_metrics,
         'extra_val_metrics': extra_val_metrics,
         'extra_trainer_params': extra_trainer_params,
+        'use_soft_adapt': use_soft_adapt,
+        'soft_adapt_params': soft_adapt_params,
         'checkpoint_monitor_key': checkpoint_monitor_key, 'max_epochs': max_epochs,
         'batch_size': batch_size, 'wandb_project': wandb_project,
         'lr': lr, 'r_max': r_max, 'l_max': l_max,

@@ -38,7 +38,7 @@ data:
   test_dataloader: ${data.val_dataloader}
 
   stats_manager:
-    _target_: nequip.data.CommonDataStatisticsManager
+    _target_: forge.workflows.allegro_utils.ExtendedDataStatisticsManager
     type_names: ['Ti', 'V', 'Cr', 'Zr', 'W']
 
 trainer:

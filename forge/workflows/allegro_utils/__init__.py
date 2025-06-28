@@ -13,6 +13,7 @@ from .callbacks import CurriculumCallback, GradNormCallback
 from .custom_metrics import TailMSE, FocalMSELoss, TailHuberLoss, ForceAngleLoss, StressShearMAE, StressAngleLoss
 from .weighted_loss import WeightedMSELoss, RareWeightedMetricsManager
 from .pair_potential import NLH
+from .custom_stats import ExtendedDataStatisticsManager
 
 # Alias V3 as the standard CustomSamplingASEDataModule
 CustomSamplingASEDataModule = CustomSamplingASEDataModuleV3
@@ -38,4 +39,7 @@ __all__ = [
 
     # Pair Potential
     'NLH',
+
+    # Custom Stats
+    'ExtendedDataStatisticsManager',
 ] 

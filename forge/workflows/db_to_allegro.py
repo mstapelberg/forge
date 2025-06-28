@@ -270,7 +270,7 @@ def _build_loss_metrics(loss_coeffs: Dict[str, Any]) -> List[Dict[str, Any]]:
         ValueError: If a metric name in the config is not found in METRIC_MAP.
     """
     metrics = []
-    for field, config in loss_coeffs.items():
+    for loss_key, config in loss_coeffs.items():
         coeff = config.get("coeff")
         if coeff is None or coeff <= 0:
             continue
@@ -292,13 +292,18 @@ def _build_loss_metrics(loss_coeffs: Dict[str, Any]) -> List[Dict[str, Any]]:
 
         metric_target = METRIC_MAP[metric_name]
 
+        # Determine the actual data field to use (e.g. 'forces')
+        # This allows using descriptive keys in the config (e.g. 'forces_angle')
+        # while correctly pointing to the model's output field.
+        actual_field = config.get("field", loss_key)
+
         # Handle energy field modifications
-        if field == "total_energy":
+        if actual_field == "total_energy":
             field_entry = {"_target_": "nequip.data.PerAtomModifier", "field": "total_energy"}
-            metric_entry_name = f"per_atom_energy_{metric_name}"
+            metric_entry_name = config.get("name", f"per_atom_energy_{metric_name}")
         else:
-            field_entry = field
-            metric_entry_name = f"{field}_{metric_name}"
+            field_entry = actual_field
+            metric_entry_name = config.get("name", f"{loss_key}_{metric_name}")
             
         metric_spec = {
             "name": metric_entry_name,

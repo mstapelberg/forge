@@ -423,7 +423,9 @@ def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_
     config['trainer']['callbacks'] = [cb for cb in config['trainer']['callbacks'] if 'SoftAdapt' not in cb.get('_target_', '')]
     if use_soft_adapt:
         if not soft_adapt_params:
-            soft_adapt_params = {}
+            soft_adapt_params = {'beta': 1.0,
+                                 'interval': 'epoch',
+                                 'frequency': 10}
         config['trainer']['callbacks'].append({
             "_target_": "nequip.train.callbacks.SoftAdapt",
             **soft_adapt_params

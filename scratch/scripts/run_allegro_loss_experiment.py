@@ -86,10 +86,10 @@ def main():
 
     additive_losses = [
         {"loss_key": "base_only", "loss": {}},
-        {"loss_key": "force_angle", "loss": {"forces_angle": {"coeff": 10.0, "metric": "force_angle", "field": "forces"}}},
+        {"loss_key": "forces_angle", "loss": {"forces_angle": {"coeff": 10.0, "metric": "forces_angle", "field": "forces"}}},
         {"loss_key": "stress_angle", "loss": {"stress_angle": {"coeff": 25.0, "metric": "stress_angle", "field": "stress"}}},
-        {"loss_key": "stress_shear", "loss": {"stress_shear": {"coeff": 25.0, "metric": "stress_shear_mae", "field": "stress"}}},
-        {"loss_key": "focal_force", "loss": {"forces_focal": {"coeff": 10.0, "metric": "focal_mse", "params": {"beta": "auto"}, "field": "forces"}}},
+        {"loss_key": "stress_shear", "loss": {"stress_shear_mae": {"coeff": 25.0, "metric": "stress_shear_mae", "field": "stress"}}},
+        {"loss_key": "forces_focal", "loss": {"forces_focal": {"coeff": 10.0, "metric": "focal_mse", "params": {"beta": "auto"}, "field": "forces"}}},
     ]
 
     sampling_configs = [

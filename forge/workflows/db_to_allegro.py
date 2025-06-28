@@ -44,7 +44,7 @@ METRIC_MAP = {
     "focal_mse": "forge.workflows.allegro_utils.custom_metrics.FocalMSELoss",
     "tail_mse": "forge.workflows.allegro_utils.custom_metrics.TailMSE",
     "tail_huber": "forge.workflows.allegro_utils.custom_metrics.TailHuberLoss",
-    "force_angle": "forge.workflows.allegro_utils.custom_metrics.ForceAngleLoss",
+    "forces_angle": "forge.workflows.allegro_utils.custom_metrics.ForceAngleLoss",
     "stress_shear_mae": "forge.workflows.allegro_utils.custom_metrics.StressShearMAE",
     "stress_angle": "forge.workflows.allegro_utils.custom_metrics.StressAngleLoss",
     "auto_stratified_huber": "forge.workflows.allegro_utils.custom_metrics.AutoStratifiedHuberLoss",

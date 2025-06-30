@@ -1,5 +1,5 @@
 # forge/workflows/allegro_utils/custom_metrics.py
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -100,15 +100,18 @@ class TailHuberLoss(_MeanX):
     This per-batch approach ensures the model focuses on high-error atoms
     within every structure, preventing them from being averaged out.
 
+    The `delta` parameter can be set to 'auto' for adaptive calculation.
+
     Attributes:
-        delta (float): The threshold at which to change between L1 and L2 loss.
+        delta (Union[float, str]): The threshold at which to change between L1 and L2 loss.
+            If 'auto', it is dynamically calculated per batch.
         quantile (float): The quantile used for tail selection (0.0 to 1.0).
     """
-    def __init__(self, delta: float = 1.0, quantile: float = 0.9, **kwargs):
+    def __init__(self, delta: Union[float, str] = 1.0, quantile: float = 0.9, **kwargs):
         """Initializes the TailHuberLoss metric.
 
         Args:
-            delta (float): The threshold at which to change between L1 and L2 loss.
+            delta (Union[float, str]): The threshold for Huber loss. Can be a float or 'auto'.
                 Defaults to 1.0.
             quantile (float): The quantile to use for tail selection.
                 Defaults to 0.9.
@@ -117,11 +120,19 @@ class TailHuberLoss(_MeanX):
         super().__init__(modifier=torch.nn.Identity(), **kwargs)
         if not 0.0 <= quantile <= 1.0:
             raise ValueError(f"Quantile must be between 0 and 1, but got {quantile}")
-        self.delta = delta
+
+        self.auto_delta = (delta == 'auto')
+        self.delta = 1.0 if self.auto_delta else delta
         self.quantile = quantile
+
+        if self.auto_delta:
+            self.add_state("last_delta", default=torch.tensor(self.delta), dist_reduce_fx="mean")
 
     def update(self, pred: torch.Tensor, target: torch.Tensor) -> None:
         """Update state with predictions and targets for a single batch.
+
+        If `delta` is 'auto', it is recalculated for each batch as
+        `clamp(1.5 * median(error_norm), 0.3, 5.0)`.
 
         Args:
             pred (torch.Tensor): The predicted tensor from the model.
@@ -144,8 +155,16 @@ class TailHuberLoss(_MeanX):
 
         tail_preds = pred[tail_mask]
         tail_targets = target[tail_mask]
+        
+        current_delta = self.delta
+        if self.auto_delta:
+            tail_err_norm = err_norm[tail_mask]
+            median_err_norm = torch.median(tail_err_norm)
+            current_delta_tensor = torch.clamp(1.5 * median_err_norm, 0.3, 5.0)
+            self.last_delta = current_delta_tensor.detach()
+            current_delta = self.last_delta.item()
 
-        huber_losses = F.huber_loss(tail_preds, tail_targets, delta=self.delta, reduction='none')
+        huber_losses = F.huber_loss(tail_preds, tail_targets, delta=current_delta, reduction='none')
         super().update(huber_losses)
 
 class FocalMSELoss(_MeanX):

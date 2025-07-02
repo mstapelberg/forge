@@ -1000,6 +1000,56 @@ class DatabaseManager:
             metadata = cur.fetchone()[0]
             return metadata
 
+    def get_structure_metadata_batch(self, structure_ids: List[int]) -> Dict[int, Dict]:
+        """Gets metadata for a batch of structures.
+
+        Args:
+            structure_ids: A list of structure IDs to retrieve metadata for.
+
+        Returns:
+            A dictionary mapping each found structure_id to its metadata dictionary.
+            IDs not found in the database will be omitted from the result.
+            If a structure's metadata is NULL in the DB, it's returned as an empty dict.
+        """
+        if not structure_ids:
+            return {}
+        if self.dry_run:
+            # Return dummy metadata in dry run mode
+            metadata_map = {}
+            for sid in structure_ids:
+                metadata_map[sid] = {
+                    'structure_id': sid,
+                    'config_type': 'test',
+                    'creation_time': '2024-03-19T00:00:00'
+                }
+            print(f"[DRY RUN] Would retrieve metadata for batch of {len(structure_ids)} structures.")
+            return metadata_map
+
+        metadata_map = {}
+        query = """
+            SELECT structure_id, metadata
+            FROM structures
+            WHERE structure_id = ANY(%s)
+        """
+        try:
+            with self.conn.cursor() as cur:
+                # Pass structure_ids as a list/tuple directly for ANY()
+                cur.execute(query, (list(structure_ids),))
+                results = cur.fetchall()
+
+                for row in results:
+                    struct_id, metadata = row
+                    # Return an empty dict if metadata is NULL in the database
+                    metadata_map[struct_id] = metadata if metadata else {}
+
+        except Exception as e:
+            print(f"[ERROR] Failed to retrieve structures metadata batch: {e}")
+            if self.conn:
+                 self.conn.rollback()
+            raise
+
+        return metadata_map
+
     def update_structure_metadata(self, structure_id: int, metadata: Dict) -> None:
         """Update structure metadata in the database. WARNING: This will overwrite the existing metadata JSONB
         field in the database with the provided dictionary.

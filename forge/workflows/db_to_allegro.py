@@ -24,7 +24,7 @@ from forge.workflows.db_to_mace import (
 logger = logging.getLogger(__name__)
 
 # --- Import custom components for type hinting and path resolution ---
-from forge.workflows.allegro_utils.callbacks import CurriculumCallback, GradNormCallback
+from forge.workflows.allegro_utils.callbacks import CurriculumCallback, GradNormCallback, DeltaLoggerCallback
 from forge.workflows.allegro_utils.custom_metrics import (
     FocalMSELoss, TailMSE, TailHuberLoss, ForceAngleLoss, StressShearMAE, StressAngleLoss, AutoStratifiedHuberLoss
 )
@@ -377,7 +377,7 @@ def _build_validation_metrics(
             
     return val_metrics
     
-def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_monitor_key: str, loss_schedule: Optional[Dict[int, Dict[str, float]]], use_soft_adapt: bool = False, soft_adapt_params: Optional[Dict[str, Any]] = None):
+def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_monitor_key: str, loss_schedule: Optional[Dict[int, Dict[str, float]]], use_soft_adapt: bool = False, soft_adapt_params: Optional[Dict[str, Any]] = None, use_delta_logger: bool = False):
     """Updates or adds the necessary training callbacks to the configuration.
 
     This function ensures that the configuration's trainer section has the
@@ -395,6 +395,7 @@ def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_
             for the LossCoefficientScheduler.
         use_soft_adapt (bool): Whether to use the SoftAdapt callback.
         soft_adapt_params (Optional[Dict[str, Any]]): Parameters for SoftAdapt.
+        use_delta_logger (bool): Whether to add the DeltaLoggerCallback.
     """
     if 'callbacks' not in config.get('trainer', {}):
         config.setdefault('trainer', {})['callbacks'] = []
@@ -429,6 +430,11 @@ def _update_trainer_callbacks(config: Dict[str, Any], job_name: str, checkpoint_
         config['trainer']['callbacks'].append({
             "_target_": "nequip.train.callbacks.SoftAdapt",
             **soft_adapt_params
+        })
+
+    if use_delta_logger:
+        config['trainer']['callbacks'].append({
+            "_target_": "forge.workflows.allegro_utils.callbacks.DeltaLoggerCallback"
         })
 
     if not any('LearningRateMonitor' in cb.get('_target_', '') for cb in config['trainer']['callbacks']):
@@ -548,7 +554,8 @@ def _build_allegro_config(
         config, job_name, kwargs['checkpoint_monitor_key'], 
         kwargs.get('loss_schedule'),
         kwargs.get('use_soft_adapt', False),
-        kwargs.get('soft_adapt_params')
+        kwargs.get('soft_adapt_params'),
+        kwargs.get('use_delta_logger', False),
     )
 
     if kwargs.get('extra_trainer_params'):
@@ -583,6 +590,7 @@ def prepare_allegro_job(
     extra_trainer_params: Optional[Dict[str, Any]] = None,
     use_soft_adapt: bool = False,
     soft_adapt_params: Optional[Dict[str, Any]] = None,
+    use_delta_logger: bool = False,
     checkpoint_monitor_key: str = "val0_epoch/stress_rmse",
     # Allegro Hyperparameters
     max_epochs: int = 400,
@@ -642,6 +650,8 @@ def prepare_allegro_job(
             PyTorch Lightning Trainer.
         use_soft_adapt (bool): Whether to use the SoftAdapt callback.
         soft_adapt_params (Optional[Dict[str, Any]]): Parameters for SoftAdapt.
+        use_delta_logger (bool): Whether to add the DeltaLoggerCallback for logging
+            the adaptive delta in TailHuberLoss.
         checkpoint_monitor_key (str): Metric to monitor for saving checkpoints.
         max_epochs (int): Maximum number of training epochs.
         batch_size (int): Batch size for training and validation.
@@ -690,6 +700,7 @@ def prepare_allegro_job(
         'extra_trainer_params': extra_trainer_params,
         'use_soft_adapt': use_soft_adapt,
         'soft_adapt_params': soft_adapt_params,
+        'use_delta_logger': use_delta_logger,
         'checkpoint_monitor_key': checkpoint_monitor_key, 'max_epochs': max_epochs,
         'batch_size': batch_size, 'wandb_project': wandb_project,
         'lr': lr, 'r_max': r_max, 'l_max': l_max,

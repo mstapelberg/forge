@@ -1,0 +1,1 @@
+"""Tests for the forge analysis training module.""" 

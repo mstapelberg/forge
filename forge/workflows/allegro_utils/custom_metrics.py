@@ -341,3 +341,52 @@ class StressAngleLoss(_MeanX):
             stress[:, 0, 0], stress[:, 1, 1], stress[:, 2, 2],
             stress[:, 1, 2], stress[:, 0, 2], stress[:, 0, 1]
         ], dim=-1)
+
+class VirialMSE(_MeanX):
+    """Mean Squared Error on the full (symmetric) virial stress tensor.
+
+    Computes the MSE over the six independent components of the 3×3 virial
+    stress tensor in Voigt notation:
+
+        (σ_xx, σ_yy, σ_zz, σ_yz, σ_xz, σ_xy)
+
+    This captures both volumetric and shear behaviour.
+
+    Args
+    ----
+    eps : float, optional
+        Small constant to avoid division‑by‑zero in rare degenerate cases.
+    **kwargs :
+        Forwarded to the parent ``_MeanX`` class.
+    """
+    voigt_idx: List[Tuple[int, int]] = [
+        (0, 0), (1, 1), (2, 2),  # normal stresses
+        (1, 2), (0, 2), (0, 1),  # shear stresses (yz, xz, xy)
+    ]
+
+    def __init__(self, eps: float = 1e-8, **kwargs):
+        super().__init__(modifier=torch.nn.Identity(), **kwargs)
+        self.eps = eps
+
+    def update(self, pred: torch.Tensor, target: torch.Tensor) -> None:
+        """Accumulate per‑sample squared error.
+
+        Parameters
+        ----------
+        pred : torch.Tensor
+            Predicted stress, shape ``(N, 3, 3)``.
+        target : torch.Tensor
+            Ground‑truth stress, same shape as ``pred``.
+        """
+        if pred.shape[-2:] != (3, 3) or target.shape[-2:] != (3, 3):
+            raise ValueError("pred and target must have shape (..., 3, 3)")
+
+        # Squared error for each independent component
+        sq_errs = torch.stack(
+            [(pred[:, i, j] - target[:, i, j])**2 for i, j in self.voigt_idx],
+            dim=0,   # → (6, N)
+        )
+
+        # Mean over the six components for every sample
+        mean_sq_err = sq_errs.mean(dim=0)   # → (N,)
+        super().update(mean_sq_err)

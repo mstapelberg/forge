@@ -1,5 +1,5 @@
 # forge/workflows/allegro_utils/custom_metrics.py
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

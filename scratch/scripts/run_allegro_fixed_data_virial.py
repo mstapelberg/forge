@@ -14,16 +14,16 @@ logger = logging.getLogger(__name__)
 
 def run_and_summarize(job_dir, **kwargs):
     """Helper to run prepare_allegro_job and print a summary."""
-    # Check if data already exists
-    train_xyz_path = job_dir / "data" / f"{kwargs['job_name']}_train.xyz"
-    if train_xyz_path.exists():
-        logger.info(f"Data for job '{kwargs['job_name']}' already exists. Skipping data preparation.")
+    # Check if config already exists (since we're using existing data files)
+    config_path = job_dir / "config.yaml"
+    if config_path.exists():
+        logger.info(f"Config for job '{kwargs['job_name']}' already exists. Skipping job preparation.")
         return
 
     logger.info("-" * 80)
     logger.info(f"Preparing job '{kwargs['job_name']}' in directory: {job_dir.resolve()}")
     
-    # Use a fresh DB connection for each job preparation
+    # Use a fresh DB connection for each job preparation (still needed for chemical symbol extraction)
     with DatabaseManager() as db_manager:
         try:
             structure_splits = prepare_allegro_job(db_manager=db_manager, job_dir=job_dir, **kwargs)
@@ -31,9 +31,7 @@ def run_and_summarize(job_dir, **kwargs):
             logger.info("\n  SUCCESS: Allegro job prepared.")
             logger.info(f"  - Job Directory: {job_dir.resolve()}")
             logger.info("  - Config file created: config.yaml")
-            if structure_splits:
-                for split_name, struct_ids in structure_splits.items():
-                    logger.info(f"    - {split_name}: {len(struct_ids)} structures")
+            logger.info("  - Using existing data files: train.xyz, val.xyz, test.xyz")
             
             logger.info("\n  To run this training job, execute:")
             logger.info(f"  cd {job_dir.resolve()}")
@@ -47,31 +45,20 @@ def run_and_summarize(job_dir, **kwargs):
 
 def main():
     """Main function to prepare a systematic Allegro training experiment for loss functions."""
-    logger.info("Initializing database connection...")
+    logger.info("Using existing data files (train.xyz, val.xyz, test.xyz)...")
     
-    bad_ids_path = Path("./analysis_output_full/bad_structure_ids.json")
-    bad_ids_set = set(json.load(bad_ids_path.open())) if bad_ids_path.exists() else set()
-    logger.info(f"Loaded {len(bad_ids_set)} bad structure IDs to exclude.")
-
-    with DatabaseManager() as db_manager:
-        all_ids = db_manager.find_structures_by_metadata({'generation': 0}, operator='>=')
-        dimer_ids = db_manager.find_structures_by_metadata({'config_type': 'dimer'})
-        sr_dimer_ids = db_manager.find_structures_by_metadata({'config_type': 'short_range_dimer'})
-        sr_ids = db_manager.find_structures_by_metadata({'config_type': 'short_range'})
-        
-        # Filter out bad IDs and dimers
-        structure_ids = [sid for sid in all_ids if sid not in dimer_ids and sid not in sr_dimer_ids and sid not in sr_ids and sid not in bad_ids_set]
-        
-        structure_ids = structure_ids
-        logger.info(f"Found {len(structure_ids)} structures for the experiment after filtering.")
-        
-        rare_ids_path = Path("./analysis_output_full/rare_structure_ids.json")
-        rare_ids_set = set(json.load(rare_ids_path.open())) if rare_ids_path.exists() else set()
-        logger.info(f"Loaded {len(rare_ids_set)} rare structure IDs.")
-
-    if not structure_ids:
-        logger.error("No structures found. Exiting.")
-        return
+    # Define paths to existing data files
+    data_train_path = Path("data/train.xyz")
+    data_val_path = Path("data/val.xyz") 
+    data_test_path = Path("data/test.xyz")
+    
+    # Check if data files exist
+    for data_path in [data_train_path, data_val_path, data_test_path]:
+        if not data_path.exists():
+            logger.error(f"Data file not found: {data_path}")
+            return
+    
+    logger.info("All data files found. Proceeding with experiment setup...")
 
     # --- Define Experimental Configurations ---
     experiment_name = "allegro_virial_loss_study_no_dimers_no_sr_no_val_b"
@@ -130,8 +117,11 @@ def main():
         # ----------------------------------------------------------------------
         params = {
             "job_name": job_name,
-            "structure_ids": structure_ids,
-            "train_ratio": 0.8, "val_ratio": 0.1, "test_ratio": 0.1,
+            # HPO mode - use existing data files
+            "data_train_path": data_train_path,
+            "data_val_path": data_val_path,
+            "data_test_path": data_test_path,
+            "chemical_symbols_list": ['Ti', 'V', 'Cr', 'Zr', 'W'],  # Provide chemical symbols
             "seed": 42,
             "batch_size": 1,
             "max_epochs": 120 if use_sched else 100,

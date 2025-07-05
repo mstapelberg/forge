@@ -96,7 +96,7 @@ def main():
         loss_schedule = None
         
         if use_virial:
-            loss_coeffs["virial"] = {"coeff": 25.0, "metric": "virial_mse"}
+            loss_coeffs["virial"] = {"coeff": 25.0, "metric": "virial_mse", "field": "stress"}
         
         if use_sched:
             # Create the loss schedule - phase transition at epoch 80
@@ -112,7 +112,7 @@ def main():
             
             # Add virial to schedule if enabled (only appears in phase 2)
             if use_virial:
-                loss_schedule[80]["virial_mse"] = 25.0
+                loss_schedule[80]["_virial_mse"] = 25.0
 
         # ----------------------------------------------------------------------
         params = {

@@ -48,9 +48,9 @@ def main():
     logger.info("Using existing data files (train.xyz, val.xyz, test.xyz)...")
     
     # Define paths to existing data files
-    data_train_path = Path("data/train.xyz")
-    data_val_path = Path("data/val.xyz") 
-    data_test_path = Path("data/test.xyz")
+    data_train_path = Path("../data/gen8-train.xyz")
+    data_val_path = Path("../data/gen8-val.xyz") 
+    data_test_path = Path("../data/gen8-test.xyz")
     
     # Check if data files exist
     for data_path in [data_train_path, data_val_path, data_test_path]:

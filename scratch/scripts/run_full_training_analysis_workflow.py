@@ -3,27 +3,72 @@
 Full workflow example for Forge Analysis Training module.
 
 This script demonstrates:
-1. Loading structures from database
+1. Loading structures from database OR local XYZ files
 2. Running error analysis with multiple metrics
 3. Identifying difficult structures
 4. Categorizing error causes
 5. Exporting results for visualization and retraining
 """
-
+import argparse
+import glob
 import numpy as np
 import pandas as pd
 from pathlib import Path
 import logging
 import json
+from ase.io import read
+from typing import List
+from ase import Atoms
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def load_atoms_from_xyz(directory: str) -> List[Atoms]:
+    """Loads all atoms from .xyz files in a directory, ensuring they have structure_id.
+
+    Args:
+        directory (str): Path to the directory containing .xyz files.
+
+    Returns:
+        List[Atoms]: A list of valid ASE Atoms objects.
+    """
+    xyz_files = glob.glob(str(Path(directory) / '*.xyz'))
+    all_atoms = []
+    logger.info(f"Found {len(xyz_files)} '.xyz' files in '{directory}'")
+
+    for fpath in xyz_files:
+        try:
+            atoms_list = read(fpath, index=':')
+            for atoms in atoms_list:
+                if 'structure_id' in atoms.info and 'energy' in atoms.info and 'forces' in atoms.arrays:
+                    all_atoms.append(atoms)
+                else:
+                    logger.warning(
+                        f"Skipping structure in {fpath} due to missing "
+                        "'structure_id', 'energy', or 'forces'."
+                    )
+        except Exception as e:
+            logger.error(f"Error reading {fpath}: {e}")
+            
+    logger.info(f"Successfully loaded {len(all_atoms)} structures with required info.")
+    return all_atoms
+
+
 def main():
     """Run the complete analysis workflow."""
     
+    parser = argparse.ArgumentParser(description="Forge Analysis Training Workflow")
+    parser.add_argument(
+        "--xyz-path",
+        type=str,
+        default=None,
+        help="Path to a directory of XYZ files to use instead of querying the database."
+    )
+    args = parser.parse_args()
+
     # ========================================================================
     # 1. Setup and Initialization
     # ========================================================================
@@ -38,7 +83,7 @@ def main():
         plot_force_error_histogram
     )
     
-    # Initialize database
+    # Initialize database (still needed for some operations)
     logger.info("Initializing database...")
     db = DatabaseManager()
     
@@ -59,25 +104,29 @@ def main():
     # ========================================================================
     logger.info("Selecting structures for analysis...")
     
-    # Query structures by metadata
-    structure_ids = db.find_structures_by_metadata(
-        metadata_filters={'generation': 0},
-        operator='>='
-    )
-    
-    # Exclude specific types if needed
-    dimer_ids = db.find_structures_by_metadata(
-        metadata_filters={'config_type': 'dimer'}
-    )
-    structure_ids = [sid for sid in structure_ids if sid not in dimer_ids]
-    
-    logger.info(f"Found {len(structure_ids)} structures for analysis")
-    
-    # Limit for demo purposes
-    #if len(structure_ids) > 100:
-        #structure_ids = structure_ids[:100]
-        #logger.info("Limiting to first 100 structures for demo")
-    
+    atoms_from_xyz = None
+    structure_ids = None
+
+    if args.xyz_path:
+        logger.info(f"Loading structures from XYZ files in: {args.xyz_path}")
+        atoms_from_xyz = load_atoms_from_xyz(args.xyz_path)
+        if not atoms_from_xyz:
+            logger.error("No valid structures loaded from XYZ files. Aborting.")
+            return
+    else:
+        logger.info("Querying structures from the database...")
+        # Query structures by metadata
+        structure_ids = db.find_structures_by_metadata(
+            metadata_filters={'generation': 0},
+            operator='>='
+        )
+        # Exclude specific types if needed
+        dimer_ids = db.find_structures_by_metadata(
+            metadata_filters={'config_type': 'dimer'}
+        )
+        structure_ids = [sid for sid in structure_ids if sid not in dimer_ids]
+        logger.info(f"Found {len(structure_ids)} structures for analysis")
+
     # ========================================================================
     # 4. Define Output and Load/Run Analysis
     # ========================================================================
@@ -142,6 +191,7 @@ def main():
         
         results = analyser.run(
             structure_ids=structure_ids,
+            atoms_list=atoms_from_xyz,
             batch_size=16,
             metrics=[
                 # Built-in metrics
@@ -366,6 +416,8 @@ def main():
     # Example of how to use results for retraining
     # We use the 'rare' structures identified as candidates for the next active learning cycle.
     # We also ensure we don't include 'bad' structures.
+    
+    current_structure_ids = results.structure_metrics['structure_id'].tolist()
     retrain_ids = [sid for sid in rare_structure_ids if sid not in bad_structure_ids]
     
     print(f"\nSelected {len(retrain_ids)} rare/difficult structures for retraining.")
@@ -375,7 +427,7 @@ def main():
 
     # You might also want to create a list of all valid IDs to keep for future training,
     # excluding the bad ones.
-    all_valid_ids = [sid for sid in structure_ids if sid not in bad_structure_ids]
+    all_valid_ids = [sid for sid in current_structure_ids if sid not in bad_structure_ids]
     print(f"\nTotal valid structures (excluding bad geometry): {len(all_valid_ids)}")
     
     # Example integration (commented out as it requires specific setup):

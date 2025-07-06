@@ -6,6 +6,7 @@ from tqdm.auto import tqdm
 from pathlib import Path
 from datetime import datetime
 import logging
+from ase import Atoms
 
 from forge.core.database import DatabaseManager
 from .evaluator import Evaluator
@@ -88,7 +89,8 @@ class ErrorAnalyser:
     
     def run(
         self,
-        structure_ids: List[int],
+        structure_ids: Optional[List[int]] = None,
+        atoms_list: Optional[List[Atoms]] = None,
         batch_size: int = 32,
         metrics: Optional[List[str]] = None,
         spatial_k: int = 12,
@@ -100,10 +102,18 @@ class ErrorAnalyser:
     ) -> AnalysisResults:
         """Run the full analysis pipeline on a list of structures.
         
+        This method can be run in two modes:
+        1. By providing `structure_ids`: Fetches structures from the database.
+        2. By providing `atoms_list`: Uses a pre-loaded list of Atoms objects.
+        
+        If both are provided, `atoms_list` takes precedence.
+
         Parameters
         ----------
-        structure_ids : List[int]
-            List of structure_ids to analyse.
+        structure_ids : Optional[List[int]]
+            List of structure_ids to analyse from the database.
+        atoms_list : Optional[List[Atoms]]
+            A list of ASE Atoms objects to analyze directly.
         batch_size : int, optional
             Number of structures to process in each batch (default: 32).
         metrics : Optional[List[str]]
@@ -126,7 +136,18 @@ class ErrorAnalyser:
         AnalysisResults
             Results object containing all analysis data.
         """
-        logger.info(f"Starting analysis of {len(structure_ids)} structures")
+        if atoms_list is not None:
+            logger.info(f"Starting analysis of {len(atoms_list)} structures from provided list")
+            num_structures = len(atoms_list)
+            data_iterator = atoms_list
+            is_db_mode = False
+        elif structure_ids is not None:
+            logger.info(f"Starting analysis of {len(structure_ids)} structures from database")
+            num_structures = len(structure_ids)
+            data_iterator = structure_ids
+            is_db_mode = True
+        else:
+            raise ValueError("Either 'structure_ids' or 'atoms_list' must be provided.")
         
         # Set default metrics if not specified
         if metrics is None:
@@ -140,7 +161,7 @@ class ErrorAnalyser:
         # Record metadata
         metadata = {
             "analysis_timestamp": datetime.now().isoformat(),
-            "n_structures": len(structure_ids),
+            "n_structures": num_structures,
             "n_calculators": self.evaluator.n_calculators if self.evaluator else 0,
             "calculator_names": self.evaluator.calculator_names if self.evaluator else [],
             "ref_calc_name": self.ref_calc_name,
@@ -157,26 +178,33 @@ class ErrorAnalyser:
         }
         
         # Process in batches
-        for i in tqdm(range(0, len(structure_ids), batch_size), desc="Processing batches"):
-            batch_ids = structure_ids[i:i+batch_size]
-            
-            # Get structures with reference calculations
-            atoms_list = self.db.get_batch_atoms_with_calculation(
-                batch_ids, calculator=self.ref_calc_name
-            )
-            
-            if not atoms_list:
+        for i in tqdm(range(0, num_structures, batch_size), desc="Processing batches"):
+            if is_db_mode:
+                batch_ids = data_iterator[i:i+batch_size]
+                
+                # Get structures with reference calculations
+                batch_atoms = self.db.get_batch_atoms_with_calculation(
+                    batch_ids, calculator=self.ref_calc_name
+                )
+            else:
+                batch_atoms = data_iterator[i:i+batch_size]
+
+            if not batch_atoms:
                 logger.warning(f"No structures found for batch {i//batch_size + 1}")
                 continue
             
             # Evaluate with models
             if self.evaluator:
-                predictions_list = self.evaluator.evaluate(atoms_list)
+                predictions_list = self.evaluator.evaluate(batch_atoms)
             else:
-                predictions_list = [{}] * len(atoms_list)
+                predictions_list = [{}] * len(batch_atoms)
             
             # Process each structure
-            for atoms, preds_dict in zip(atoms_list, predictions_list):
+            for atoms, preds_dict in zip(batch_atoms, predictions_list):
+                if 'structure_id' not in atoms.info:
+                    logger.warning("Structure missing 'structure_id' in .info, skipping.")
+                    continue
+
                 struct_id = atoms.info['structure_id']
                 n_atoms = len(atoms)
                 

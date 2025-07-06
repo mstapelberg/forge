@@ -43,7 +43,7 @@ def load_atoms_from_xyz(directory: str) -> List[Atoms]:
         try:
             atoms_list = read(fpath, index=':')
             for atoms in atoms_list:
-                if 'structure_id' in atoms.info and 'energy' in atoms.info and 'forces' in atoms.arrays:
+                if 'structure_id' in atoms.info and 'REF_energy' in atoms.info and 'REF_force' in atoms.arrays:
                     all_atoms.append(atoms)
                 else:
                     logger.warning(

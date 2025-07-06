@@ -42,6 +42,12 @@ class ErrorAnalyser:
         The name of the reference calculator in the database (default: 'vasp').
     metric_registry : Optional[MetricRegistry]
         Custom metric registry. If None, uses global registry.
+    ref_energy_key : str, optional
+        The key for reference energy in the structure info (default: 'energy').
+    ref_forces_key : str, optional
+        The key for reference forces in the structure arrays (default: 'forces').
+    ref_stress_key : str, optional
+        The key for reference stress in the structure info (default: 'stress').
     """
     
     def __init__(
@@ -49,14 +55,19 @@ class ErrorAnalyser:
         db_manager: DatabaseManager,
         calculators: Any,
         ref_calc_name: str = 'vasp',
-        metric_registry: Optional[MetricRegistry] = None
+        metric_registry: Optional[MetricRegistry] = None,
+        ref_energy_key: str = 'energy',
+        ref_forces_key: str = 'forces',
+        ref_stress_key: str = 'stress'
     ):
         """Initialize the analyser."""
         self.db = db_manager
         self.evaluator = Evaluator(calculators) if calculators is not None else None
         self.ref_calc_name = ref_calc_name
         self.metric_registry = metric_registry or get_registry()
-        
+        self.ref_energy_key = ref_energy_key
+        self.ref_forces_key = ref_forces_key
+        self.ref_stress_key = ref_stress_key
         # Initialize default metrics if not already registered
         self._register_default_metrics()
         
@@ -209,12 +220,15 @@ class ErrorAnalyser:
                 n_atoms = len(atoms)
                 
                 # Get reference data
-                ref_energy = atoms.info.get('energy')
-                ref_forces = atoms.arrays.get('forces')
-                ref_stress = atoms.info.get('stress')
+                ref_energy = atoms.info.get(self.ref_energy_key)
+                ref_forces = atoms.arrays.get(self.ref_forces_key)
+                ref_stress = atoms.info.get(self.ref_stress_key)
                 
                 if ref_forces is None:
-                    logger.warning(f"No reference forces for structure {struct_id}")
+                    logger.warning(
+                        f"No reference forces for structure {struct_id} "
+                        f"using key '{self.ref_forces_key}'"
+                    )
                     continue
                 
                 # Initialize structure metrics

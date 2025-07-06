@@ -48,7 +48,7 @@ def load_atoms_from_xyz(directory: str) -> List[Atoms]:
                 else:
                     logger.warning(
                         f"Skipping structure in {fpath} due to missing "
-                        "'structure_id', 'energy', or 'forces'."
+                        "'structure_id', 'REF_energy', or 'REF_force'."
                     )
         except Exception as e:
             logger.error(f"Error reading {fpath}: {e}")
@@ -137,7 +137,10 @@ def main():
     analyser = ErrorAnalyser(
         db_manager=db,
         calculators=calculators,
-        ref_calc_name='vasp'  # or your reference calculator
+        ref_calc_name='vasp',  # or your reference calculator
+        ref_energy_key='REF_energy',
+        ref_forces_key='REF_force',
+        ref_stress_key='REF_stress'
     )
 
     # Check if results already exist to avoid re-running analysis

@@ -30,7 +30,10 @@ dependencies = [
     "pymatgen",
     "monty",
     "plotly",
-    "tqdm"
+    "tqdm",
+    "pysal",
+    "pygsp",
+    "umap-learn"
 ]
 
 [project.scripts]

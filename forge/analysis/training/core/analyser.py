@@ -14,7 +14,8 @@ from .results import AnalysisResults
 from ..metrics import (
     MetricRegistry, get_registry, register_metric,
     ForceErrorStats, EnergyErrorStats, StressErrorStats,
-    MoransI, ErrorClustering, analyze_spatial_patterns
+    MoransI, ErrorClustering, analyze_spatial_patterns,
+    BatchedSpatialAnalyser
 )
 from ..difficulty import calculate_difficulty_score, calculate_ensemble_variance
 from ..utils import check_geometry, save_analysis_results
@@ -210,7 +211,11 @@ class ErrorAnalyser:
             else:
                 predictions_list = [{}] * len(batch_atoms)
             
-            # Process each structure
+            batch_struct_metrics = []
+            batch_atom_rows = []
+            batch_errors_for_spatial = []
+            
+            # Process each structure's base metrics
             for atoms, preds_dict in zip(batch_atoms, predictions_list):
                 if 'structure_id' not in atoms.info:
                     logger.warning("Structure missing 'structure_id' in .info, skipping.")
@@ -229,6 +234,8 @@ class ErrorAnalyser:
                         f"No reference forces for structure {struct_id} "
                         f"using key '{self.ref_forces_key}'"
                     )
+                    # Add a placeholder to keep lists in sync
+                    batch_errors_for_spatial.append(None)
                     continue
                 
                 # Initialize structure metrics
@@ -263,11 +270,14 @@ class ErrorAnalyser:
                 
                 if not force_errors_by_model:
                     logger.warning(f"No valid predictions for structure {struct_id}")
+                    # Add a placeholder to keep lists in sync
+                    batch_errors_for_spatial.append(None)
                     continue
                 
                 # Use mean prediction for main metrics
                 mean_force_error = np.mean(force_errors_by_model, axis=0)
                 force_error_magnitudes = np.linalg.norm(mean_force_error, axis=1)
+                batch_errors_for_spatial.append(force_error_magnitudes)
                 
                 # Calculate metrics
                 for metric_name in metrics:
@@ -293,7 +303,8 @@ class ErrorAnalyser:
                             metric_results = self.metric_registry.calculate(
                                 metric_name,
                                 all_predictions[0].get('stress', ref_stress),
-                                ref_stress
+                                ref_stress,
+                                is_voigt=False
                             )
                             struct_metrics.update(metric_results)
                         
@@ -310,66 +321,96 @@ class ErrorAnalyser:
                     except Exception as e:
                         logger.warning(f"Failed to calculate {metric_name} for structure {struct_id}: {e}")
                 
-                # Spatial analysis
-                spatial_results = analyze_spatial_patterns(
-                    atoms,
-                    force_error_magnitudes,
-                    k=spatial_k,
-                    eps=dbscan_eps,
-                    min_samples=dbscan_min_samples
-                )
-                
-                # Extract key spatial metrics
-                struct_metrics['morans_i_global_metric'] = spatial_results.get('morans_i_global_metric', 0.0)
-                struct_metrics['morans_i_pvalue_metric'] = spatial_results.get('morans_i_pvalue_metric', 1.0)
-                struct_metrics['n_error_clusters_metric'] = spatial_results.get('n_error_clusters_metric', 0)
-                
                 # Ensemble variance
                 ensemble_var = calculate_ensemble_variance(all_predictions, n_atoms)
                 struct_metrics.update(ensemble_var)
                 
-                # Difficulty score
-                difficulty_scores = calculate_difficulty_score(
-                    force_error_magnitudes,
-                    spatial_results.get('morans_i_global_metric', 0.0),
-                    spatial_results.get('cluster_labels', np.array([])),
-                    ensemble_var.get('force_variance_metric', 0.0),
-                    n_atoms,
-                    weights_dict=difficulty_weights
-                )
-                struct_metrics.update(difficulty_scores)
-                
-                # Add to results
-                struct_rows.append(struct_metrics)
-                
-                # Per-atom data
-                for atom_idx in range(n_atoms):
-                    atom_row = {
-                        'structure_id': struct_id,
-                        'atom_index': atom_idx,
-                        'symbol': atoms.symbols[atom_idx],
-                        'force_error_x': mean_force_error[atom_idx, 0],
-                        'force_error_y': mean_force_error[atom_idx, 1],
-                        'force_error_z': mean_force_error[atom_idx, 2],
-                        'force_error_mag': force_error_magnitudes[atom_idx]
-                    }
-                    
-                    # Add spatial data if available
-                    if 'local_morans_i' in spatial_results:
-                        atom_row['local_moran_i'] = spatial_results['local_morans_i'][atom_idx]
-                    if 'cluster_labels' in spatial_results:
-                        atom_row['dbscan_cluster'] = spatial_results['cluster_labels'][atom_idx]
-                    
-                    atom_rows.append(atom_row)
-                
+                batch_struct_metrics.append(struct_metrics)
+
                 # Cache results for plotting
                 results_cache[struct_id] = {
                     'atoms': atoms,
                     'force_error_magnitudes': force_error_magnitudes,
                     'force_error_vectors': mean_force_error,
-                    'spatial_results': spatial_results,
                     'predictions': all_predictions
                 }
+            
+            # === Batched Spatial Analysis ===
+            valid_atoms_for_spatial = [atoms for atoms, errs in zip(batch_atoms, batch_errors_for_spatial) if errs is not None]
+            valid_errors_for_spatial = [errs for errs in batch_errors_for_spatial if errs is not None]
+
+            if valid_atoms_for_spatial:
+                try:
+                    spatial_analyser = BatchedSpatialAnalyser(
+                        atoms_list=valid_atoms_for_spatial,
+                        errors_list=valid_errors_for_spatial,
+                        k=spatial_k,
+                        dbscan_eps=dbscan_eps,
+                        dbscan_min_samples=dbscan_min_samples
+                    )
+                    batched_spatial_results = spatial_analyser.run()
+
+                    # Merge spatial results back into structure metrics
+                    result_idx = 0
+                    for i, struct_metrics in enumerate(batch_struct_metrics):
+                        if batch_errors_for_spatial[i] is not None:
+                            spatial_res = batched_spatial_results[result_idx]
+                            struct_metrics.update(spatial_res)
+                            # Update cache and atom rows with spatial data
+                            sid = struct_metrics['structure_id']
+                            if sid in results_cache:
+                                results_cache[sid]['spatial_results'] = {
+                                    k: v for k, v in spatial_res.items() if k in ['local_morans_i', 'cluster_labels']
+                                }
+                            result_idx += 1
+
+                except ImportError as e:
+                    logger.warning(f"Skipping batched spatial analysis: {e}")
+                except Exception as e:
+                    logger.error(f"Batched spatial analysis failed: {e}")
+
+            # Final processing for the batch
+            for struct_metrics in batch_struct_metrics:
+                sid = struct_metrics['structure_id']
+                # Recalculate per-atom rows and difficulty scores after all metrics are gathered
+                force_error_magnitudes = results_cache[sid]['force_error_magnitudes']
+                n_atoms = struct_metrics['n_atoms']
+
+                # Difficulty score
+                difficulty_scores = calculate_difficulty_score(
+                    force_error_magnitudes,
+                    struct_metrics.get('morans_i_global_metric', 0.0),
+                    struct_metrics.get('cluster_labels', np.array([])),
+                    struct_metrics.get('force_variance_metric', 0.0),
+                    n_atoms,
+                    weights_dict=difficulty_weights
+                )
+                struct_metrics.update(difficulty_scores)
+                
+                # Add to global results
+                struct_rows.append(struct_metrics)
+                
+                # Per-atom data
+                for atom_idx in range(n_atoms):
+                    atom_row = {
+                        'structure_id': sid,
+                        'atom_index': atom_idx,
+                        'symbol': results_cache[sid]['atoms'].symbols[atom_idx],
+                        'force_error_x': results_cache[sid]['force_error_vectors'][atom_idx, 0],
+                        'force_error_y': results_cache[sid]['force_error_vectors'][atom_idx, 1],
+                        'force_error_z': results_cache[sid]['force_error_vectors'][atom_idx, 2],
+                        'force_error_mag': force_error_magnitudes[atom_idx]
+                    }
+                    
+                    # Add spatial data if available
+                    spatial_cache = results_cache[sid].get('spatial_results', {})
+                    if 'local_moran_i' in spatial_cache and len(spatial_cache['local_moran_i']) > atom_idx:
+                        atom_row['local_moran_i'] = spatial_cache['local_moran_i'][atom_idx]
+                    if 'cluster_labels' in spatial_cache and len(spatial_cache['cluster_labels']) > atom_idx:
+                        atom_row['dbscan_cluster'] = spatial_cache['cluster_labels'][atom_idx]
+                    
+                    atom_rows.append(atom_row)
+
         
         # Create results object
         results = AnalysisResults(

@@ -133,16 +133,16 @@ training_module:
 
     radial_chemical_embed:
       _target_: allegro.nn.TwoBodyBesselScalarEmbed
-      num_bessels: 8
+      num_bessels: 12
       bessel_trainable: false
-      polynomial_cutoff_p: 6
+      polynomial_cutoff_p: 8
 
     # output dimension of the radial-chemical embedding
     radial_chemical_embed_dim: 128
 
     # scalar embedding MLP
     scalar_embed_mlp_hidden_layers_depth: 2
-    scalar_embed_mlp_hidden_layers_width: 256
+    scalar_embed_mlp_hidden_layers_width: 128 
     scalar_embed_mlp_nonlinearity: silu
 
     l_max: 2

@@ -214,6 +214,7 @@ def main():
     parser.add_argument("--wandb-project", help="Weights & Biases project name for run data (optional).")
     parser.add_argument("--wandb-entity",  help="W&B entity (username/team) if required for the project.")
     parser.add_argument("--no-db", action="store_true", help="Skip database upload (only summarize results).")
+    parser.add_argument("--output-csv", help="Path to save the processed run data as a CSV file (optional).")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging for debugging.")
     args = parser.parse_args()
     # Configure logging
@@ -256,6 +257,21 @@ def main():
     logging.info(f"Processing complete. {success_count} runs processed successfully, {failed_count} skipped.")
     if not df.empty:
         logging.debug("Sample of compiled run data:\n" + df.head().to_string(index=False))
+    
+    # Save DataFrame to CSV if output path is specified
+    if args.output_csv:
+        if not df.empty:
+            try:
+                output_path = Path(args.output_csv)
+                # Ensure parent directory exists
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                df.to_csv(output_path, index=False)
+                logging.info(f"Run data saved to CSV file: {output_path}")
+            except Exception as e:
+                logging.error(f"Failed to save CSV file: {e}")
+        else:
+            logging.warning("No data to save - DataFrame is empty.")
+    
     # Upload results to database if not skipped
     if not args.no_db:
         if DatabaseManager is None:

@@ -98,10 +98,34 @@ def compute_avg_metrics(xyz_path: Path):
 
 
 def find_one(pattern: str) -> Path | None:
+    """Find the first file matching a glob pattern.
+
+    Args:
+        pattern (str): The glob pattern to search for.
+
+    Returns:
+        Path | None: The Path to the first matching file, or None if no match is found.
+    """
     hits = glob(pattern)
     return Path(hits[0]) if hits else None
 
 def process_run(run_dir: Path, wandb_runs: dict = None):
+    """Process a single Allegro run directory and extract summary statistics.
+
+    This function gathers information about a training run, including dataset splits,
+    average force and stress magnitudes for each split, and (optionally) configuration
+    and validation/test metrics from Weights & Biases (wandb).
+
+    Args:
+        run_dir (Path): Path to the run directory containing Allegro outputs.
+        wandb_runs (dict, optional): Dictionary mapping run names to wandb run objects.
+            If provided and the run name is present, additional config and metrics
+            will be extracted from wandb.
+
+    Returns:
+        dict or None: A dictionary containing summary statistics and metrics for the run,
+            or None if required files are missing or an error occurs.
+    """
     run_name = run_dir.name
     splits_file = run_dir / "structure_splits.json"
     config_file = run_dir / "config.yaml"
@@ -208,11 +232,8 @@ def main():
         else:
             try:
                 api = wandb.Api()
-                project_path = args.wandb_project
-                if args.wandb_entity:
-                    project_path = f"{args.wandb_entity}/{args.wandb_project}"
-                # Filter runs by group (experiment name) for efficiency, if group was used in W&B
-                runs = api.runs(project_path, filters={"group": experiment_name})
+                proj_path = f"{args.wandb_entity}/{args.wandb_project}" if args.wandb_entity else args.wandb_project
+                runs = api.runs(proj_path)   # ← removed filters
                 wandb_runs = {run.name: run for run in runs}
                 logging.info(f"Retrieved {len(wandb_runs)} runs from W&B project '{args.wandb_project}'.")
             except Exception as e:

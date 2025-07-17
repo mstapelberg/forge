@@ -8,6 +8,7 @@ import json
 import os
 import logging
 from pathlib import Path
+from glob import glob
 
 import numpy as np
 import pandas as pd
@@ -95,18 +96,26 @@ def compute_avg_metrics(xyz_path: Path):
     avg_stress = sum_stress / count_stress if count_stress > 0 else None
     return avg_force, avg_stress
 
+
+def find_one(pattern: str) -> Path | None:
+    hits = glob(pattern)
+    return Path(hits[0]) if hits else None
+
 def process_run(run_dir: Path, wandb_runs: dict = None):
-    """Process a single run directory and return a dict of extracted information."""
     run_name = run_dir.name
-    # Required files for each run
     splits_file = run_dir / "structure_splits.json"
     config_file = run_dir / "config.yaml"
-    train_file = run_dir / "data" / "train.xyz"
-    val_file   = run_dir / "data" / "val.xyz"
-    test_file  = run_dir / "data" / "test.xyz"
-    required_files = [splits_file, config_file, train_file, val_file, test_file]
-    if not all(f.exists() for f in required_files):
-        logging.warning(f"Skipping run '{run_name}': missing required files.")
+
+    # flexible search for split files
+    train_file = find_one(str(run_dir / "data" / "*train*.xyz"))
+    val_file   = find_one(str(run_dir / "data" / "*val*.xyz"))
+    test_file  = find_one(str(run_dir / "data" / "*test*.xyz"))
+
+    required = [splits_file, config_file, train_file, val_file, test_file]
+    if not all(required) or not all(f.exists() for f in required):
+        logging.warning(f"Skipping run '{run_name}': required files missing "
+                        f"(found train={bool(train_file)}, val={bool(val_file)}, "
+                        f"test={bool(test_file)})")
         return None
     data = {"run_name": run_name}
     # Compute dataset hash

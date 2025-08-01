@@ -32,464 +32,14 @@ from forge.analysis.composition import CompositionAnalyzer
 from forge.workflows.mcmc import MonteCarloAlloySampler
 from forge.workflows.neb import VacancyDiffusion, NEBAnalyzer
 from forge.workflows.relax import relax
-
-# Allegro/NequIP imports
-try:
-    from nequip.ase import NequIPCalculator
-    ALLEGRO_AVAILABLE = True
-except ImportError:
-    print("Warning: NequIP not available. Please install nequip to use Allegro models.")
-    ALLEGRO_AVAILABLE = False
+from forge.workflows.calculator_interface import create_calculator, check_calculator_availability
 
 # Suppress torch warnings
 warnings.filterwarnings("ignore", category=FutureWarning, 
                        message=".*You are using `torch.load` with `weights_only=False`.*")
 
 
-class AllegroVacancyDiffusion:
-    """
-    Vacancy diffusion workflow using Allegro calculator.
-    This is a simplified version that adapts the original VacancyDiffusion
-    to work with Allegro instead of MACE.
-    """
-    
-    def __init__(
-        self,
-        atoms: Atoms,
-        allegro_calculator,
-        nn_cutoff: float = 2.8,
-        nnn_cutoff: float = 3.2,
-        seed: int = 42,
-    ):
-        """
-        Initialize Allegro vacancy diffusion workflow.
-        
-        Args:
-            atoms: Relaxed perfect structure to study
-            allegro_calculator: Allegro calculator instance
-            nn_cutoff: Cutoff radius for nearest neighbors
-            nnn_cutoff: Cutoff radius for next-nearest neighbors
-            seed: Random seed for reproducibility
-        """
-        self.atoms = atoms.copy()
-        self.allegro_calculator = allegro_calculator
-        self.nn_cutoff = nn_cutoff
-        self.nnn_cutoff = nnn_cutoff
-        self.seed = seed
-        self.analyzer = NEBAnalyzer()
-        
-        # Set random seed
-        np.random.seed(self.seed)
-        
-        # Cache for neighbor calculations
-        self._neighbor_cache: Dict[int, 'NeighborInfo'] = {}
 
-    def get_neighbors(self, index: int) -> 'NeighborInfo':
-        """
-        Get nearest and next-nearest neighbors for an atom.
-        
-        Args:
-            index: Index of the atom to find neighbors for
-            
-        Returns:
-            NeighborInfo containing neighbor indices, distances, and element information
-        """
-        if index in self._neighbor_cache:
-            return self._neighbor_cache[index]
-            
-        # Create neighbor list with larger cutoff
-        cutoff = self.nnn_cutoff
-        nl = NeighborList([cutoff/2] * len(self.atoms), 
-                         skin=0.0, 
-                         self_interaction=False, 
-                         bothways=True)
-        nl.update(self.atoms)
-        
-        # Get all neighbors and distances
-        indices, offsets = nl.get_neighbors(index)
-        positions = self.atoms.positions
-        cell = self.atoms.get_cell()
-        distances = []
-        
-        for i, offset in zip(indices, offsets):
-            pos_i = positions[i] + np.dot(offset, cell)
-            dist = np.linalg.norm(pos_i - positions[index])
-            distances.append(dist)
-        
-        distances = np.array(distances)
-        
-        # Separate into NN and NNN
-        nn_mask = distances <= self.nn_cutoff
-        nnn_mask = (distances > self.nn_cutoff) & (distances <= self.nnn_cutoff)
-        
-        # Sort both sets by distance
-        nn_indices = indices[nn_mask]
-        nn_distances = distances[nn_mask]
-        nn_sort = np.argsort(nn_distances)
-        
-        nnn_indices = indices[nnn_mask]
-        nnn_distances = distances[nnn_mask]
-        nnn_sort = np.argsort(nnn_distances)
-        
-        # Group by elements
-        center_element = self.atoms[index].symbol
-        neighbor_elements = {}
-        for elem in set(self.atoms.get_chemical_symbols()):
-            elem_indices = []
-            for idx in np.concatenate([nn_indices[nn_sort], nnn_indices[nnn_sort]]):
-                if self.atoms[idx].symbol == elem:
-                    elem_indices.append(idx)
-            if elem_indices:
-                neighbor_elements[elem] = elem_indices
-        
-        info = NeighborInfo(
-            nn_indices=nn_indices[nn_sort],
-            nn_distances=nn_distances[nn_sort],
-            nnn_indices=nnn_indices[nnn_sort],
-            nnn_distances=nnn_distances[nnn_sort],
-            center_element=center_element,
-            neighbor_elements=neighbor_elements
-        )
-        
-        self._neighbor_cache[index] = info
-        return info
-
-    def sample_neighbors(
-        self,
-        vacancy_indices: List[int],
-        n_nearest: int,
-        n_next_nearest: int,
-        rng_seed: Optional[int] = None
-    ) -> List[Dict[str, Union[int, List[int]]]]:
-        """
-        Sample neighbor pairs for NEB calculations.
-        
-        Args:
-            vacancy_indices: List of vacancy site indices
-            n_nearest: Number of nearest neighbors to sample per vacancy
-            n_next_nearest: Number of next-nearest neighbors to sample per vacancy
-            rng_seed: Random seed for reproducibility
-            
-        Returns:
-            List of dictionaries with neighbor information
-        """
-        # Use class seed if no specific seed provided
-        seed_to_use = rng_seed if rng_seed is not None else self.seed
-        rng = np.random.default_rng(seed_to_use)
-        results = []
-        
-        for vac_idx in vacancy_indices:
-            neighbors = self.get_neighbors(vac_idx)
-            
-            # Sample from NN
-            if len(neighbors.nn_indices) >= n_nearest:
-                nn_samples = rng.choice(neighbors.nn_indices, size=n_nearest, replace=False).tolist()
-            else:
-                nn_samples = neighbors.nn_indices.tolist()
-                
-            # Sample from NNN
-            if len(neighbors.nnn_indices) >= n_next_nearest:
-                nnn_samples = rng.choice(neighbors.nnn_indices, size=n_next_nearest, replace=False).tolist()
-            else:
-                nnn_samples = neighbors.nnn_indices.tolist()
-            
-            # Create structured result
-            results.append({
-                'vacancy_index': vac_idx,
-                'nn': nn_samples,
-                'nnn': nnn_samples
-            })
-                
-        return results
-
-    def run_single(
-        self,
-        vacancy_index: int,
-        target_index: int,
-        num_images: int = 5,
-        neb_method: str = "dyneb",
-        climb: bool = True,
-        relax_fmax: float = 0.01,
-        relax_steps: int = 100,
-        neb_fmax: float = 0.01,
-        neb_steps: int = 200,
-        save_xyz: bool = False,
-        output_dir: Optional[Path] = None,
-        verbose: int = 1
-    ) -> Dict:
-        """
-        Run single NEB calculation between specified sites using Allegro calculator.
-        
-        Args:
-            vacancy_index: Index of atom to remove
-            target_index: Index of atom to move to vacancy site
-            num_images: Number of interpolated images for NEB
-            neb_method: Method to use for NEB calculation (dyneb or neb)
-            climb: Whether to use climbing image for NEB
-            relax_fmax: Force tolerance for endpoint relaxation before NEB
-            relax_steps: Maximum steps for endpoint relaxation before NEB
-            neb_fmax: Force tolerance for NEB calculation
-            neb_steps: Maximum steps for NEB calculation
-            save_xyz: Save initial and final xyz files
-            output_dir: Directory to save xyz files
-            verbose: Verbosity level
-            
-        Returns:
-            Dictionary containing calculation results and metadata
-        """
-        # Convert indices to integers if they're not already
-        try:
-            vacancy_index = int(vacancy_index)
-            target_index = int(target_index)
-        except (TypeError, ValueError):
-            if isinstance(target_index, list) and len(target_index) == 1:
-                target_index = int(target_index[0])
-            else:
-                error_msg = f"Invalid indices: vacancy_index={vacancy_index}, target_index={target_index}"
-                if verbose > 0:
-                    print(f"Error: {error_msg}")
-                return {
-                    "success": False,
-                    "error": error_msg,
-                    "vacancy_index": str(vacancy_index),
-                    "target_index": str(target_index)
-                }
-        
-        # Initialize metadata
-        metadata = {
-            "vacancy_element": self.atoms[vacancy_index].symbol,
-            "target_element": self.atoms[target_index].symbol,
-            "vacancy_index": str(vacancy_index),
-            "target_index": str(target_index)
-        }
-        
-        try:
-            # Create start and end configurations
-            start_atoms = self.atoms.copy()
-            end_atoms = self.atoms.copy()
-            
-            # Get vacancy position
-            vacancy_position = start_atoms.positions[vacancy_index].copy()
-            
-            # Move target atom to vacancy position in end configuration
-            end_atoms.positions[target_index] = vacancy_position
-            
-            # Remove vacancy atom from both configurations
-            start_atoms.pop(vacancy_index)
-            end_atoms.pop(vacancy_index)
-            
-            # Configure logfile based on verbosity
-            logfile = None if verbose == 0 else '-'
-            
-            # Relax configurations using Allegro calculator
-            start_calculator = self.allegro_calculator
-            end_calculator = self.allegro_calculator
-
-            rel_start_atoms = relax(
-                atoms=start_atoms,
-                calculator=start_calculator,
-                relax_cell=False,
-                fmax=relax_fmax,
-                steps=relax_steps,
-                optimizer="FIRE",
-                logfile=logfile,
-                verbose=verbose
-            )
-
-            rel_end_atoms = relax(
-                atoms=end_atoms,
-                calculator=end_calculator,
-                relax_cell=False,
-                fmax=relax_fmax,
-                steps=relax_steps,
-                optimizer="FIRE",
-                logfile=logfile,
-                verbose=verbose
-            )
-            
-            start_energy = rel_start_atoms.get_potential_energy()
-            end_energy = rel_end_atoms.get_potential_energy()
-            
-            # Create NEB calculation
-            neb_calc = NEBCalculation(
-                start_atoms=rel_start_atoms,
-                end_atoms=rel_end_atoms,
-                model_path=None,  # Not used for Allegro
-                start_energy=start_energy,
-                end_energy=end_energy,
-                n_images=num_images,
-                method=NEBMethod(neb_method),
-                climbing=climb,
-                fmax=neb_fmax,
-                steps=neb_steps,
-                seed=self.seed,
-                device="cpu",  # Allegro handles device internally
-                use_cueq=False,  # Not applicable for Allegro
-                logfile=logfile
-            )
-            
-            # Override the calculator creation to use Allegro
-            def create_allegro_calculator():
-                return self.allegro_calculator
-            
-            neb_calc._create_calculator = create_allegro_calculator
-            
-            result = neb_calc.run()
-            
-            # Combine results and metadata
-            output = {
-                **metadata,
-                "barrier": result.barrier,
-                "energies": result.energies,
-                "converged": result.converged,
-                "n_steps": result.n_steps,
-                "success": True,
-                "error": None,
-                "is_nearest_neighbor": True
-            }
-            
-            return output
-            
-        except Exception as e:
-            if verbose > 0:
-                print(f"Error in NEB calculation: {e}")
-            output = {
-                **metadata,
-                "success": False,
-                "error": str(e),
-                "barrier": None,
-                "energies": None,
-                "converged": False,
-                "n_steps": None
-            }
-            return output
-
-    def run_multiple(
-        self,
-        vacancy_indices: Optional[List[int]] = None,
-        num_images: int = 5,
-        neb_method: str = "dyneb",
-        climb: bool = True,
-        relax_fmax: float = 0.01,
-        relax_steps: int = 100,
-        neb_fmax: float = 0.01,
-        neb_steps: int = 200,
-        save_xyz: bool = False,
-        output_dir: Optional[Path] = None,
-        n_nearest: int = 3,
-        n_next_nearest: int = 3,
-        rng_seed: Optional[int] = None,
-        verbose: int = 1
-    ) -> List[Dict]:
-        """
-        Run multiple NEB calculations for vacancy diffusion using Allegro.
-        
-        Args:
-            vacancy_indices: List of vacancy sites to test
-            num_images: Number of interpolated images for NEB
-            neb_method: Method to use for NEB calculation (dyneb or neb)
-            climb: Whether to use climbing image for NEB
-            relax_fmax: Force tolerance for endpoint relaxation before NEB
-            relax_steps: Maximum steps for endpoint relaxation before NEB
-            neb_fmax: Force tolerance for NEB calculation
-            neb_steps: Maximum steps for NEB calculation
-            save_xyz: Save xyz files for each calculation
-            output_dir: Directory to save xyz files
-            n_nearest: Number of nearest neighbors to sample per vacancy
-            n_next_nearest: Number of next-nearest neighbors to sample per vacancy
-            rng_seed: Random seed for neighbor sampling
-            verbose: Verbosity level
-            
-        Returns:
-            List of dictionaries containing calculation results
-        """
-        # Use class seed if no specific seed provided
-        seed_to_use = rng_seed if rng_seed is not None else self.seed
-        
-        # Generate vacancy-target pairs with structured format
-        neighbor_samples = self.sample_neighbors(
-            vacancy_indices=vacancy_indices if vacancy_indices else [i for i in range(len(self.atoms))],
-            n_nearest=n_nearest,
-            n_next_nearest=n_next_nearest,
-            rng_seed=seed_to_use
-        )
-        
-        # Count total calculations
-        total_calcs = sum(len(sample['nn']) + len(sample['nnn']) for sample in neighbor_samples)
-        results = []
-        progress_step = max(1, total_calcs // 10)  # Report every 10%
-        
-        print(f"Starting {total_calcs} NEB calculations with Allegro...")
-        calc_count = 0
-        
-        # Process each vacancy and its neighbors
-        for i, sample in enumerate(neighbor_samples):
-            vac_idx = sample['vacancy_index']
-            
-            # Process nearest neighbors
-            for nn_idx in sample['nn']:
-                if verbose > 0:
-                    print(f"Running NEB {i+1}/{len(neighbor_samples)} - NN: vacancy at {vac_idx}, target at {nn_idx}")
-                
-                result = self.run_single(
-                    vacancy_index=vac_idx,
-                    target_index=nn_idx,
-                    num_images=num_images,
-                    neb_method=neb_method,
-                    climb=climb,
-                    relax_fmax=relax_fmax,
-                    relax_steps=relax_steps,
-                    neb_fmax=neb_fmax,
-                    neb_steps=neb_steps,
-                    save_xyz=save_xyz,
-                    output_dir=output_dir,
-                    verbose=verbose
-                )
-                result['is_nearest_neighbor'] = True
-                results.append(result)
-                
-                calc_count += 1
-                if calc_count % progress_step == 0:
-                    print(f"Progress: {calc_count}/{total_calcs} calculations completed")
-                
-                if result["success"]:
-                    self.analyzer.add_calculation(result)
-                else:
-                    print(f"Calculation failed for vacancy {vac_idx} to NN {nn_idx}: {result['error']}")
-            
-            # Process next-nearest neighbors
-            for nnn_idx in sample['nnn']:
-                if verbose > 0:
-                    print(f"Running NEB {i+1}/{len(neighbor_samples)} - NNN: vacancy at {vac_idx}, target at {nnn_idx}")
-                
-                result = self.run_single(
-                    vacancy_index=vac_idx,
-                    target_index=nnn_idx,
-                    num_images=num_images,
-                    neb_method=neb_method,
-                    climb=climb,
-                    relax_fmax=relax_fmax,
-                    relax_steps=relax_steps,
-                    neb_fmax=neb_fmax,
-                    neb_steps=neb_steps,
-                    save_xyz=save_xyz,
-                    output_dir=output_dir,
-                    verbose=verbose
-                )
-                result['is_nearest_neighbor'] = False
-                results.append(result)
-                
-                calc_count += 1
-                if calc_count % progress_step == 0:
-                    print(f"Progress: {calc_count}/{total_calcs} calculations completed")
-                
-                if result["success"]:
-                    self.analyzer.add_calculation(result)
-                else:
-                    print(f"Calculation failed for vacancy {vac_idx} to NNN {nnn_idx}: {result['error']}")
-        
-        print(f"Completed {total_calcs} calculations")
-        return results
 
 
 class HybridNEBWorkflow:
@@ -503,22 +53,28 @@ class HybridNEBWorkflow:
         model_path: str,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         seed: int = 42,
-        output_dir: str = "hybrid_neb_results"
+        output_dir: str = "hybrid_neb_results",
+        calculator_type: Optional[str] = None,
+        species_to_type_name: Optional[Dict[str, int]] = None
     ):
         """
         Initialize the hybrid NEB workflow.
         
         Args:
-            model_path: Path to MACE model
+            model_path: Path to model file
             device: Device to run calculations on
             seed: Random seed for reproducibility
             output_dir: Directory to save results
+            calculator_type: Type of calculator ('mace', 'allegro', or None for auto-detect)
+            species_to_type_name: Species mapping for Allegro
         """
         self.model_path = model_path
         self.device = device
         self.seed = seed
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.calculator_type = calculator_type
+        self.species_to_type_name = species_to_type_name or {}
         
         # Set random seeds
         random.seed(seed)
@@ -529,7 +85,7 @@ class HybridNEBWorkflow:
         
         # Initialize components
         self.composition_analyzer = CompositionAnalyzer()
-        self.allegro_calculator = None
+        self.unified_calculator = None
         
         # Initialize calculators
         self._initialize_calculators()
@@ -540,26 +96,25 @@ class HybridNEBWorkflow:
         self.neb_results = []
         
     def _initialize_calculators(self):
-        """Initialize Allegro calculator if available."""
-        print(f"Initializing Allegro calculator on device: {self.device}")
+        """Initialize unified calculator."""
+        print(f"Initializing unified calculator on device: {self.device}")
         
-        if ALLEGRO_AVAILABLE:
-            try:
-                # Initialize Allegro calculator
-                # Note: You may need to adjust the species_to_type_name mapping
-                # based on your specific Allegro model
-                self.allegro_calculator = NequIPCalculator.from_deployed_model(
-                    model_path=self.model_path,
-                    species_to_type_name={'V': 0, 'Cr': 1, 'Ti': 2, 'W': 3, 'Zr': 4},
-                    device=self.device
-                )
-                print("Successfully initialized Allegro calculator")
-            except Exception as e:
-                print(f"Warning: Could not initialize Allegro calculator: {e}")
-                self.allegro_calculator = None
-        else:
-            print("Allegro not available. Please install nequip to use Allegro models.")
-            self.allegro_calculator = None
+        # Check available calculators
+        available = check_calculator_availability()
+        print(f"Available calculators: {available}")
+        
+        try:
+            # Initialize unified calculator
+            self.unified_calculator = create_calculator(
+                model_path=self.model_path,
+                calculator_type=self.calculator_type,
+                device=self.device,
+                species_to_type_name=self.species_to_type_name
+            )
+            print(f"Successfully initialized {self.unified_calculator.calculator_type} calculator")
+        except Exception as e:
+            print(f"Warning: Could not initialize calculator: {e}")
+            self.unified_calculator = None
     
     def generate_compositions(
         self,
@@ -667,7 +222,7 @@ class HybridNEBWorkflow:
         energy_threshold: float = 0.0002
     ) -> List[Atoms]:
         """
-        Optimize structures using MCMC simulation with Allegro calculator.
+        Optimize structures using MCMC simulation with unified calculator.
         
         Args:
             structures: List of ASE Atoms objects to optimize
@@ -679,17 +234,17 @@ class HybridNEBWorkflow:
         Returns:
             List of optimized ASE Atoms objects
         """
-        print("Optimizing structures with MCMC using Allegro calculator...")
+        print(f"Optimizing structures with MCMC using {self.unified_calculator.calculator_type} calculator...")
         
-        if self.allegro_calculator is None:
-            raise ValueError("Allegro calculator not initialized. Please check model path and installation.")
+        if self.unified_calculator is None:
+            raise ValueError("Unified calculator not initialized. Please check model path and installation.")
         
         optimized_structures = []
         
         for i, atoms in enumerate(structures):
             print(f"Optimizing structure {i+1}/{len(structures)}")
             
-            # Use standard MCMC with Allegro calculator
+            # Use standard MCMC with unified calculator
             optimized_atoms = self._optimize_with_mcmc(
                 atoms, temperature, n_steps, convergence_window, energy_threshold
             )
@@ -713,13 +268,13 @@ class HybridNEBWorkflow:
         convergence_window: int,
         energy_threshold: float
     ) -> Atoms:
-        """Optimize structure using standard MCMC with Allegro calculator."""
-        print("Using standard MCMC optimization with Allegro calculator")
+        """Optimize structure using standard MCMC with unified calculator."""
+        print(f"Using standard MCMC optimization with {self.unified_calculator.calculator_type} calculator")
         
-        # Create MCMC sampler with Allegro calculator
+        # Create MCMC sampler with unified calculator
         mc_sampler = MonteCarloAlloySampler(
             atoms=atoms,
-            calculator=self.allegro_calculator,
+            calculator=self.unified_calculator,
             temperature=temperature,
             steps=n_steps,
             rng_seed=self.seed
@@ -733,32 +288,7 @@ class HybridNEBWorkflow:
         
         return optimized_atoms
 
-    def _create_allegro_vacancy_diffusion(
-        self,
-        atoms: Atoms,
-        nn_cutoff: float = 2.8,
-        nnn_cutoff: float = 3.2,
-        seed: int = 42
-    ) -> 'AllegroVacancyDiffusion':
-        """
-        Create a VacancyDiffusion instance that uses Allegro calculator.
-        
-        Args:
-            atoms: ASE Atoms object
-            nn_cutoff: Cutoff radius for nearest neighbors
-            nnn_cutoff: Cutoff radius for next-nearest neighbors
-            seed: Random seed
-            
-        Returns:
-            AllegroVacancyDiffusion instance
-        """
-        return AllegroVacancyDiffusion(
-            atoms=atoms,
-            allegro_calculator=self.allegro_calculator,
-            nn_cutoff=nn_cutoff,
-            nnn_cutoff=nnn_cutoff,
-            seed=seed
-        )
+
     
     def run_neb_calculations(
         self,
@@ -809,13 +339,15 @@ class HybridNEBWorkflow:
             if save_xyz:
                 structure_output_dir.mkdir(exist_ok=True)
             
-            # Initialize vacancy diffusion workflow with Allegro calculator
-            # We need to create a custom VacancyDiffusion that uses Allegro
-            vacancy_diffusion = self._create_allegro_vacancy_diffusion(
+            # Initialize vacancy diffusion workflow with unified calculator
+            vacancy_diffusion = VacancyDiffusion(
                 atoms=atoms,
+                model_path=[self.model_path],
                 nn_cutoff=2.8,
                 nnn_cutoff=3.2,
-                seed=self.seed + i
+                seed=self.seed + i,
+                calculator_type=self.calculator_type,
+                species_to_type_name=self.species_to_type_name
             )
             
             # Run multiple NEB calculations
@@ -1042,12 +574,14 @@ def main():
         {'V': 0.75, 'Cr': 0.10, 'Ti': 0.08, 'W': 0.05, 'Zr': 0.02}
     ]
     
-    # Initialize workflow
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=seed,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'V': 0, 'Cr': 1, 'Ti': 2, 'W': 3, 'Zr': 4}
     )
     
     # Run full workflow
@@ -1060,7 +594,6 @@ def main():
         lattice_constant=3.01,
         temperature=873.15,  # 600°C
         n_steps=2000,  # Reduced for faster testing
-        mc_frequency=10,
         n_nearest=2,
         n_next_nearest=2,
         save_plots=True

@@ -29,12 +29,14 @@ def example_basic_workflow():
         {'V': 0.80, 'Cr': 0.08, 'Ti': 0.06, 'W': 0.04, 'Zr': 0.02},
     ]
     
-    # Initialize workflow
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=42,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
     # Run full workflow with minimal settings for quick testing
@@ -75,12 +77,14 @@ def example_composition_generation():
         {'V': 0.50, 'Cr': 0.25, 'Ti': 0.20, 'W': 0.03, 'Zr': 0.02},
     ]
     
-    # Initialize workflow
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=123,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
     # Generate compositions with specific constraints
@@ -115,12 +119,14 @@ def example_optimization_only():
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
-    # Initialize workflow
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=456,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
     # Create a specific composition
@@ -164,12 +170,14 @@ def example_neb_only():
         os.makedirs(output_dir, exist_ok=True)
 
     
-    # Initialize workflow
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=789,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
     # Load an existing structure (you would replace this with your structure)
@@ -215,12 +223,14 @@ def example_custom_workflow():
         os.makedirs(output_dir, exist_ok=True)
 
     
-    # Initialize workflow
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=999,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
     # Step 1: Generate compositions with specific focus on high-Cr alloys

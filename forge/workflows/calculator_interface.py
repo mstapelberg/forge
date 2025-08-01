@@ -79,7 +79,7 @@ class UnifiedCalculator:
             # Both available, check model file extension
             if any(path.endswith('.model') for path in self.model_path):
                 return 'mace'
-            elif any(path.endswith('.nequip.zip') for path in self.model_path):
+            elif any(path.endswith('.nequip.zip') or path.endswith('.pt2') for path in self.model_path):
                 return 'allegro'
             else:
                 # Default to MACE if both available

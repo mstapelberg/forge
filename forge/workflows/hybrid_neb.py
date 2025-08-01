@@ -1,14 +1,13 @@
-#!/usr/bin/env python3
 """
-Comprehensive workflow combining composition generation, hybrid MCMC-MD optimization, 
-and NEB calculations for vacancy diffusion studies.
+Hybrid MCMC-MD + NEB workflow for alloy structure optimization and vacancy diffusion studies.
 
-This script:
-1. Generates new alloy compositions using the CompositionAnalyzer
-2. Creates initial structures with random atom positions
-3. Optimizes structures using hybrid MCMC-MD simulation (NVT + MC swaps)
-4. Runs NEB calculations for vacancy diffusion barriers
-5. Analyzes and visualizes results
+This module provides a comprehensive workflow that combines:
+1. Composition generation using the CompositionAnalyzer
+2. Hybrid MCMC-MD optimization (NVT + Monte Carlo swaps)
+3. NEB calculations for vacancy diffusion barriers
+4. Analysis and visualization of results
+
+The workflow follows the torch-sim pattern for efficient sampling and optimization.
 
 Confidence: 9/10
 """
@@ -17,11 +16,11 @@ import numpy as np
 import torch
 import random
 import time
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
 import json
 import os
 import warnings
+from pathlib import Path
+from typing import List, Dict, Optional, Tuple
 
 # ASE imports
 from ase import Atoms
@@ -42,15 +41,21 @@ warnings.filterwarnings("ignore", category=FutureWarning,
                        message=".*You are using `torch.load` with `weights_only=False`.*")
 
 
-
-
-
 class HybridNEBWorkflow:
     """
     Comprehensive workflow combining composition generation, hybrid MCMC-MD optimization, 
     and NEB calculations for vacancy diffusion studies.
-    """
     
+    This workflow implements a complete pipeline for:
+    1. Generating new alloy compositions using machine learning
+    2. Creating and optimizing atomic structures using hybrid MCMC-MD
+    3. Calculating vacancy diffusion barriers using NEB
+    4. Analyzing and visualizing results
+    
+    The hybrid MCMC-MD approach combines NVT Langevin MD with Monte Carlo swaps,
+    following the torch-sim pattern for efficient sampling.
+    """
+
     def __init__(
         self,
         model_path: str,
@@ -64,12 +69,12 @@ class HybridNEBWorkflow:
         Initialize the hybrid NEB workflow.
         
         Args:
-            model_path: Path to model file
-            device: Device to run calculations on
+            model_path: Path to model file (Allegro, MACE, etc.)
+            device: Device to run calculations on ('cuda' or 'cpu')
             seed: Random seed for reproducibility
             output_dir: Directory to save results
             calculator_type: Type of calculator ('mace', 'allegro', or None for auto-detect)
-            species_to_type_name: Species mapping for Allegro
+            species_to_type_name: Species mapping for Allegro calculators
         """
         self.model_path = model_path
         self.device = device
@@ -79,7 +84,7 @@ class HybridNEBWorkflow:
         self.calculator_type = calculator_type
         self.species_to_type_name = species_to_type_name or {}
         
-        # Set random seeds
+        # Set random seeds for reproducibility
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
@@ -99,7 +104,7 @@ class HybridNEBWorkflow:
         self.neb_results = []
         
     def _initialize_calculators(self):
-        """Initialize unified calculator."""
+        """Initialize unified calculator for energy/force calculations."""
         print(f"Initializing unified calculator on device: {self.device}")
         
         # Check available calculators
@@ -116,7 +121,16 @@ class HybridNEBWorkflow:
             )
             print(f"Successfully initialized {self.unified_calculator.calculator_type} calculator")
         except Exception as e:
-            print(f"Warning: Could not initialize calculator: {e}")
+            print(f"Error: Could not initialize calculator: {e}")
+            print(f"Model path: {self.model_path}")
+            print(f"Calculator type: {self.calculator_type}")
+            print(f"Device: {self.device}")
+            print(f"Species mapping: {self.species_to_type_name}")
+            print("\nTroubleshooting tips:")
+            print("1. Check if the model file exists and is accessible")
+            print("2. Verify the model file format (.zip, .nequip.zip, or .pt2)")
+            print("3. Ensure the species_to_type_name mapping is correct")
+            print("4. Check if the required packages (nequip, mace) are installed")
             self.unified_calculator = None
     
     def generate_compositions(
@@ -134,7 +148,37 @@ class HybridNEBWorkflow:
             existing_compositions: List of existing composition dictionaries
             n_new_compositions: Number of new compositions to generate
             elements: List of elements to include
-            constraints: Optional constraints on element fractions
+            constraints: Optional constraints on element fractions. Can be:
+                - Range constraints: (min, max) tuples for element ranges
+                - Specific values: (value, value) for exact amounts
+                - Mixed constraints: Some ranges, some specific values
+                Examples:
+                    # Range constraints (recommended)
+                    constraints = {
+                        'V': (0.7, 0.95),    # V between 70-95%
+                        'Cr': (0.01, 0.2),   # Cr between 1-20%
+                        'Ti': (0.01, 0.2),   # Ti between 1-20%
+                        'W': (0.01, 0.15),   # W between 1-15%
+                        'Zr': (0.001, 0.03)  # Zr between 0.1-3%
+                    }
+                    
+                    # Specific value constraints
+                    constraints = {
+                        'V': (0.85, 0.85),   # Exactly 85% V
+                        'Cr': (0.10, 0.10),  # Exactly 10% Cr
+                        'Ti': (0.03, 0.03),  # Exactly 3% Ti
+                        'W': (0.01, 0.01),   # Exactly 1% W
+                        'Zr': (0.01, 0.01)   # Exactly 1% Zr
+                    }
+                    
+                    # Mixed constraints
+                    constraints = {
+                        'V': (0.8, 0.9),     # V between 80-90%
+                        'Cr': (0.05, 0.15),  # Cr between 5-15%
+                        'Ti': (0.025, 0.025), # Exactly 2.5% Ti
+                        'W': (0.01, 0.05),   # W between 1-5%
+                        'Zr': (0.005, 0.005) # Exactly 0.5% Zr
+                    }
             balance_element: Element to balance the composition
             
         Returns:
@@ -338,10 +382,17 @@ class HybridNEBWorkflow:
         Returns:
             List of optimized ASE Atoms objects
         """
-        print(f"Optimizing structures with hybrid MCMC-MD using {self.unified_calculator.calculator_type} calculator...")
-        
         if self.unified_calculator is None:
-            raise ValueError("Unified calculator not initialized. Please check model path and installation.")
+            raise ValueError(
+                "Unified calculator not initialized. Please check:\n"
+                "1. Model file path and accessibility\n"
+                "2. Model file format (.zip, .nequip.zip, or .pt2)\n"
+                "3. Species mapping configuration\n"
+                "4. Required packages installation (nequip, mace)\n"
+                f"Model path: {self.model_path}"
+            )
+        
+        print(f"Optimizing structures with hybrid MCMC-MD using {self.unified_calculator.calculator_type} calculator...")
         
         optimized_structures = []
         
@@ -363,8 +414,6 @@ class HybridNEBWorkflow:
         
         self.optimized_structures = optimized_structures
         return optimized_structures
-    
-
     
     def _optimize_with_hybrid_mcmc(
         self,
@@ -407,8 +456,6 @@ class HybridNEBWorkflow:
         )
         
         return optimized_atoms
-
-
     
     def run_neb_calculations(
         self,
@@ -448,6 +495,16 @@ class HybridNEBWorkflow:
             List of NEB calculation results
         """
         print("Running NEB calculations for vacancy diffusion...")
+        
+        if self.unified_calculator is None:
+            raise ValueError(
+                "Unified calculator not initialized. Please check:\n"
+                "1. Model file path and accessibility\n"
+                "2. Model file format (.zip, .nequip.zip, or .pt2)\n"
+                "3. Species mapping configuration\n"
+                "4. Required packages installation (nequip, mace)\n"
+                f"Model path: {self.model_path}"
+            )
         
         all_neb_results = []
         
@@ -585,7 +642,6 @@ class HybridNEBWorkflow:
         
         return analysis_results
     
-    
     def run_full_workflow(
         self,
         existing_compositions: List[Dict[str, float]],
@@ -611,7 +667,6 @@ class HybridNEBWorkflow:
             dimensions: Supercell dimensions
             temperature: Optimization temperature in Kelvin
             n_steps: Number of optimization steps
-            mc_frequency: MC frequency for hybrid simulation
             n_nearest: Number of nearest neighbors for NEB
             n_next_nearest: Number of next-nearest neighbors for NEB
             save_plots: Whether to save plots
@@ -652,7 +707,7 @@ class HybridNEBWorkflow:
             md_thermostat='langevin',
             friction=0.02
         )
-
+        
         # Step 4: Run NEB calculations
         neb_results = self.run_neb_calculations(
             structures=optimized_structures,
@@ -688,21 +743,50 @@ class HybridNEBWorkflow:
 
 
 def main():
-    """Main function to run the hybrid NEB workflow."""
+    """Example usage of the HybridNEBWorkflow."""
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
     output_dir = "hybrid_neb_workflow_results"
     seed = 42
     
-    # Example existing compositions (you can modify these)
+    # Example existing compositions
     existing_compositions = [
         {'V': 0.85, 'Cr': 0.05, 'Ti': 0.05, 'W': 0.03, 'Zr': 0.02},
         {'V': 0.80, 'Cr': 0.08, 'Ti': 0.06, 'W': 0.04, 'Zr': 0.02},
         {'V': 0.75, 'Cr': 0.10, 'Ti': 0.08, 'W': 0.05, 'Zr': 0.02}
     ]
     
-    # Initialize workflow with unified calculator
+    # Example constraint configurations (uncomment to use):
+    
+    # Range constraints (recommended for exploration)
+    # constraints = {
+    #     'V': (0.7, 0.95),    # V between 70-95%
+    #     'Cr': (0.01, 0.2),   # Cr between 1-20%
+    #     'Ti': (0.01, 0.2),   # Ti between 1-20%
+    #     'W': (0.01, 0.15),   # W between 1-15%
+    #     'Zr': (0.001, 0.03)  # Zr between 0.1-3%
+    # }
+    
+    # Specific value constraints (for targeted compositions)
+    # constraints = {
+    #     'V': (0.85, 0.85),   # Exactly 85% V
+    #     'Cr': (0.10, 0.10),  # Exactly 10% Cr
+    #     'Ti': (0.03, 0.03),  # Exactly 3% Ti
+    #     'W': (0.01, 0.01),   # Exactly 1% W
+    #     'Zr': (0.01, 0.01)   # Exactly 1% Zr
+    # }
+    
+    # Mixed constraints (ranges + specific values)
+    # constraints = {
+    #     'V': (0.8, 0.9),     # V between 80-90%
+    #     'Cr': (0.05, 0.15),  # Cr between 5-15%
+    #     'Ti': (0.025, 0.025), # Exactly 2.5% Ti
+    #     'W': (0.01, 0.05),   # W between 1-5%
+    #     'Zr': (0.005, 0.005) # Exactly 0.5% Zr
+    # }
+    
+    # Initialize workflow
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",

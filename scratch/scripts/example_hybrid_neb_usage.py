@@ -10,6 +10,7 @@ Confidence: 9/10
 """
 
 import numpy as np
+import os
 from pathlib import Path
 from run_hybrid_neb_workflow import HybridNEBWorkflow
 
@@ -18,8 +19,10 @@ def example_basic_workflow():
     print("=== Basic Hybrid NEB Workflow Example ===")
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "example_basic_results"
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
+    output_dir = "../data/pel_het_search/example_basic_results"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
     
     # Example existing compositions
     existing_compositions = [
@@ -27,12 +30,14 @@ def example_basic_workflow():
         {'V': 0.80, 'Cr': 0.08, 'Ti': 0.06, 'W': 0.04, 'Zr': 0.02},
     ]
     
-    # Initialize workflow
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=42,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
     # Run full workflow with minimal settings for quick testing
@@ -44,9 +49,9 @@ def example_basic_workflow():
         dimensions=[4, 4, 4],  # Small supercell for quick testing
         lattice_constant=3.01,
         temperature=873.15,
-        n_steps=1000,  # Fewer steps for quick testing
-        n_nearest=1,
-        n_next_nearest=1,
+        n_steps=5000,  # Fewer steps for quick testing
+        n_nearest=2,
+        n_next_nearest=2,
         save_plots=True
     )
     
@@ -59,8 +64,11 @@ def example_composition_generation():
     print("=== Composition Generation Example ===")
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "example_composition_results"
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
+    output_dir = "../data/pel_het_search/example_composition_results"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     
     # More diverse existing compositions
     existing_compositions = [
@@ -70,20 +78,22 @@ def example_composition_generation():
         {'V': 0.50, 'Cr': 0.25, 'Ti': 0.20, 'W': 0.03, 'Zr': 0.02},
     ]
     
-    # Initialize workflow
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=123,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
     # Generate compositions with specific constraints
     constraints = {
-        'V': (0.4, 0.9),    # V should be 40-90%
-        'Cr': (0.05, 0.3),  # Cr should be 5-30%
-        'Ti': (0.02, 0.25), # Ti should be 2-25%
-        'W': (0.01, 0.1),   # W should be 1-10%
+        'V': (0.7, 0.95),   # V should be 70-95%
+        'Cr': (0.01, 0.25), # Cr should be 1-25%
+        'Ti': (0.01, 0.25), # Ti should be 1-25%
+        'W': (0.01, 0.15),  # W should be 1-15%
         'Zr': (0.001, 0.05) # Zr should be 0.1-5%
     }
     
@@ -105,15 +115,19 @@ def example_optimization_only():
     print("=== Structure Optimization Example ===")
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "../data/pel_heterogeneity_search/example_optimization_results"
-    
-    # Initialize workflow
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
+    output_dir = "../data/pel_het_search/example_optimization_results"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=456,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
     # Create a specific composition
@@ -151,15 +165,20 @@ def example_neb_only():
     print("=== NEB Calculations Example ===")
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "example_neb_results"
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
+    output_dir = "../data/pel_het_search/example_neb_results"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     
-    # Initialize workflow
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=789,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
     # Load an existing structure (you would replace this with your structure)
@@ -199,15 +218,20 @@ def example_custom_workflow():
     print("=== Custom Workflow Example ===")
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "example_custom_results"
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
+    output_dir = "../data/pel_het_search/example_custom_results"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     
-    # Initialize workflow
+    # Initialize workflow with unified calculator
     workflow = HybridNEBWorkflow(
         model_path=model_path,
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=999,
-        output_dir=output_dir
+        output_dir=output_dir,
+        calculator_type=None,  # Auto-detect based on model file
+        species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
     # Step 1: Generate compositions with specific focus on high-Cr alloys
@@ -218,11 +242,11 @@ def example_custom_workflow():
     
     # Focus on high-Cr compositions
     constraints = {
-        'V': (0.6, 0.9),
-        'Cr': (0.08, 0.35),  # Higher Cr content
-        'Ti': (0.01, 0.1),
-        'W': (0.005, 0.05),
-        'Zr': (0.001, 0.02)
+        'V': (0.7, 0.9),
+        'Cr': (0.05, 0.4),   # Higher Cr content
+        'Ti': (0.01, 0.15),
+        'W': (0.005, 0.1),
+        'Zr': (0.001, 0.05)
     }
     
     new_compositions = workflow.generate_compositions(
@@ -278,11 +302,11 @@ if __name__ == "__main__":
     
     # Run examples (uncomment the ones you want to try)
     
-    # example_basic_workflow()
-    # example_composition_generation()
-    # example_optimization_only()
-    # example_neb_only()
-    # example_custom_workflow()
+    example_basic_workflow()
+    example_composition_generation()
+    example_optimization_only()
+    example_neb_only()
+    example_custom_workflow()
     
     print("\nTo run examples, uncomment the desired function calls above.")
     print("Make sure you have the required model file and dependencies installed.") 

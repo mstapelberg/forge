@@ -16,10 +16,10 @@ from ase.neighborlist import NeighborList
 import json
 from collections import defaultdict
 import torch
-from mace.calculators.mace import MACECalculator
 from monty.json import MontyEncoder, MontyDecoder
 import warnings
 from forge.workflows.relax import relax
+from forge.workflows.calculator_interface import UnifiedCalculator, create_calculator
 
 class NEBMethod(Enum):
     """NEB calculation method."""
@@ -52,7 +52,9 @@ class NEBCalculation:
         seed: int = 42,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         use_cueq: bool = False,
-        logfile: Optional[str] = '-'  # Add logfile parameter
+        logfile: Optional[str] = '-',  # Add logfile parameter
+        calculator_type: Optional[str] = None,
+        species_to_type_name: Optional[Dict[str, int]] = None
     ):
         """
         Initialize NEB calculation.
@@ -60,7 +62,7 @@ class NEBCalculation:
         Args:
             start_atoms: Initial structure 
             end_atoms: Final structure
-            model_path: Path(s) to MACE model(s)
+            model_path: Path(s) to model file(s)
             start_energy: Energy of start configuration
             end_energy: Energy of end configuration
             n_images: Number of images for NEB
@@ -70,8 +72,10 @@ class NEBCalculation:
             steps: Maximum optimization steps
             seed: Random seed for reproducibility
             device: Device to run calculations on
-            use_cueq: Whether to use CUEQ
+            use_cueq: Whether to use CUEQ (MACE only)
             logfile: File for logging output (None=no output, '-'=stdout)
+            calculator_type: Type of calculator ('mace', 'allegro', or None for auto-detect)
+            species_to_type_name: Species mapping for Allegro
         """
         self.start_atoms = start_atoms
         self.end_atoms = end_atoms
@@ -87,15 +91,19 @@ class NEBCalculation:
         self.device = device
         self.use_cueq = use_cueq
         self.logfile = logfile
+        self.calculator_type = calculator_type
+        self.species_to_type_name = species_to_type_name or {}
         np.random.seed(self.seed)  # Set seed for reproducibility
 
-    def _create_calculator(self) -> MACECalculator:
-        """Create a new MACE calculator instance."""
-        return MACECalculator(
-            model_paths=self.model_path,
+    def _create_calculator(self) -> UnifiedCalculator:
+        """Create a new unified calculator instance."""
+        return create_calculator(
+            model_path=self.model_path,
+            calculator_type=self.calculator_type,
             device=self.device,
             default_dtype="float32",
-            use_cueq=self.use_cueq
+            use_cueq=self.use_cueq,
+            species_to_type_name=self.species_to_type_name
         )
 
     def run(self) -> NEBResult:
@@ -121,7 +129,8 @@ class NEBCalculation:
         
         # Attach calculators only to intermediate images
         for image in images[1:-1]:
-            image.calc = self._create_calculator()
+            calculator = self._create_calculator()
+            image.calc = calculator.calculator
 
         # Run optimization with logfile control
         opt = FIRE(neb, logfile=self.logfile)
@@ -154,7 +163,7 @@ class NEBAnalyzer:
     
     def _group_barriers(self) -> Tuple[Dict, Dict]:
         """
-        Group barriers by vacancy element and neighbor type.
+        Group barriers by vacancy element and target element.
         
         Returns:
             Tuple of (nn_barriers, nnn_barriers) dictionaries mapping
@@ -168,8 +177,6 @@ class NEBAnalyzer:
                 continue
                 
             key = f"{calc['vacancy_element']}-{calc['target_element']}"
-            # TODO: Add logic to determine if NN or NNN based on distance
-            # For now, assuming this is stored in the calculation results
             if calc.get("is_nearest_neighbor", True):
                 nn_barriers[key].append(calc["barrier"])
             else:
@@ -299,34 +306,197 @@ class NEBAnalyzer:
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize)
         
+        # Collect all unique keys and assign consistent colors
+        all_keys = sorted(set(nn_barriers.keys()) | set(nnn_barriers.keys()))
+        if colors is None:
+            cmap = plt.get_cmap('tab20')
+            colors = {key: cmap(i / len(all_keys)) for i, key in enumerate(all_keys)}
+        
+        handles = []
+        legend_labels = []
+        
         def plot_barriers(ax, barriers, title):
-            for key, values in barriers.items():
+            for key in all_keys:
+                values = barriers.get(key, [])
                 # Filter out small/negative barriers and too large barriers
                 values = [v for v in values if min_barrier <= v <= max_barrier]
                 if not values:
                     continue
                 
                 # Get plot settings
-                color = colors.get(key) if colors else None
+                color = colors.get(key)
                 label = labels.get(key, key) if labels else key
                 if show_stats:
                     mean = np.mean(values)
                     std = np.std(values)
                     label = f"{label} (μ={mean:.2f}, σ={std:.2f})"
                 
-                ax.hist(values, bins=bins, alpha=alpha, label=label, color=color)
+                hist = ax.hist(values, bins=bins, alpha=alpha, label=label, color=color, density=True)
                 
+                # Collect handle for shared legend (use first occurrence)
+                if key not in legend_labels:
+                    handles.append(hist[2][0])  # Get the Patch object
+                    legend_labels.append(label)
+            
             ax.set_title(title)
             ax.set_xlabel("Barrier Height (eV)")
-            ax.set_ylabel("Count")
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            ax.set_ylabel("Density")
         
         plot_barriers(ax1, nn_barriers, "Nearest Neighbor Transitions")
         plot_barriers(ax2, nnn_barriers, "Next-Nearest Neighbor Transitions")
         
+        # Add shared legend outside
+        fig.legend(handles, legend_labels, loc='center right', bbox_to_anchor=(1.25, 0.5))
+        
         if title:
             fig.suptitle(title)
             
+        plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust for external legend
+        
+        if save_path:
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        else:
+            plt.show()
+    
+    
+    def plot_barriers_by_element(
+        self,
+        save_path: Optional[Path] = None,
+        figsize: Tuple[int, int] = (12, 8),
+        title: str = "Energy Barriers by Element Type",
+        plot_type: str = "box",  # 'box' or 'bar'
+        min_barrier: float = 0.0,
+        max_barrier: float = 10.0,  # Maximum barrier height to include
+        neighbor_type: Optional[str] = None  # 'nn', 'nnn', or None for both
+    ):
+        """
+        Plot energy barriers grouped by element combinations, with separate boxes/bars for NN and NNN.
+        
+        Args:
+            save_path: Path to save the plot
+            figsize: Figure size (width, height)
+            title: Plot title
+            plot_type: Type of plot ('box' or 'bar')
+            min_barrier: Minimum barrier height to include
+            max_barrier: Maximum barrier height to include (useful for filtering outliers)
+            neighbor_type: Type of neighbors to include ('nn', 'nnn', or None for both)
+        """
+        # Filter calculations
+        filtered_calcs = self.filter_calculations(
+            neighbor_type=neighbor_type,
+            min_barrier=min_barrier
+        )
+        
+        # Additional filter for max_barrier
+        filtered_calcs = [c for c in filtered_calcs if c.get("barrier", 0) <= max_barrier]
+        
+        # Group by key and subkey (nn/nnn)
+        element_barriers = defaultdict(lambda: defaultdict(list))
+        for calc in filtered_calcs:
+            key = f"{calc['vacancy_element']}→{calc['target_element']}"
+            is_nn = calc.get("is_nearest_neighbor", True)
+            subkey = 'nn' if is_nn else 'nnn'
+            element_barriers[key][subkey].append(calc["barrier"])
+        
+        # Sort keys by overall mean barrier
+        sorted_keys = sorted(
+            element_barriers.keys(),
+            key=lambda k: np.mean([b for sub in element_barriers[k].values() for b in sub])
+        )
+        
+        # Prepare data for plotting
+        fig, ax = plt.subplots(figsize=figsize)
+        box_width = 0.35  # Width of each box/bar
+        group_spacing = 0.5  # Space between groups
+        
+        current_pos = 0
+        tick_positions = []
+        tick_labels = []
+        all_y = []  # Collect all y values for dynamic positioning
+        
+        for key in sorted_keys:
+            group_start = current_pos
+            has_data = False
+            
+            for subkey, color, offset, label_suffix in [
+                ('nn', 'skyblue', -box_width/2 - 0.05, ' NN'),
+                ('nnn', 'lightcoral', box_width/2 + 0.05, ' NNN')
+            ]:
+                barriers = element_barriers[key].get(subkey, [])
+                if not barriers:
+                    continue
+                    
+                has_data = True
+                pos = group_start + offset + box_width/2
+                
+                if plot_type == 'box':
+                    bp = ax.boxplot(
+                        barriers,
+                        positions=[pos],
+                        widths=box_width,
+                        patch_artist=True,
+                        showfliers=True,
+                        medianprops={'color': 'black'}
+                    )
+                    for box in bp['boxes']:
+                        box.set_facecolor(color)
+                    
+                    # Get max whisker for annotation position
+                    max_y = bp['whiskers'][1].get_ydata()[1]  # Upper whisker
+                    
+                else:  # bar plot
+                    mean = np.mean(barriers)
+                    std = np.std(barriers)
+                    bar = ax.bar(
+                        pos,
+                        mean,
+                        yerr=std,
+                        width=box_width,
+                        color=color,
+                        capsize=5,
+                        alpha=0.7
+                    )
+                    max_y = mean + std  # Top of error bar
+                
+                all_y.append(max_y)
+                
+                # Add annotation above max_y
+                count = len(barriers)
+                mean_val = np.mean(barriers)
+                ax.annotate(
+                    f"n={count}\nμ={mean_val:.2f}",
+                    xy=(pos, max_y),
+                    xytext=(0, 5),
+                    textcoords="offset points",
+                    ha='center',
+                    va='bottom',
+                    fontsize=8
+                )
+            
+            if has_data:
+                # Add tick for group
+                tick_pos = group_start
+                tick_positions.append(tick_pos)
+                tick_labels.append(key)
+                current_pos = group_start + box_width + group_spacing
+        
+        # Set labels and title
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(tick_labels, rotation=45, ha='right')
+        ax.set_ylabel('Energy Barrier (eV)')
+        ax.set_xlabel('Element Transition')
+        
+        # Add subtitle
+        subtitle = "All Transitions" if neighbor_type is None else f"{neighbor_type.upper()} Transitions"
+        ax.set_title(f"{title}\n{subtitle}")
+        
+        # Adjust y-limits to fit annotations
+        if all_y:
+            max_all_y = max(all_y)
+            current_ylim = ax.get_ylim()
+            ax.set_ylim(current_ylim[0], max(max_all_y * 1.1, current_ylim[1]))
+        
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
         plt.tight_layout()
         
         if save_path:
@@ -334,6 +504,38 @@ class NEBAnalyzer:
         else:
             plt.show()
     
+    def calculate_heterogeneity(self, neighbor_type: str = 'all') -> Dict[str, float]:
+        """
+        Calculate heterogeneity metrics based on variance of mean barriers across transition types.
+        
+        Args:
+            neighbor_type: 'nn', 'nnn', or 'all'
+            
+        Returns:
+            Dictionary with 'std', 'variance', and 'range' of mean barriers
+        """
+        nn_barriers, nnn_barriers = self._group_barriers()
+        
+        def get_means(barriers_dict):
+            return [np.mean(vals) for vals in barriers_dict.values() if vals]
+        
+        if neighbor_type == 'nn':
+            means = get_means(nn_barriers)
+        elif neighbor_type == 'nnn':
+            means = get_means(nnn_barriers)
+        elif neighbor_type == 'all':
+            means = get_means(nn_barriers) + get_means(nnn_barriers)
+        else:
+            raise ValueError(f"Invalid neighbor_type: {neighbor_type}")
+        
+        if not means:
+            return {'std': 0.0, 'variance': 0.0, 'range': 0.0}
+        
+        return {
+            'std': float(np.std(means)),
+            'variance': float(np.var(means)),
+            'range': float(np.max(means) - np.min(means))
+        }
     
     def save_results(self, filepath: Path, composition: Optional[Dict[str, float]] = None):
         """
@@ -375,125 +577,6 @@ class NEBAnalyzer:
             
         return analyzer
 
-    def plot_barriers_by_element(
-        self,
-        save_path: Optional[Path] = None,
-        figsize: Tuple[int, int] = (12, 8),
-        title: str = "Energy Barriers by Element Type",
-        plot_type: str = "box",  # 'box' or 'bar'
-        min_barrier: float = 0.0,
-        max_barrier: float = 10.0,  # Maximum barrier height to include
-        neighbor_type: Optional[str] = None  # 'nn', 'nnn', or None for both
-    ):
-        """
-        Plot energy barriers grouped by element combinations.
-        
-        Args:
-            save_path: Path to save the plot
-            figsize: Figure size (width, height)
-            title: Plot title
-            plot_type: Type of plot ('box' or 'bar')
-            min_barrier: Minimum barrier height to include
-            max_barrier: Maximum barrier height to include (useful for filtering outliers)
-            neighbor_type: Type of neighbors to include ('nn', 'nnn', or None for both)
-        """
-        # Filter calculations based on criteria
-        if neighbor_type:
-            filtered_calcs = self.filter_calculations(
-                neighbor_type=neighbor_type,
-                min_barrier=min_barrier
-            )
-        else:
-            filtered_calcs = [c for c in self.calculations 
-                             if c.get("success") and c.get("barrier", 0) >= min_barrier]
-        
-        # Additional filter for max_barrier
-        filtered_calcs = [c for c in filtered_calcs if c.get("barrier", 0) <= max_barrier]
-        
-        # Group by element combination
-        element_barriers = defaultdict(list)
-        for calc in filtered_calcs:
-            key = f"{calc['vacancy_element']}→{calc['target_element']}"
-            element_barriers[key].append(calc["barrier"])
-        
-        # Sort by mean barrier height
-        sorted_elements = sorted(
-            element_barriers.keys(),
-            key=lambda k: np.mean(element_barriers[k])
-        )
-        
-        # Prepare data for plotting
-        data = [element_barriers[key] for key in sorted_elements]
-        
-        # Create plot
-        plt.figure(figsize=figsize)
-        
-        if plot_type == 'box':
-            # Box plot
-            box = plt.boxplot(
-                data, 
-                labels=sorted_elements,
-                patch_artist=True,
-                showfliers=True,  # Show outliers
-                medianprops={'color': 'black'}
-            )
-            
-            # Add some color
-            colors = plt.cm.tab10.colors
-            for i, patch in enumerate(box['boxes']):
-                patch.set_facecolor(colors[i % len(colors)])
-            
-        else:
-            # Bar plot with error bars
-            means = [np.mean(barriers) for barriers in data]
-            stds = [np.std(barriers) for barriers in data]
-            x = np.arange(len(sorted_elements))
-            
-            plt.bar(
-                x, means, 
-                yerr=stds, 
-                capsize=5, 
-                color=plt.cm.tab10.colors[:len(means)],
-                alpha=0.7
-            )
-            plt.xticks(x, sorted_elements)
-        
-        # Add labels and title
-        plt.ylabel('Energy Barrier (eV)')
-        plt.xlabel('Element Transition')
-        
-        # Add subtitle with neighbor type info
-        subtitle = ""
-        if neighbor_type == "nn":
-            subtitle = "Nearest Neighbor Transitions"
-        elif neighbor_type == "nnn":
-            subtitle = "Next-Nearest Neighbor Transitions"
-        else:
-            subtitle = "All Transitions"
-        
-        plt.title(f"{title}\n{subtitle}")
-        
-        # Add count annotations
-        for i, key in enumerate(sorted_elements):
-            count = len(element_barriers[key])
-            mean = np.mean(element_barriers[key])
-            plt.annotate(
-                f"n={count}\nμ={mean:.2f}eV", 
-                xy=(i, 0), 
-                xytext=(0, 10),
-                textcoords="offset points",
-                ha='center', 
-                va='bottom'
-            )
-        
-        plt.grid(axis='y', linestyle='--', alpha=0.7)
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, bbox_inches='tight', dpi=300)
-        else:
-            plt.show()
-
 @dataclass
 class NeighborInfo:
     """Container for neighbor information."""
@@ -514,22 +597,28 @@ class VacancyDiffusion:
         nn_cutoff: float = 2.8,
         nnn_cutoff: float = 3.2,
         seed: int = 42,
+        calculator_type: Optional[str] = None,
+        species_to_type_name: Optional[Dict[str, int]] = None,
     ):
         """
         Initialize vacancy diffusion workflow.
         
         Args:
             atoms: Relaxed perfect structure to study
-            model_path: Path(s) to MACE model(s)
+            model_path: Path(s) to model file(s)
             nn_cutoff: Cutoff radius for nearest neighbors
             nnn_cutoff: Cutoff radius for next-nearest neighbors
             seed: Random seed for reproducibility
+            calculator_type: Type of calculator ('mace', 'allegro', or None for auto-detect)
+            species_to_type_name: Species mapping for Allegro
         """
         self.atoms = atoms.copy()
         self.model_path = model_path
         self.nn_cutoff = nn_cutoff
         self.nnn_cutoff = nnn_cutoff
         self.seed = seed
+        self.calculator_type = calculator_type
+        self.species_to_type_name = species_to_type_name or {}
         self.analyzer = NEBAnalyzer()
         
         # Set random seed
@@ -658,23 +747,27 @@ class VacancyDiffusion:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         use_cueq = device == "cuda"
         
-        start_calculator = MACECalculator(
-            model_paths=self.model_path if hasattr(self, 'model_path') else [self.model_path], 
+        start_calculator = create_calculator(
+            model_path=self.model_path if hasattr(self, 'model_path') else [self.model_path], 
+            calculator_type=self.calculator_type,
             device=device, 
             default_dtype="float32", 
-            use_cueq=use_cueq
+            use_cueq=use_cueq,
+            species_to_type_name=self.species_to_type_name
         )
 
-        end_calculator = MACECalculator(
-            model_paths=self.model_path if hasattr(self, 'model_path') else [self.model_path], 
+        end_calculator = create_calculator(
+            model_path=self.model_path if hasattr(self, 'model_path') else [self.model_path], 
+            calculator_type=self.calculator_type,
             device=device, 
             default_dtype="float32", 
-            use_cueq=use_cueq
+            use_cueq=use_cueq,
+            species_to_type_name=self.species_to_type_name
         )
 
         rel_start_atoms = relax(
             atoms=start_atoms,
-            calculator=start_calculator,
+            calculator=start_calculator.calculator,
             relax_cell=False,  # Keep cell fixed
             fmax=relax_fmax,
             steps=relax_steps,
@@ -685,7 +778,7 @@ class VacancyDiffusion:
 
         rel_end_atoms = relax(
             atoms=end_atoms,
-            calculator=end_calculator,
+            calculator=end_calculator.calculator,
             relax_cell=False,  # Keep cell fixed
             fmax=relax_fmax,
             steps=relax_steps,
@@ -1061,3 +1154,117 @@ class VacancyDiffusion:
         
         print(f"Completed {total_calcs} calculations")
         return results
+
+    def plot_per_vacancy_barriers(
+        self,
+        save_path: Optional[Path] = None,
+        figsize: Tuple[int, int] = (12, 8),
+        title: Optional[str] = None,
+        min_barrier: float = 0.0,
+        max_barrier: float = 10.0,
+        highlight_nonconverged: bool = True
+    ):
+        """
+        Plot barriers for each vacancy site separately, showing NN and NNN jumps.
+        
+        Args:
+            save_path: Path to save the plot
+            figsize: Figure size for the entire figure
+            title: Overall plot title
+            min_barrier: Minimum barrier to display
+            max_barrier: Maximum barrier to display
+            highlight_nonconverged: Color non-converged barriers differently
+        """
+        # Group calculations by vacancy_index
+        groups = defaultdict(list)
+        for calc in self.analyzer.calculations:
+            vac_idx = calc.get('vacancy_index')
+            if vac_idx is not None:
+                groups[vac_idx].append(calc)
+        
+        if not groups:
+            print("No calculations with vacancy_index found")
+            return
+        
+        # Sort vacancy indices
+        vac_indices = sorted(groups.keys(), key=int)  # Assuming string indices, convert to int for sorting
+        n_groups = len(vac_indices)
+        
+        # Determine grid size (e.g., sqrt for square-ish grid)
+        cols = int(np.ceil(np.sqrt(n_groups)))
+        rows = int(np.ceil(n_groups / cols))
+        fig, axes = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
+        axes = axes.flatten()  # Flatten for easy indexing
+        
+        for i, vac_idx in enumerate(vac_indices):
+            ax = axes[i]
+            calcs = groups[vac_idx]
+            
+            # Separate NN and NNN
+            nn_calcs = [c for c in calcs if c.get('is_nearest_neighbor', True)]
+            nnn_calcs = [c for c in calcs if not c.get('is_nearest_neighbor', True)]
+            
+            # Plot NN
+            self._plot_vacancy_group(ax, nn_calcs, 'NN', 'blue', min_barrier, max_barrier, highlight_nonconverged)
+            # Plot NNN on same ax
+            self._plot_vacancy_group(ax, nnn_calcs, 'NNN', 'orange', min_barrier, max_barrier, highlight_nonconverged)
+            
+            ax.set_title(f"Vacancy {vac_idx}")
+            ax.set_xlabel("Jump Index")
+            ax.set_ylabel("Barrier (eV)")
+            ax.grid(True, linestyle='--', alpha=0.5)
+            ax.legend()
+        
+        # Hide unused subplots
+        for j in range(i+1, len(axes)):
+            axes[j].axis('off')
+        
+        if title:
+            fig.suptitle(title)
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        else:
+            plt.show()
+    
+    def _plot_vacancy_group(
+        self,
+        ax: plt.Axes,
+        calcs: List[Dict],
+        group_label: str,
+        color: str,
+        min_barrier: float,
+        max_barrier: float,
+        highlight_nonconverged: bool
+    ):
+        if not calcs:
+            return
+        
+        x = range(len(calcs))
+        barriers = []
+        labels = []
+        colors = []
+        
+        for calc in calcs:
+            barrier = calc.get('barrier')
+            if barrier is None or barrier < min_barrier or barrier > max_barrier:
+                continue
+            
+            vac_idx = calc['vacancy_index']
+            tgt_idx = calc['target_index']
+            vac_elem = calc['vacancy_element']
+            tgt_elem = calc['target_element']
+            label = f"{vac_idx}->{tgt_idx} : {vac_elem}->{tgt_elem}"
+            
+            barriers.append(barrier)
+            labels.append(label)
+            if highlight_nonconverged and not calc.get('converged', True):
+                colors.append('red')
+            else:
+                colors.append(color)
+        
+        if barriers:
+            scatter = ax.scatter(x[:len(barriers)], barriers, color=colors, label=group_label)
+            for xi, yi, label in zip(x, barriers, labels):
+                ax.annotate(label, (xi, yi), xytext=(5, 5), textcoords='offset points', fontsize=8)

@@ -360,31 +360,51 @@ class CompositionAnalyzer:
             if not valid_indices:
                 raise ValueError("No inlier compositions available for suggestions.")
             comp_array = self._compositions_to_array([metadata[i]["composition"] for i in valid_indices])
+            
+            # Adjust number of clusters based on available samples
+            n_samples = len(comp_array)
+            n_clusters = min(n_suggestions, n_samples)
+            
             # Use clustering on the filtered array
             clusterer = self.initialize_cluster_method()
             if hasattr(clusterer, 'n_clusters'):
-                clusterer.n_clusters = n_suggestions
-            clusters = clusterer.fit_predict(comp_array)
-            # Compute centroids manually
-            unique_clusters = np.unique(clusters)
-            centers = []
-            for cl in unique_clusters:
-                if cl == -1:  # Skip noise
-                    continue
-                pts = comp_array[clusters == cl]
-                centers.append(pts.mean(axis=0))
-            centers = np.array(centers)
+                clusterer.n_clusters = n_clusters
+            
+            if n_samples < 2:
+                # If we have less than 2 samples, just use the existing compositions as centers
+                centers = comp_array
+            else:
+                clusters = clusterer.fit_predict(comp_array)
+                # Compute centroids manually
+                unique_clusters = np.unique(clusters)
+                centers = []
+                for cl in unique_clusters:
+                    if cl == -1:  # Skip noise
+                        continue
+                    pts = comp_array[clusters == cl]
+                    centers.append(pts.mean(axis=0))
+                centers = np.array(centers)
         else:
             comp_array = self._compositions_to_array(compositions)
             clusterer = self.initialize_cluster_method()
+            
+            # Adjust number of clusters based on available samples
+            n_samples = len(comp_array)
+            n_clusters = min(n_suggestions, n_samples)
+            
             if hasattr(clusterer, 'n_clusters'):
-                clusterer.n_clusters = n_suggestions
-            clusters = clusterer.fit_predict(comp_array)
-            if hasattr(clusterer, 'cluster_centers_'):
-                centers = clusterer.cluster_centers_
+                clusterer.n_clusters = n_clusters
+            
+            if n_samples < 2:
+                # If we have less than 2 samples, just use the existing compositions as centers
+                centers = comp_array
             else:
-                unique_clusters = np.unique(clusters)
-                centers = np.array([comp_array[clusters == i].mean(axis=0) for i in unique_clusters if i != -1])
+                clusters = clusterer.fit_predict(comp_array)
+                if hasattr(clusterer, 'cluster_centers_'):
+                    centers = clusterer.cluster_centers_
+                else:
+                    unique_clusters = np.unique(clusters)
+                    centers = np.array([comp_array[clusters == i].mean(axis=0) for i in unique_clusters if i != -1])
         
         new_compositions = []
         max_attempts = n_suggestions * 100
@@ -392,14 +412,25 @@ class CompositionAnalyzer:
         elements = sorted(set().union(*compositions))
         while len(new_compositions) < n_suggestions and attempts < max_attempts:
             if len(centers) < 2:
-                idx1, idx2 = np.random.choice(len(comp_array), 2, replace=False)
-                point1, point2 = comp_array[idx1], comp_array[idx2]
+                # If we have less than 2 centers, use random sampling from existing compositions
+                if len(comp_array) >= 2:
+                    idx1, idx2 = np.random.choice(len(comp_array), 2, replace=False)
+                    point1, point2 = comp_array[idx1], comp_array[idx2]
+                else:
+                    # If we only have one composition, create variations
+                    point1 = comp_array[0]
+                    # Add some random noise to create a second point
+                    noise = np.random.normal(0, 0.02, len(point1))
+                    point2 = np.clip(point1 + noise, 0.001, 0.999)
             else:
                 c1, c2 = np.random.choice(len(centers), 2, replace=False)
                 point1, point2 = centers[c1], centers[c2]
+            
             mix = np.random.random()
             new_comp = point1 * mix + point2 * (1 - mix)
             comp_dict = dict(zip(elements, new_comp))
+            
+            # Check constraints
             valid = True
             if constraints:
                 for element, (min_frac, max_frac) in constraints.items():
@@ -407,9 +438,18 @@ class CompositionAnalyzer:
                         if not (min_frac <= comp_dict[element] <= max_frac):
                             valid = False
                             break
+            
             if not valid:
                 attempts += 1
                 continue
+            
+            # Ensure the composition sums to approximately 1.0
+            total = sum(comp_dict.values())
+            if not np.isclose(total, 1.0, rtol=1e-3):
+                # Normalize to sum to 1.0
+                for element in comp_dict:
+                    comp_dict[element] /= total
+            
             new_compositions.append(comp_dict)
             attempts += 1
         return new_compositions

@@ -9,6 +9,7 @@ from tqdm import tqdm
 from ase import Atoms
 
 from forge.analysis.wc_sro import WarrenCowleyCalculator
+from forge.workflows.calculator_interface import UnifiedCalculator, create_calculator
 
 
 def get_default_bcc_shells(lattice_constant: float) -> List[float]:
@@ -200,8 +201,11 @@ class MonteCarloAlloySampler:
         else:
             self.tracker = None
         
-        # Attach calculator and get initial energy
-        self.atoms.calc = self.calculator
+        # Handle unified calculator
+        if isinstance(self.calculator, UnifiedCalculator):
+            self.atoms.calc = self.calculator.calculator
+        else:
+            self.atoms.calc = self.calculator
         self.current_energy = self.atoms.get_potential_energy()
 
     def run_mcmc(self, convergence_window: int = 1000, energy_threshold: float = 0.0002) -> Atoms:

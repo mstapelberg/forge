@@ -125,7 +125,7 @@ class UnifiedCalculator:
             )
             elif self.model_path[0].endswith('.pt2'):
                 return NequIPCalculator.from_compiled_model(
-                    compiled_path=self.model_path[0],
+                    compile_path=self.model_path[0],
                     species_to_type_name=self.species_to_type_name,
                     device=self.device,
                     **self.kwargs

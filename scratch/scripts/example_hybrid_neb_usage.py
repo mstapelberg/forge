@@ -18,8 +18,10 @@ def example_basic_workflow():
     print("=== Basic Hybrid NEB Workflow Example ===")
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "example_basic_results"
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
+    output_dir = "../data/pel_het_search/example_basic_results"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
     
     # Example existing compositions
     existing_compositions = [
@@ -45,8 +47,8 @@ def example_basic_workflow():
         lattice_constant=3.01,
         temperature=873.15,
         n_steps=1000,  # Fewer steps for quick testing
-        n_nearest=1,
-        n_next_nearest=1,
+        n_nearest=4,
+        n_next_nearest=4,
         save_plots=True
     )
     
@@ -59,8 +61,11 @@ def example_composition_generation():
     print("=== Composition Generation Example ===")
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "example_composition_results"
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
+    output_dir = "../data/pel_het_search/example_composition_results"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     
     # More diverse existing compositions
     existing_compositions = [
@@ -105,9 +110,11 @@ def example_optimization_only():
     print("=== Structure Optimization Example ===")
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "../data/pel_heterogeneity_search/example_optimization_results"
-    
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
+    output_dir = "../data/pel_het_search/example_optimization_results"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     # Initialize workflow
     workflow = HybridNEBWorkflow(
         model_path=model_path,
@@ -151,8 +158,11 @@ def example_neb_only():
     print("=== NEB Calculations Example ===")
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "example_neb_results"
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
+    output_dir = "../data/pel_het_search/example_neb_results"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     
     # Initialize workflow
     workflow = HybridNEBWorkflow(
@@ -199,8 +209,11 @@ def example_custom_workflow():
     print("=== Custom Workflow Example ===")
     
     # Configuration
-    model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "example_custom_results"
+    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
+    output_dir = "../data/pel_het_search/example_custom_results"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     
     # Initialize workflow
     workflow = HybridNEBWorkflow(
@@ -278,7 +291,7 @@ if __name__ == "__main__":
     
     # Run examples (uncomment the ones you want to try)
     
-    # example_basic_workflow()
+    example_basic_workflow()
     # example_composition_generation()
     # example_optimization_only()
     # example_neb_only()

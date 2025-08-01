@@ -121,7 +121,7 @@ class UnifiedCalculator:
                 # Packaged model format
                 return NequIPCalculator._from_packaged_model(
                     package_path=model_path,
-                    species_to_type_name=self.species_to_type_name,
+                    chemical_symbols=self.species_to_type_name,  # Use chemical_symbols for NequIP
                     device=self.device,
                     **self.kwargs
                 )
@@ -129,7 +129,7 @@ class UnifiedCalculator:
                 # Compiled model format
                 return NequIPCalculator.from_compiled_model(
                     compile_path=model_path,
-                    species_to_type_name=self.species_to_type_name,
+                    chemical_symbols=self.species_to_type_name,  # Use chemical_symbols for NequIP
                     device=self.device,
                     **self.kwargs
                 )

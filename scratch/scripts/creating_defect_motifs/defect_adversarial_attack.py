@@ -111,12 +111,12 @@ def create_constrained_atoms(atoms: Atoms, fixed_indices: List[int]) -> Atoms:
 
 
 def run_defect_adversarial_attacks(
-    db_manager: Optional[DatabaseManager] = None,
-    structure_ids: Optional[List[int]] = None,
-    compositions: Optional[List[Dict[str, float]]] = None,
     model_paths: List[str],
     top_n: int,
     generation: int,
+    db_manager: Optional[DatabaseManager] = None,
+    structure_ids: Optional[List[int]] = None,
+    compositions: Optional[List[Dict[str, float]]] = None,
     n_iterations: int = 200,
     learning_rate: float = 0.01,
     temperature: float = 1000,
@@ -140,7 +140,9 @@ def run_defect_adversarial_attacks(
     exclude_motifs: Optional[List[str]] = None,
     custom_motif_path: Optional[str] = None,
     random_seed: Optional[int] = None,
-    select_n_from_trajectory: Optional[int] = None
+    select_n_from_trajectory: Optional[int] = None,
+    calculator_type: Optional[str] = None,
+    species_to_type_name: Optional[Dict[str, int]] = None
 ) -> Union[Dict[int, List[Atoms]], None]:
     """
     Run adversarial attacks on defect structures with fixed interstitial positions.
@@ -312,7 +314,9 @@ def run_defect_adversarial_attacks(
         learning_rate=learning_rate,
         temperature=temperature,
         include_probability=include_probability,
-        debug=debug
+        debug=debug,
+        calculator_type=calculator_type,  # Pass from function parameters
+        species_to_type_name=species_to_type_name  # Pass from function parameters
     )
     
     # Run optimization with constraints
@@ -348,7 +352,8 @@ def run_defect_adversarial_attacks(
                 output_dir=str(plot_save_dir),
                 patience=patience,
                 shake=shake,
-                shake_std=shake_std
+                shake_std=shake_std,
+                require_structure_id=args.require_structure_id
             )
             
             # Select N structures from trajectory if requested
@@ -428,7 +433,18 @@ def main():
         '--model-paths',
         nargs='+',
         required=True,
-        help='Paths to MACE model files'
+        help='Paths to model files (MACE or Allegro)'
+    )
+    parser.add_argument(
+        '--calculator-type',
+        type=str,
+        choices=['mace', 'allegro'],
+        help='Type of calculator to use (auto-detect if not specified)'
+    )
+    parser.add_argument(
+        '--species-mapping',
+        type=str,
+        help='JSON string or file path for species to type mapping (required for Allegro)'
     )
     parser.add_argument(
         '--top-n',
@@ -518,6 +534,11 @@ def main():
         action='store_true',
         help='Enable debug output'
     )
+    parser.add_argument(
+        '--require-structure-id',
+        action='store_true',
+        help='Require structure_id in atoms info (default: use reserved ID 99999999 for new structures)'
+    )
     
     args = parser.parse_args()
     
@@ -527,6 +548,23 @@ def main():
         import json
         with open(args.compositions, 'r') as f:
             compositions = json.load(f)
+    
+    # Parse species mapping if provided
+    species_to_type_name = None
+    if args.species_mapping:
+        import json
+        try:
+            # Try to parse as JSON string first
+            species_to_type_name = json.loads(args.species_mapping)
+        except json.JSONDecodeError:
+            # If that fails, try to load from file
+            try:
+                with open(args.species_mapping, 'r') as f:
+                    species_to_type_name = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not parse species mapping: {e}")
+                print("Using default species mapping: {'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}")
+                species_to_type_name = {'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     
     # Run the workflow
     try:
@@ -548,7 +586,9 @@ def main():
             custom_motif_path=args.custom_motif_path,
             random_seed=args.random_seed,
             device=args.device,
-            debug=args.debug
+            debug=args.debug,
+            calculator_type=args.calculator_type,
+            species_to_type_name=species_to_type_name
         )
         
         if trajectories is not None:

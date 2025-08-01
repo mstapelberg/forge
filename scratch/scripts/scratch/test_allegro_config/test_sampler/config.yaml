@@ -1,0 +1,187 @@
+run:
+- val
+- test
+- train
+- val
+- test
+cutoff_radius: 5.0
+chemical_symbols: &id001
+- Ti
+- V
+- Cr
+- Zr
+- W
+model_type_names: *id001
+seed: 42
+job_name: test_sampler
+wandb_name: allegro-stress-rmax-test
+data:
+  _target_: forge.workflows.allegro_utils.data.CustomSamplingASEDataModule
+  train_file_path: data/test_sampler_train.xyz
+  val_file_path: data/test_sampler_val.xyz
+  test_file_path: data/test_sampler_test.xyz
+  ase_args:
+    format: extxyz
+  key_mapping:
+    REF_energy: total_energy
+    REF_force: forces
+    REF_stress: stress
+  transforms:
+  - _target_: nequip.data.transforms.NeighborListTransform
+    r_max: ${cutoff_radius}
+  - _target_: nequip.data.transforms.ChemicalSpeciesToAtomTypeMapper
+    chemical_symbols: *id001
+  seed: ${seed}
+  train_dataloader:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 4
+  val_dataloader:
+    _target_: torch.utils.data.DataLoader
+    batch_size: 4
+  test_dataloader: ${data.val_dataloader}
+  stats_manager:
+    _target_: nequip.data.CommonDataStatisticsManager
+    type_names: *id001
+  sampler_config:
+    _target_: forge.workflows.allegro_utils.samplers.RareWeightedSampler
+    replica: 2
+    rare_idx:
+    - 0
+    - 1
+    - 2
+trainer:
+  _target_: lightning.Trainer
+  accelerator: gpu
+  devices: 4
+  num_nodes: 1
+  max_epochs: 400
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 5
+  callbacks:
+  - _target_: lightning.pytorch.callbacks.ModelCheckpoint
+    dirpath: results/test_sampler
+    filename: '{epoch:03d}-{val0_epoch/stress_rmse:.4f}'
+    monitor: val0_epoch/stress_rmse
+    mode: min
+    save_last: true
+    save_top_k: 5
+  - _target_: lightning.pytorch.callbacks.LearningRateMonitor
+    logging_interval: epoch
+  - _target_: nequip.train.callbacks.LossCoefficientMonitor
+    frequency: 1
+    interval: epoch
+  logger:
+    _target_: lightning.pytorch.loggers.wandb.WandbLogger
+    project: ${wandb_name}
+    name: test_sampler
+    save_dir: results/${job_name}
+training_module:
+  _target_: nequip.train.EMALightningModule
+  loss:
+    _target_: nequip.train.MetricsManager
+    metrics:
+    - name: per_atom_energy_mse
+      field:
+        _target_: nequip.data.PerAtomModifier
+        field: total_energy
+      metric:
+        _target_: nequip.train.MeanSquaredError
+      coeff: 1
+    - name: forces_mse
+      field: forces
+      metric:
+        _target_: nequip.train.MeanSquaredError
+      coeff: 10
+    - name: stress_mse
+      field: stress
+      metric:
+        _target_: nequip.train.MeanSquaredError
+      coeff: 100
+  val_metrics:
+    _target_: nequip.train.MetricsManager
+    metrics:
+    - name: per_atom_energy_mae
+      field:
+        _target_: nequip.data.PerAtomModifier
+        field: total_energy
+      metric:
+        _target_: nequip.train.MeanAbsoluteError
+    - name: forces_mae
+      field: forces
+      metric:
+        _target_: nequip.train.MeanAbsoluteError
+    - name: stress_mae
+      field: stress
+      metric:
+        _target_: nequip.train.MeanAbsoluteError
+      ignore_nan: true
+    - name: per_atom_energy_rmse
+      field:
+        _target_: nequip.data.PerAtomModifier
+        field: total_energy
+      metric:
+        _target_: nequip.train.RootMeanSquaredError
+      coeff: 1.0
+    - name: forces_rmse
+      field: forces
+      metric:
+        _target_: nequip.train.RootMeanSquaredError
+      coeff: 1.0
+    - name: stress_rmse
+      field: stress
+      metric:
+        _target_: nequip.train.RootMeanSquaredError
+      ignore_nan: true
+      coeff: 1.0
+  test_metrics: ${training_module.val_metrics}
+  optimizer:
+    _target_: torch.optim.Adam
+    lr: 0.001
+  lr_scheduler:
+    scheduler:
+      _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+      factor: 0.5
+      patience: 10
+      min_lr: 1e-6
+    monitor: val0_epoch/weighted_sum
+    interval: epoch
+    frequency: 1
+  model:
+    _target_: allegro.model.AllegroModel
+    seed: ${seed}
+    model_dtype: float32
+    type_names: *id001
+    r_max: 5.0
+    radial_chemical_embed:
+      _target_: allegro.nn.TwoBodyBesselScalarEmbed
+      num_bessels: 8
+      bessel_trainable: false
+      polynomial_cutoff_p: 6
+    radial_chemical_embed_dim: 128
+    scalar_embed_mlp_hidden_layers_depth: 2
+    scalar_embed_mlp_hidden_layers_width: 256
+    scalar_embed_mlp_nonlinearity: silu
+    l_max: 2
+    parity: false
+    num_layers: 2
+    num_scalar_features: 128
+    num_tensor_features: 64
+    tp_path_channel_coupling: true
+    allegro_mlp_hidden_layers_depth: 2
+    allegro_mlp_hidden_layers_width: 512
+    avg_num_neighbors: ${training_data_stats:num_neighbors_mean}
+    per_type_energy_shifts:
+      Ti: -2.15203187
+      V: -3.55411419
+      Cr: -5.42767241
+      Zr: -2.3361286
+      W: -4.55186158
+    per_type_energy_scales: ${training_data_stats:forces_rms}
+    per_type_energy_scales_trainable: false
+    per_type_energy_shifts_trainable: false
+    pair_potential:
+      _target_: nequip.nn.pair_potential.ZBL
+      units: metal
+      chemical_species: *id001
+global_options:
+  allow_tf32: false

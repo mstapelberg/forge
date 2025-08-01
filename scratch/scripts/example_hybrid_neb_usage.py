@@ -10,6 +10,7 @@ Confidence: 9/10
 """
 
 import numpy as np
+import os
 from pathlib import Path
 from run_hybrid_neb_workflow import HybridNEBWorkflow
 
@@ -48,9 +49,9 @@ def example_basic_workflow():
         dimensions=[4, 4, 4],  # Small supercell for quick testing
         lattice_constant=3.01,
         temperature=873.15,
-        n_steps=1000,  # Fewer steps for quick testing
-        n_nearest=4,
-        n_next_nearest=4,
+        n_steps=5000,  # Fewer steps for quick testing
+        n_nearest=2,
+        n_next_nearest=2,
         save_plots=True
     )
     
@@ -89,10 +90,10 @@ def example_composition_generation():
     
     # Generate compositions with specific constraints
     constraints = {
-        'V': (0.4, 0.9),    # V should be 40-90%
-        'Cr': (0.05, 0.3),  # Cr should be 5-30%
-        'Ti': (0.02, 0.25), # Ti should be 2-25%
-        'W': (0.01, 0.1),   # W should be 1-10%
+        'V': (0.7, 0.95),   # V should be 70-95%
+        'Cr': (0.01, 0.25), # Cr should be 1-25%
+        'Ti': (0.01, 0.25), # Ti should be 1-25%
+        'W': (0.01, 0.15),  # W should be 1-15%
         'Zr': (0.001, 0.05) # Zr should be 0.1-5%
     }
     
@@ -241,11 +242,11 @@ def example_custom_workflow():
     
     # Focus on high-Cr compositions
     constraints = {
-        'V': (0.6, 0.9),
-        'Cr': (0.08, 0.35),  # Higher Cr content
-        'Ti': (0.01, 0.1),
-        'W': (0.005, 0.05),
-        'Zr': (0.001, 0.02)
+        'V': (0.7, 0.9),
+        'Cr': (0.05, 0.4),   # Higher Cr content
+        'Ti': (0.01, 0.15),
+        'W': (0.005, 0.1),
+        'Zr': (0.001, 0.05)
     }
     
     new_compositions = workflow.generate_compositions(
@@ -302,10 +303,10 @@ if __name__ == "__main__":
     # Run examples (uncomment the ones you want to try)
     
     example_basic_workflow()
-    # example_composition_generation()
-    # example_optimization_only()
-    # example_neb_only()
-    # example_custom_workflow()
+    example_composition_generation()
+    example_optimization_only()
+    example_neb_only()
+    example_custom_workflow()
     
     print("\nTo run examples, uncomment the desired function calls above.")
     print("Make sure you have the required model file and dependencies installed.") 

@@ -20,12 +20,15 @@ import time
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import json
+import os
 import warnings
 
 # ASE imports
 from ase import Atoms
 from ase.io import read, write
 from ase.build import bulk
+from ase.filters import FrechetCellFilter
+from ase.optimize import FIRE
 
 # Forge imports
 from forge.analysis.composition import CompositionAnalyzer
@@ -142,20 +145,23 @@ class HybridNEBWorkflow:
         # Set default constraints if none provided
         if constraints is None:
             constraints = {
-                'V': (0.5, 0.9),    # Balance element should be majority
-                'Cr': (0.01, 0.1),
-                'Ti': (0.01, 0.1),
-                'W': (0.01, 0.1),
-                'Zr': (0.001, 0.01)
+                'V': (0.7, 0.95),   # Balance element should be majority
+                'Cr': (0.01, 0.2),
+                'Ti': (0.01, 0.2),
+                'W': (0.01, 0.15),
+                'Zr': (0.001, 0.03)
             }
         
         # Generate new compositions
+        print(f"Generating compositions with constraints: {constraints}")
         new_compositions = self.composition_analyzer.suggest_new_compositions(
             compositions=existing_compositions,
             n_suggestions=n_new_compositions,
             constraints=constraints,
             seed=self.seed
         )
+        
+        print(f"Raw generated compositions: {new_compositions}")
         
         # Ensure compositions sum to 1.0
         for comp in new_compositions:
@@ -165,7 +171,91 @@ class HybridNEBWorkflow:
                 comp[balance_element] = 1.0 - sum(v for k, v in comp.items() if k != balance_element)
         
         self.compositions = new_compositions
-        print(f"Generated compositions: {new_compositions}")
+        print(f"Final compositions: {new_compositions}")
+        
+        # If no compositions were generated, create some simple interpolated ones
+        if len(new_compositions) == 0:
+            print("Warning: No compositions generated. Creating simple interpolated compositions.")
+            new_compositions = self._create_simple_compositions(
+                existing_compositions, n_new_compositions, balance_element
+            )
+            self.compositions = new_compositions
+            print(f"Created simple compositions: {new_compositions}")
+        
+        return new_compositions
+    
+    def _create_simple_compositions(
+        self,
+        existing_compositions: List[Dict[str, float]],
+        n_new_compositions: int,
+        balance_element: str
+    ) -> List[Dict[str, float]]:
+        """
+        Create simple interpolated compositions as a fallback.
+        
+        Args:
+            existing_compositions: List of existing composition dictionaries
+            n_new_compositions: Number of new compositions to create
+            balance_element: Element to balance the composition
+            
+        Returns:
+            List of new composition dictionaries
+        """
+        if len(existing_compositions) < 2:
+            # If we only have one composition, create variations
+            base_comp = existing_compositions[0]
+            new_compositions = []
+            
+            for i in range(n_new_compositions):
+                # Create small variations
+                variation = 0.02 * (i + 1)  # Small variation
+                new_comp = base_comp.copy()
+                
+                # Adjust non-balance elements slightly
+                for element in new_comp:
+                    if element != balance_element:
+                        new_comp[element] = max(0.001, new_comp[element] + variation * (0.5 - np.random.random()))
+                
+                # Rebalance to sum to 1.0
+                total = sum(v for k, v in new_comp.items() if k != balance_element)
+                new_comp[balance_element] = max(0.4, 1.0 - total)
+                
+                # Normalize
+                total = sum(new_comp.values())
+                for element in new_comp:
+                    new_comp[element] /= total
+                
+                new_compositions.append(new_comp)
+        else:
+            # Interpolate between existing compositions
+            new_compositions = []
+            
+            for i in range(n_new_compositions):
+                # Pick two random existing compositions
+                idx1, idx2 = np.random.choice(len(existing_compositions), 2, replace=False)
+                comp1 = existing_compositions[idx1]
+                comp2 = existing_compositions[idx2]
+                
+                # Interpolate
+                alpha = np.random.random()
+                new_comp = {}
+                
+                all_elements = set(comp1.keys()) | set(comp2.keys())
+                for element in all_elements:
+                    val1 = comp1.get(element, 0.0)
+                    val2 = comp2.get(element, 0.0)
+                    new_comp[element] = alpha * val1 + (1 - alpha) * val2
+                
+                # Ensure balance element is present
+                if balance_element not in new_comp:
+                    new_comp[balance_element] = 0.5
+                
+                # Normalize to sum to 1.0
+                total = sum(new_comp.values())
+                for element in new_comp:
+                    new_comp[element] /= total
+                
+                new_compositions.append(new_comp)
         
         return new_compositions
     
@@ -465,6 +555,68 @@ class HybridNEBWorkflow:
         
         return analysis_results
     
+    def relax_structures(
+        self,
+        structures: List[Atoms],
+        fmax: float = 0.01,
+        steps: int = 250,
+        relax_cell: bool = False
+    ) -> List[Atoms]:
+        """
+        Relax a list of atomic structures using energy minimization.
+
+        This method performs geometry optimization (relaxation) on each structure in the input list.
+        If `relax_cell` is True, both atomic positions and the cell shape/volume are relaxed using
+        the FrechetCellFilter. Otherwise, only atomic positions are relaxed with a fixed cell.
+        The relaxation uses the FIRE optimizer and the calculator attached to the workflow.
+
+        Args:
+            structures (List[Atoms]): List of ASE Atoms objects to be relaxed.
+            fmax (float, optional): Maximum force criterion for convergence in eV/Å. Defaults to 0.01.
+            steps (int, optional): Maximum number of optimization steps. Defaults to 250.
+            relax_cell (bool, optional): If True, relax both atomic positions and cell parameters.
+                If False, relax only atomic positions. Defaults to False.
+
+        Returns:
+            List[Atoms]: List of relaxed ASE Atoms objects, in the same order as input.
+
+        Raises:
+            RuntimeError: If relaxation fails for any structure.
+            ValueError: If the input list is empty.
+
+        Examples:
+            >>> relaxed = workflow.relax_structures([atoms1, atoms2], fmax=0.02, steps=300, relax_cell=True)
+            >>> print(relaxed[0].get_potential_energy())
+        """
+        print(f"Relaxing structures with {self.unified_calculator.calculator_type} calculator")
+        relaxed_structures = []
+        structure_dict = {}
+        if relax_cell:
+            print("Relaxing cell and structure")
+            for i, atoms in enumerate(structures):
+                new_atoms = atoms.copy()
+                new_atoms.calc = self.unified_calculator
+                fcf = FrechetCellFilter(new_atoms)
+                opt = FIRE(fcf, trajectory=os.path.join(self.output_dir,f"relaxed_structure_{i}.traj"))
+                opt.run(fmax=fmax, steps=steps)
+                relaxed_structures.append(new_atoms)
+                structure_dict[i] = new_atoms.get_chemical_formula()
+        else:
+            print("Relaxing structure only")
+            for i, atoms in enumerate(structures):
+                new_atoms = atoms.copy()
+                new_atoms.calc = self.unified_calculator
+                opt = FIRE(new_atoms, trajectory=os.path.join(self.output_dir,f"relaxed_structure_{i}.traj"))
+                opt.run(fmax=fmax, steps=steps)
+                relaxed_structures.append(new_atoms)
+                structure_dict[i] = new_atoms.get_chemical_formula()
+        
+        #save the structure dict to a json file
+        with open(os.path.join(self.output_dir, "relaxed_structure_dict.json"), 'w') as f:
+            json.dump(structure_dict, f, default=str)
+        
+        return relaxed_structures
+    
     def run_full_workflow(
         self,
         existing_compositions: List[Dict[str, float]],
@@ -522,12 +674,20 @@ class HybridNEBWorkflow:
             temperature=temperature,
             n_steps=n_steps,
             convergence_window=1000,
-            energy_threshold=0.0002
+            energy_threshold=0.002 # 2 meV/atom
+        )
+
+        # Step 3.5: Relax structure with FrechetCellFilter
+        relaxed_structures = self.relax_structures(
+            structures=optimized_structures,
+            fmax=0.01,
+            steps=250,
+            relax_cell=True
         )
         
         # Step 4: Run NEB calculations
         neb_results = self.run_neb_calculations(
-            structures=optimized_structures,
+            structures=relaxed_structures,
             n_nearest=n_nearest,
             n_next_nearest=n_next_nearest
         )

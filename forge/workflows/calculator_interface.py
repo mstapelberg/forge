@@ -114,24 +114,28 @@ class UnifiedCalculator:
             if len(self.model_path) > 1:
                 warnings.warn("Allegro calculator only supports single model. Using first model.")
             
-            # Need to use _from_packaged_model if it ends with .zip 
-            # if it ends with .pt2 use from_compiled_model
-            if self.model_path[0].endswith('.zip'):
+            # Handle different Allegro model file formats
+            model_path = self.model_path[0]
+            
+            if model_path.endswith('.zip') or model_path.endswith('.nequip.zip'):
+                # Packaged model format
                 return NequIPCalculator._from_packaged_model(
-                package_path=self.model_path[0],
-                species_to_type_name=self.species_to_type_name,
-                device=self.device,
-                **self.kwargs
-            )
-            elif self.model_path[0].endswith('.pt2'):
+                    package_path=model_path,
+                    species_to_type_name=self.species_to_type_name,
+                    device=self.device,
+                    **self.kwargs
+                )
+            elif model_path.endswith('.pt2'):
+                # Compiled model format
                 return NequIPCalculator.from_compiled_model(
-                    compile_path=self.model_path[0],
+                    compile_path=model_path,
                     species_to_type_name=self.species_to_type_name,
                     device=self.device,
                     **self.kwargs
                 )
             else:
-                raise ValueError(f"Unknown model file extension: {self.model_path[0]}")
+                raise ValueError(f"Unknown model file extension: {model_path}. "
+                               f"Supported formats: .zip, .nequip.zip, .pt2")
             
         else:
             raise ValueError(f"Unknown calculator type: {self.calculator_type}")

@@ -121,7 +121,16 @@ class HybridNEBWorkflow:
             )
             print(f"Successfully initialized {self.unified_calculator.calculator_type} calculator")
         except Exception as e:
-            print(f"Warning: Could not initialize calculator: {e}")
+            print(f"Error: Could not initialize calculator: {e}")
+            print(f"Model path: {self.model_path}")
+            print(f"Calculator type: {self.calculator_type}")
+            print(f"Device: {self.device}")
+            print(f"Species mapping: {self.species_to_type_name}")
+            print("\nTroubleshooting tips:")
+            print("1. Check if the model file exists and is accessible")
+            print("2. Verify the model file format (.zip, .nequip.zip, or .pt2)")
+            print("3. Ensure the species_to_type_name mapping is correct")
+            print("4. Check if the required packages (nequip, mace) are installed")
             self.unified_calculator = None
     
     def generate_compositions(
@@ -373,10 +382,17 @@ class HybridNEBWorkflow:
         Returns:
             List of optimized ASE Atoms objects
         """
-        print(f"Optimizing structures with hybrid MCMC-MD using {self.unified_calculator.calculator_type} calculator...")
-        
         if self.unified_calculator is None:
-            raise ValueError("Unified calculator not initialized. Please check model path and installation.")
+            raise ValueError(
+                "Unified calculator not initialized. Please check:\n"
+                "1. Model file path and accessibility\n"
+                "2. Model file format (.zip, .nequip.zip, or .pt2)\n"
+                "3. Species mapping configuration\n"
+                "4. Required packages installation (nequip, mace)\n"
+                f"Model path: {self.model_path}"
+            )
+        
+        print(f"Optimizing structures with hybrid MCMC-MD using {self.unified_calculator.calculator_type} calculator...")
         
         optimized_structures = []
         
@@ -479,6 +495,16 @@ class HybridNEBWorkflow:
             List of NEB calculation results
         """
         print("Running NEB calculations for vacancy diffusion...")
+        
+        if self.unified_calculator is None:
+            raise ValueError(
+                "Unified calculator not initialized. Please check:\n"
+                "1. Model file path and accessibility\n"
+                "2. Model file format (.zip, .nequip.zip, or .pt2)\n"
+                "3. Species mapping configuration\n"
+                "4. Required packages installation (nequip, mace)\n"
+                f"Model path: {self.model_path}"
+            )
         
         all_neb_results = []
         

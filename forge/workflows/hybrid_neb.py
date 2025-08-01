@@ -468,7 +468,7 @@ class HybridNEBWorkflow:
         climb: bool = True,
         relax_fmax: float = 0.01,
         relax_steps: int = 100,
-        neb_fmax: float = 0.01,
+        neb_fmax: float = 0.05,
         neb_steps: int = 200,
         save_xyz: bool = True,
         verbose: int = 1

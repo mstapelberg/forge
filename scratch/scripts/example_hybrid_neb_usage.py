@@ -106,7 +106,7 @@ def example_optimization_only():
     
     # Configuration
     model_path = "../potentials/new_allegro/gen_7_2025-05-30_huberloss_thicc_model_0.nequip.zip"
-    output_dir = "example_optimization_results"
+    output_dir = "../data/pel_heterogeneity_search/example_optimization_results"
     
     # Initialize workflow
     workflow = HybridNEBWorkflow(

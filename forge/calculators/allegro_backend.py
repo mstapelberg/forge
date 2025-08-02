@@ -76,6 +76,7 @@ class AllegroBackend(BaseEnsembleCalculator):
                     calc = NequIPCalculator.from_compiled_model(
                         model_path, 
                         device=device,
+                        chemical_symbols=kwargs.get('species_to_type_name', None),
                         **kwargs  # Pass kwargs like default_dtype
                     )
                     
@@ -101,7 +102,8 @@ class AllegroBackend(BaseEnsembleCalculator):
                     
                     calc = NequIPCalculator._from_packaged_model(
                         model_path,
-                        device=device
+                        device=device,
+                        chemical_symbols=kwargs.get('species_to_type_name', None)
                         # Note: _from_packaged_model may not support all kwargs, so we keep it simple
                     )
                     

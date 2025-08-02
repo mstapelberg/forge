@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 from forge.core.database import DatabaseManager
 from forge.core.adversarial_attack import GradientAdversarialOptimizer
 from forge.core.defect_motifs import generate_defect_structures
-from mace.calculators import MACECalculator
+from forge.calculators.factory import create_ensemble_calculator
 
 
 def identify_interstitial_atoms(atoms: Atoms, motif_type: str, 
@@ -111,12 +111,12 @@ def create_constrained_atoms(atoms: Atoms, fixed_indices: List[int]) -> Atoms:
 
 
 def run_defect_adversarial_attacks(
-    db_manager: Optional[DatabaseManager] = None,
-    structure_ids: Optional[List[int]] = None,
-    compositions: Optional[List[Dict[str, float]]] = None,
     model_paths: List[str],
     top_n: int,
     generation: int,
+    db_manager: Optional[DatabaseManager] = None,
+    structure_ids: Optional[List[int]] = None,
+    compositions: Optional[List[Dict[str, float]]] = None,
     n_iterations: int = 200,
     learning_rate: float = 0.01,
     temperature: float = 1000,
@@ -140,18 +140,21 @@ def run_defect_adversarial_attacks(
     exclude_motifs: Optional[List[str]] = None,
     custom_motif_path: Optional[str] = None,
     random_seed: Optional[int] = None,
-    select_n_from_trajectory: Optional[int] = None
+    select_n_from_trajectory: Optional[int] = None,
+    backend: Optional[str] = None,
+    species_to_type_name: Optional[Dict[str, int]] = None,
+    require_structure_id: bool = False
 ) -> Union[Dict[int, List[Atoms]], None]:
     """
     Run adversarial attacks on defect structures with fixed interstitial positions.
     
     Args:
-        db_manager: Database manager (if using database structures)
-        structure_ids: List of structure IDs from database (if using database)
-        compositions: List of compositions for defect generation (if generating new structures)
         model_paths: List of paths to MACE model files
         top_n: Number of top structures to select for attack
         generation: Generation tag for new structures
+        db_manager: Database manager (if using database structures)
+        structure_ids: List of structure IDs from database (if using database)
+        compositions: List of compositions for defect generation (if generating new structures)
         n_iterations: Number of optimization steps
         learning_rate: Optimizer learning rate
         temperature: Temperature for Boltzmann weighting
@@ -176,6 +179,9 @@ def run_defect_adversarial_attacks(
         custom_motif_path: Path to custom motif templates
         random_seed: Seed for random number generator
         select_n_from_trajectory: Number of structures to select from each trajectory
+        backend: Calculator backend ('mace', 'allegro', or 'auto')
+        species_to_type_name: Species mapping for Allegro
+        require_structure_id: If True, require a structure_id in the atoms info
         
     Returns:
         Dictionary of trajectories or None if saving to files
@@ -236,11 +242,7 @@ def run_defect_adversarial_attacks(
     if device is None:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    ranking_calc = MACECalculator(
-        model_paths=model_paths,
-        device=device,
-        default_dtype='float32'
-    )
+    ranking_calc = create_ensemble_calculator(model_paths=model_paths, device=device, default_dtype='float32')
     
     # Calculate initial metrics and rank structures
     initial_metrics = []
@@ -253,8 +255,7 @@ def run_defect_adversarial_attacks(
                 # Get reference forces if available
                 if atoms.has("forces"):
                     ref_forces = atoms.arrays['forces']
-                    atoms.calc = ranking_calc
-                    model_forces = atoms.get_forces(apply_constraint=False)
+                    model_forces = ranking_calc.calculate_forces(atoms)
                     rmse = np.sqrt(np.mean((model_forces - ref_forces)**2))
                 else:
                     # If no reference forces, use variance instead
@@ -271,11 +272,7 @@ def run_defect_adversarial_attacks(
             atoms = data['atoms']
             try:
                 # Calculate force variance across ensemble
-                all_forces = []
-                with torch.no_grad():
-                    for model in ranking_calc.models:
-                        atoms.calc = model
-                        all_forces.append(atoms.get_forces(apply_constraint=False))
+                all_forces = ranking_calc.calculate_forces(atoms)
                 
                 forces_array = np.array(all_forces)
                 force_magnitudes = np.linalg.norm(forces_array, axis=2, keepdims=True)
@@ -312,7 +309,9 @@ def run_defect_adversarial_attacks(
         learning_rate=learning_rate,
         temperature=temperature,
         include_probability=include_probability,
-        debug=debug
+        debug=debug,
+        backend=backend,  # Changed from calculator_type
+        species_to_type_name=species_to_type_name  # Pass from function parameters
     )
     
     # Run optimization with constraints
@@ -348,7 +347,8 @@ def run_defect_adversarial_attacks(
                 output_dir=str(plot_save_dir),
                 patience=patience,
                 shake=shake,
-                shake_std=shake_std
+                shake_std=shake_std,
+                require_structure_id=require_structure_id
             )
             
             # Select N structures from trajectory if requested
@@ -428,7 +428,18 @@ def main():
         '--model-paths',
         nargs='+',
         required=True,
-        help='Paths to MACE model files'
+        help='Paths to model files (MACE or Allegro)'
+    )
+    parser.add_argument(
+        '--backend',
+        type=str,
+        choices=['mace', 'allegro'],
+        help='Type of calculator to use (auto-detect if not specified)'
+    )
+    parser.add_argument(
+        '--species-mapping',
+        type=str,
+        help='JSON string or file path for species to type mapping (required for Allegro)'
     )
     parser.add_argument(
         '--top-n',
@@ -518,6 +529,11 @@ def main():
         action='store_true',
         help='Enable debug output'
     )
+    parser.add_argument(
+        '--require-structure-id',
+        action='store_true',
+        help='Require structure_id in atoms info (default: use reserved ID 99999999 for new structures)'
+    )
     
     args = parser.parse_args()
     
@@ -527,6 +543,23 @@ def main():
         import json
         with open(args.compositions, 'r') as f:
             compositions = json.load(f)
+    
+    # Parse species mapping if provided
+    species_to_type_name = None
+    if args.species_mapping:
+        import json
+        try:
+            # Try to parse as JSON string first
+            species_to_type_name = json.loads(args.species_mapping)
+        except json.JSONDecodeError:
+            # If that fails, try to load from file
+            try:
+                with open(args.species_mapping, 'r') as f:
+                    species_to_type_name = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not parse species mapping: {e}")
+                print("Using default species mapping: {'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}")
+                species_to_type_name = {'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     
     # Run the workflow
     try:
@@ -548,7 +581,10 @@ def main():
             custom_motif_path=args.custom_motif_path,
             random_seed=args.random_seed,
             device=args.device,
-            debug=args.debug
+            debug=args.debug,
+            backend=args.backend,  # Changed from calculator_type
+            species_to_type_name=species_to_type_name,
+            require_structure_id=args.require_structure_id
         )
         
         if trajectories is not None:

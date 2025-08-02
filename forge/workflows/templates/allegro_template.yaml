@@ -65,7 +65,7 @@ trainer:
     _target_: lightning.pytorch.loggers.wandb.WandbLogger
     project: ${PROJECT}
     name: ${JOB_NAME}
-    save_dir: ${SAVE_DIR}
+    save_dir: ${SAVE_DIR}/results
 
 training_module:
   _target_: nequip.train.EMALightningModule

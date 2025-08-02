@@ -5,12 +5,26 @@ This module provides a common interface for both MACE and Allegro calculators,
 automatically detecting which one is available and providing consistent API.
 """
 
+import warnings
 from typing import Union, List, Dict, Optional, Any
 import torch
 import warnings
 import numpy as np
 from ase import Atoms
 from ase.calculators.calculator import Calculator
+
+# Deprecation warning
+warnings.warn(
+    "forge.workflows.calculator_interface is deprecated and will be removed in a future version. "
+    "Please use forge.calculators.factory instead. "
+    "The new factory provides better backend support and improved functionality. "
+    "Migration guide: "
+    "- Replace 'from forge.workflows.calculator_interface import create_calculator' "
+    "- With 'from forge.calculators.factory import create_ensemble_calculator' "
+    "- Replace 'create_calculator()' with 'create_ensemble_calculator()'",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 # Try to import MACE
 try:
@@ -33,6 +47,8 @@ class UnifiedCalculator:
     """
     Unified calculator interface that works with both MACE and Allegro.
     
+    DEPRECATED: This class is deprecated. Use forge.calculators.factory.create_ensemble_calculator instead.
+    
     This class provides a consistent API regardless of which calculator
     is being used underneath.
     """
@@ -50,6 +66,8 @@ class UnifiedCalculator:
         """
         Initialize the unified calculator.
         
+        DEPRECATED: Use forge.calculators.factory.create_ensemble_calculator instead.
+        
         Args:
             model_path: Path(s) to model file(s)
             calculator_type: Type of calculator ('mace', 'allegro', or None for auto-detect)
@@ -59,6 +77,12 @@ class UnifiedCalculator:
             species_to_type_name: Species mapping for Allegro
             **kwargs: Additional arguments passed to the underlying calculator
         """
+        warnings.warn(
+            "UnifiedCalculator is deprecated. Use forge.calculators.factory.create_ensemble_calculator instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         self.model_path = model_path if isinstance(model_path, list) else [model_path]
         self.device = device
         self.default_dtype = default_dtype
@@ -121,7 +145,7 @@ class UnifiedCalculator:
                 # Packaged model format
                 return NequIPCalculator._from_packaged_model(
                     package_path=model_path,
-                    species_to_type_name=self.species_to_type_name,
+                    chemical_symbols=self.species_to_type_name,  # Use chemical_symbols for NequIP
                     device=self.device,
                     **self.kwargs
                 )
@@ -129,7 +153,7 @@ class UnifiedCalculator:
                 # Compiled model format
                 return NequIPCalculator.from_compiled_model(
                     compile_path=model_path,
-                    species_to_type_name=self.species_to_type_name,
+                    chemical_symbols=self.species_to_type_name,  # Use chemical_symbols for NequIP
                     device=self.device,
                     **self.kwargs
                 )
@@ -189,6 +213,8 @@ def create_calculator(
     """
     Factory function to create a unified calculator.
     
+    DEPRECATED: Use forge.calculators.factory.create_ensemble_calculator instead.
+    
     Args:
         model_path: Path(s) to model file(s)
         calculator_type: Type of calculator ('mace', 'allegro', or None for auto-detect)
@@ -198,6 +224,11 @@ def create_calculator(
     Returns:
         UnifiedCalculator instance
     """
+    warnings.warn(
+        "create_calculator is deprecated. Use forge.calculators.factory.create_ensemble_calculator instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     return UnifiedCalculator(
         model_path=model_path,
         calculator_type=calculator_type,
@@ -208,6 +239,11 @@ def create_calculator(
 
 def get_available_calculators() -> List[str]:
     """Get list of available calculator types."""
+    warnings.warn(
+        "get_available_calculators is deprecated. Use forge.calculators.factory.get_supported_backends instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     available = []
     if MACE_AVAILABLE:
         available.append('mace')
@@ -218,6 +254,11 @@ def get_available_calculators() -> List[str]:
 
 def check_calculator_availability() -> Dict[str, bool]:
     """Check which calculators are available."""
+    warnings.warn(
+        "check_calculator_availability is deprecated. Use forge.calculators.factory.get_supported_backends instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     return {
         'mace': MACE_AVAILABLE,
         'allegro': ALLEGRO_AVAILABLE

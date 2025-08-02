@@ -52,7 +52,7 @@ def create_ensemble_calculator(
             raise FileNotFoundError(f"Model file not found: {path}")
     
     # Auto-detect backend if needed
-    if backend == 'auto':
+    if backend == 'auto' or backend is None:
         backend = _detect_backend(paths_list)
     
     # Create appropriate backend

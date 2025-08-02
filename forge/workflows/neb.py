@@ -99,7 +99,7 @@ class NEBCalculation:
         """Create a new ensemble calculator instance."""
         return create_ensemble_calculator(
             model_paths=self.model_path,
-            backend=self.backend,
+            backend=self.calculator_type,
             device=self.device,
             species_to_type_name=self.species_to_type_name
         )

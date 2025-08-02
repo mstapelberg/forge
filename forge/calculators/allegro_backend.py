@@ -346,8 +346,8 @@ class AllegroBackend(BaseEnsembleCalculator):
                             from ase.stress import full_3x3_to_voigt_6_stress
                             stress = full_3x3_to_voigt_6_stress(stress)
                         elif stress.shape == (1, 3, 3):
-                            from ase.stress import voigt_6_to_full_3x3_stress
-                            stress = voigt_6_to_full_3x3_stress(stress[0])
+                            from ase.stress import full_3x3_to_voigt_6_stress
+                            stress = full_3x3_to_voigt_6_stress(stress[0])
                         elif stress.shape == (9,):
                             # Convert flat 9-component to Voigt notation
                             stress_3x3 = stress.reshape(3, 3)

@@ -148,6 +148,9 @@ class AllegroBackend(BaseEnsembleCalculator):
             raise RuntimeError("No calculators were successfully initialized")
         
         print(f"Successfully initialized AllegroBackend with {len(self._calculators)} model(s)")
+        
+        # Initialize results dictionary for ASE compatibility
+        self.results = {}
     
     def forces_all(self, atoms: Atoms) -> np.ndarray:
         """Calculate forces using all models in the ensemble.
@@ -384,7 +387,9 @@ class AllegroBackend(BaseEnsembleCalculator):
         if atoms is None:
             raise ValueError("No atoms provided and no atoms attached to calculator")
         
-        return self.get_mean_energy(atoms)
+        energy = self.get_mean_energy(atoms)
+        self.results['energy'] = energy
+        return energy
     
     def get_forces(self, atoms: Atoms = None) -> np.ndarray:
         """ASE calculator interface: Get forces (mean of ensemble)."""
@@ -393,7 +398,9 @@ class AllegroBackend(BaseEnsembleCalculator):
         if atoms is None:
             raise ValueError("No atoms provided and no atoms attached to calculator")
         
-        return self.get_mean_forces(atoms)
+        forces = self.get_mean_forces(atoms)
+        self.results['forces'] = forces
+        return forces
     
     def get_stress(self, atoms: Atoms = None) -> np.ndarray:
         """ASE calculator interface: Get stress tensor (mean of ensemble)."""
@@ -402,7 +409,9 @@ class AllegroBackend(BaseEnsembleCalculator):
         if atoms is None:
             raise ValueError("No atoms provided and no atoms attached to calculator")
         
-        return self.get_mean_stress(atoms)
+        stress = self.get_mean_stress(atoms)
+        self.results['stress'] = stress
+        return stress
     
     def set_atoms(self, atoms: Atoms):
         """ASE calculator interface: Set atoms for the calculator."""

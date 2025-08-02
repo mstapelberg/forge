@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 # Assume forge is installed or PYTHONPATH is set correctly
 from forge.core.database import DatabaseManager
 from forge.core.adversarial_attack import GradientAdversarialOptimizer
-from mace.calculators import MACECalculator # Use the official calculator
+from forge.calculators import create_ensemble_calculator
 
 # --- Helper: Timer Class (copied for simplicity or import if structure allows) ---
 class Timer:
@@ -79,7 +79,8 @@ def run_adversarial_attacks(
     reference_calculator: str = 'vasp',
     cache_rmse: bool = True,
     plot_rmse_histogram: bool = True,
-    rmse_cutoff: Optional[float] = None
+    rmse_cutoff: Optional[float] = None,
+    backend: str = 'auto'
 ) -> Union[Dict[int, List[Atoms]], None]:
     """
     Runs the gradient-based adversarial attack workflow using a provided DatabaseManager.
@@ -114,6 +115,7 @@ def run_adversarial_attacks(
         cache_rmse: Whether to cache RMSE calculations for reuse
         plot_rmse_histogram: Whether to generate RMSE distribution histogram
         rmse_cutoff: Optional RMSE cutoff threshold for analysis
+        backend: Calculator backend to use ('mace', 'allegro', or 'auto' for auto-detection)
 
     Returns:
         If save_output is False (default): Returns a dictionary where keys are parent IDs
@@ -160,18 +162,19 @@ def run_adversarial_attacks(
     if db_manager.dry_run:
         print("[INFO] Running workflow with DatabaseManager in DRY RUN mode.")
 
-    # Initialize the official MACECalculator for the ranking stage
-    print("Initializing MACE calculator for ranking...")
+    # Initialize ensemble calculator for the ranking stage
+    print(f"Initializing {backend} calculator for ranking...")
     try:
-        ranking_calc = MACECalculator(
+        ranking_calc = create_ensemble_calculator(
             model_paths=model_paths,
+            backend=backend,
             device=computed_device,
             default_dtype='float32'
         )
     except Exception as e:
-        print(f"[ERROR] Failed to initialize MACECalculator for ranking: {e}")
+        print(f"[ERROR] Failed to initialize ensemble calculator for ranking: {e}")
         return {}
-    print(f"Initialized calculator with {len(ranking_calc.models)} models.")
+    print(f"Initialized {type(ranking_calc).__name__} with {len(ranking_calc.models)} models.")
     wf_timer.stop("init")
 
     # --- Fetch Initial Structures & Data ---
@@ -278,18 +281,9 @@ def run_adversarial_attacks(
                 ref_forces = atoms.arrays['forces']
 
                 # 2. Get mean predicted forces from the ensemble using the ranking calculator.
-                atoms.calc = ranking_calc
-                model_forces = atoms.get_forces(apply_constraint=False) # Get mean forces
-                # The MACECalculator with multiple models returns the average, so we don't need to calculate it.
-                # However, for variance, we need individual forces. Let's adapt.
-                # For RMSE, the mean is fine.
-
-                # To be consistent, let's get all forces and take the mean here.
-                # The .get_forces() on an ensemble calculator in ASE returns the mean.
-                # To get all forces, we need to iterate, which is slow.
-                # Let's assume for now the user wants RMSE against the *mean* of the ensemble.
-                # This is a reasonable and fast approach.
-                mean_model_forces = model_forces
+                # Use the new interface to get all forces and compute the mean
+                all_forces = ranking_calc.forces_all(atoms)  # Shape: (n_models, n_atoms, 3)
+                mean_model_forces = np.mean(all_forces, axis=0)  # Shape: (n_atoms, 3)
 
                 # 3. Calculate RMSE
                 if ref_forces.shape != mean_model_forces.shape:
@@ -329,21 +323,10 @@ def run_adversarial_attacks(
         for i, data in enumerate(tqdm(structures_to_process, desc="Initial Variance Calc")):
             atoms = data['atoms']
             try:
-                 # To get variance, we must get forces from each model.
-                 # The public API for MACECalculator averages them.
-                 # We will access the models list directly for this step.
-                 all_forces = []
-                 with torch.no_grad():
-                     for model in ranking_calc.models:
-                         atoms.calc = model # Temporarily assign single model
-                         all_forces.append(atoms.get_forces(apply_constraint=False))
-                 
-                 forces_array = np.array(all_forces)
-                 force_magnitudes = np.linalg.norm(forces_array, axis=2, keepdims=True)
-                 force_magnitudes = np.where(force_magnitudes < 1e-10, 1.0, force_magnitudes)
-                 normalized_forces = forces_array / force_magnitudes
-                 atom_variances = np.var(normalized_forces, axis=0)
-                 mean_variance = float(np.mean(np.sum(atom_variances, axis=1))) if atom_variances.size > 0 else 0.0
+                 # Use the new interface to get all forces and calculate variance
+                 all_forces = ranking_calc.forces_all(atoms)  # Shape: (n_models, n_atoms, 3)
+                 atom_variances = ranking_calc.calculate_normalized_force_variance(all_forces)  # Shape: (n_atoms,)
+                 mean_variance = float(np.mean(atom_variances)) if atom_variances.size > 0 else 0.0
 
                  initial_metrics.append({'id': data['id'], 'metric': mean_variance, 'index': i})
             except Exception as e:
@@ -385,7 +368,8 @@ def run_adversarial_attacks(
         include_probability=include_probability,
         debug=debug,
         energy_list=initial_energies_for_norm,
-        use_energy_per_atom=use_energy_per_atom
+        use_energy_per_atom=use_energy_per_atom,
+        backend=backend
     )
     wf_timer.stop("optimizer_init")
 

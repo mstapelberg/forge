@@ -73,7 +73,8 @@ if __name__ == "__main__":
     # Pure elements: V, Cr, Ti, W, Zr
     pure_elements = ['V', 'Cr', 'Ti', 'W', 'Zr']
     
-    for element in pure_elements:
+    """
+     for element in pure_elements:
         print(f"\nCreating jobs for pure {element}...")
         elasticity_grid(
             elements=[element],
@@ -85,14 +86,21 @@ if __name__ == "__main__":
             base_output_dir=f'../data/elastic_jobs_total/elastic_jobs_pure_{element}'
         )
     
+    """
+       
     # V-rich alloy: V=0.8, Cr=Ti=W=Zr=0.05 each
+    x_cr = 0.04
+    x_ti = 0.04
+    x_zr = 0.00
+    x_w = 0.00
+    x_v = 1 - x_cr - x_ti - x_zr - x_w
     print(f"\nCreating jobs for V-rich alloy (V=0.8, others=0.05)...")
     elasticity_grid(
         elements=['V', 'Cr', 'Ti', 'W', 'Zr'],
-        ratios=[0.8, 0.05, 0.05, 0.05, 0.05],  # V-rich composition
+        ratios=[x_v, x_cr, x_ti, x_w, x_zr],  # V-rich composition
         strains=(-0.03, 0.03),  # -3% to +3% strain
         sizes=('primitive', '3x3x3'),  # primitive and 3x3x3 supercells
         vasp_profile_name='static',  # Change this to your desired VASP profile
         hpc_profile_name='PSFC-GPU',
-        base_output_dir='../data/elastic_jobs_total/elastic_jobs_V_rich_alloy'
+        base_output_dir=f'../data/elastic_jobs_total/elastic_jobs_V-{x_cr}Cr-{x_ti}Ti-{x_w}W-{x_zr}Zr'
     )

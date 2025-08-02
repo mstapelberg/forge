@@ -4,7 +4,6 @@
 import numpy as np
 from ase import Atoms
 from ase.io import read, write
-from mace.calculators import MACECalculator
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from scipy.spatial.distance import pdist, squareform
 import os
@@ -15,9 +14,33 @@ import torch
 import time
 import matplotlib.pyplot as plt
 import copy # Import the copy module
-# --- New Imports for Autograd ---
-from mace.data import AtomicData, config_from_atoms
-from mace.tools.torch_geometric import Batch
+
+# --- Conditional MACE imports for autograd functionality ---
+try:
+    from mace.calculators import MACECalculator
+    from mace.data import AtomicData, config_from_atoms
+    from mace.tools.torch_geometric import Batch
+    MACE_AUTOGRAD_AVAILABLE = True
+except ImportError:
+    MACE_AUTOGRAD_AVAILABLE = False
+    # Placeholder classes for when MACE is not available
+    MACECalculator = None
+    AtomicData = None
+    config_from_atoms = None
+    Batch = None
+
+# --- Conditional NequIP imports for autograd functionality ---
+try:
+    from nequip.data import AtomicDataDict, from_ase
+    NEQUIP_AUTOGRAD_AVAILABLE = True
+except ImportError:
+    NEQUIP_AUTOGRAD_AVAILABLE = False
+    # Placeholder classes for when NequIP is not available  
+    AtomicDataDict = None
+    from_ase = None
+
+# --- New Imports for Generic Calculator Interface ---
+from forge.calculators import create_ensemble_calculator, BaseEnsembleCalculator
 
 
 class Timer:
@@ -67,7 +90,7 @@ class GradientAdversarialOptimizer:
 
     def __init__(self, model_paths, device='cuda', learning_rate=0.01,
                  temperature=0.86, include_probability=True, debug=False,
-                 energy_list=None, use_energy_per_atom=False):
+                 energy_list=None, use_energy_per_atom=False, backend='auto'):
         """Initialize optimizer with model paths.
 
         Args:
@@ -79,6 +102,7 @@ class GradientAdversarialOptimizer:
             debug: Whether to print debug messages
             energy_list: List of energies (total or per atom) for normalization constant calculation
             use_energy_per_atom: If True, treat energy_list as energy/atom and use energy/atom for probability calc.
+            backend: Calculator backend to use ('mace', 'allegro', or 'auto' for auto-detection)
         """
         self.model_paths = model_paths
         self.device = device
@@ -89,21 +113,33 @@ class GradientAdversarialOptimizer:
         self.timer = Timer(debug=debug)
         self.dtype = torch.float32
         self.use_energy_per_atom = use_energy_per_atom
+        self.backend = backend
         
-        # Initialize ASE calculator for force calculations and to hold models
+        # Initialize ensemble calculator using the generic interface
         self.timer.start("calculator_init")
         try:
-            self.calculator = MACECalculator(
+            self.calculator = create_ensemble_calculator(
                 model_paths=self.model_paths,
+                backend=self.backend,
                 device=self.device,
                 default_dtype='float32'
             )
+            if self.debug:
+                print(f"[DEBUG] Initialized {type(self.calculator).__name__} with {len(self.calculator.models)} models")
         except Exception as e:
-            print(f"[ERROR] Failed to initialize MACECalculator in optimizer: {e}")
+            print(f"[ERROR] Failed to initialize ensemble calculator in optimizer: {e}")
             raise
         
-        # The models are the raw torch models, stored on the calculator
-        self.models = self.calculator.models
+        # Get the raw torch models - for Allegro, we need to access them differently
+        if self.backend.lower() in ['allegro', 'nequip']:
+            # For Allegro backend, the raw models are stored in calculator._models
+            self.models = self.calculator._models
+        else:
+            # For other backends like MACE
+            self.models = self.calculator.models
+        
+        # For gradient computation, we want parameters to allow gradient flow but not accumulate gradients
+        # Don't modify requires_grad here - we'll handle it during optimization
 
         self.timer.stop("calculator_init")
 
@@ -241,17 +277,7 @@ class GradientAdversarialOptimizer:
 
         # --- Setup for PyTorch Autograd ---
         self.timer.start("autograd_setup")
-        # Get parameters from the initialized calculator
-        ref_model = self.models[0]
-        r_max = ref_model.r_max.item()
-        z_table = self.calculator.z_table # Get z_table from the calculator
         
-        # Create a data object for MACE, which is then batched.
-        config = config_from_atoms(atoms)
-        data = AtomicData.from_config(config, z_table=z_table, cutoff=r_max)
-        # Move the data to the correct device after batching.
-        data = Batch.from_data_list([data]).to(self.device)
-
         # Displacement tensor will be optimized.
         displacement = torch.zeros(
             (len(atoms), 3),
@@ -259,9 +285,24 @@ class GradientAdversarialOptimizer:
             device=self.device,
             dtype=self.dtype
         )
-        # Keep track of the original positions on the correct device.
-        original_positions_tensor = data.positions.clone()
-
+        
+        # Backend-specific setup
+        if self.backend.lower() in ['mace']:
+            if not MACE_AUTOGRAD_AVAILABLE:
+                raise ImportError(
+                    "MACE backend requested but MACE is not available for autograd optimization. "
+                    "Please install MACE or use a different backend."
+                )
+            setup_result = self._setup_mace_autograd(atoms, displacement)
+        elif self.backend.lower() in ['allegro', 'nequip']:
+            setup_result = self._setup_allegro_autograd(atoms, displacement)
+        else:
+            raise NotImplementedError(
+                f"PyTorch autograd optimization is not yet implemented for backend '{self.backend}'. "
+                f"Supported backends: 'mace', 'allegro', 'nequip'"
+            )
+        
+        original_positions_tensor = setup_result['original_positions']
         optimizer = torch.optim.Adam([displacement], lr=self.learning_rate)
         self.timer.stop("autograd_setup")
 
@@ -295,13 +336,30 @@ class GradientAdversarialOptimizer:
 
             # --- Forward Pass ---
             self.timer.start("forward_pass")
-            # Update positions in the data dictionary for the forward pass
+            # Update positions using backend-specific approach
             new_positions_tensor = original_positions_tensor + displacement
-            data.positions = new_positions_tensor
+            
+            # Debug: Check if gradients are preserved
+            if self.debug:
+                print(f"[DEBUG] displacement.requires_grad: {displacement.requires_grad}")
+                print(f"[DEBUG] new_positions_tensor.requires_grad: {new_positions_tensor.requires_grad}")
+                print(f"[DEBUG] new_positions_tensor.grad_fn: {new_positions_tensor.grad_fn}")
+            
+            if setup_result['backend_type'] == 'mace':
+                data = setup_result['data']
+                data.positions = new_positions_tensor
+                positions_for_distance_check = new_positions_tensor
+            elif setup_result['backend_type'] == 'allegro':
+                data = setup_result['data'].copy()  # Create a copy to avoid modifying original
+                # Ensure the new positions tensor retains gradients
+                data[AtomicDataDict.POSITIONS_KEY] = new_positions_tensor
+                positions_for_distance_check = new_positions_tensor
+            else:
+                raise ValueError(f"Unknown backend type: {setup_result['backend_type']}")
 
             # --- Minimum Distance Check (with torch) ---
             if len(atoms) > 1:
-                dists = torch.pdist(data.positions)
+                dists = torch.pdist(positions_for_distance_check)
                 min_dist_val = torch.min(dists)
                 if min_dist_val < min_distance:
                     if self.debug:
@@ -319,14 +377,73 @@ class GradientAdversarialOptimizer:
             # --- Calculate forces and variance using autograd ---
             forces_list = []
             energy_list = [] # For probability calculation if needed
-            for torch_model in self.models: # Iterate directly over raw torch models
-                # model expects a dict, not a Batch object.
-                # We set training=True to enable creation of the graph for second derivatives, which is required for autograd.
-                output = torch_model(data.to_dict(), training=True, compute_force=True)
-                forces_list.append(output['forces'])
-                # Always append energy for logging, even if probability is not used in loss
-                if 'energy' in output:
-                    energy_list.append(output['energy'])
+            
+            if setup_result['backend_type'] == 'mace':
+                for torch_model in self.models: # Iterate directly over raw torch models
+                    # model expects a dict, not a Batch object.
+                    # We set training=True to enable creation of the graph for second derivatives, which is required for autograd.
+                    output = torch_model(data.to_dict(), training=True, compute_force=True)
+                    forces_list.append(output['forces'])
+                    # Always append energy for logging, even if probability is not used in loss
+                    if 'energy' in output:
+                        energy_list.append(output['energy'])
+            elif setup_result['backend_type'] == 'allegro':
+                for i, torch_model in enumerate(self.models): # Iterate directly over raw torch models
+                    # Set model to training mode to enable gradient computation
+                    torch_model.train()
+                    
+                    # Debug: Check data before model call
+                    if self.debug and i == 0:  # Only debug for first model
+                        pos_tensor = data[AtomicDataDict.POSITIONS_KEY]
+                        print(f"[DEBUG] Model input positions.requires_grad: {pos_tensor.requires_grad}")
+                        print(f"[DEBUG] Model input positions.grad_fn: {pos_tensor.grad_fn}")
+                    
+                    # For NequIP/Allegro, use the forces directly from model output
+                    with torch.enable_grad():
+                        # Ensure position tensor requires gradients
+                        positions = data[AtomicDataDict.POSITIONS_KEY]
+                        if not positions.requires_grad:
+                            positions = positions.requires_grad_(True)
+                            data[AtomicDataDict.POSITIONS_KEY] = positions
+                        
+                        # Get output with gradients enabled - model computes forces directly
+                        output = torch_model(data)
+                        
+                        # Debug: Check what keys are available
+                        if self.debug and i == 0:
+                            print(f"[DEBUG] NequIP model output keys: {list(output.keys())}")
+                        
+                        # Get forces directly from model output (don't detach!)
+                        if AtomicDataDict.FORCE_KEY in output:
+                            forces = output[AtomicDataDict.FORCE_KEY]
+                        elif 'forces' in output:
+                            forces = output['forces']
+                        else:
+                            raise KeyError(f"No forces found in model output. Available keys: {list(output.keys())}")
+                        
+                        # Get energy for logging
+                        if AtomicDataDict.TOTAL_ENERGY_KEY in output:
+                            energy = output[AtomicDataDict.TOTAL_ENERGY_KEY]
+                        elif 'total_energy' in output:
+                            energy = output['total_energy']
+                        elif 'energy' in output:
+                            energy = output['energy']
+                        else:
+                            energy = None
+                        
+                        # Debug: Check force gradients
+                        if self.debug and i == 0:
+                            print(f"[DEBUG] Model forces.requires_grad: {forces.requires_grad}")
+                            print(f"[DEBUG] Model forces.grad_fn: {forces.grad_fn}")
+                            if energy is not None:
+                                print(f"[DEBUG] Model energy.requires_grad: {energy.requires_grad}")
+                        
+                        forces_list.append(forces)
+                        if energy is not None:
+                            energy_list.append(energy)
+                    
+                    # Return model to eval mode
+                    torch_model.eval()
 
             forces_tensor = torch.stack(forces_list)
             
@@ -518,6 +635,75 @@ class GradientAdversarialOptimizer:
         plt.close()
 
         self.timer.stop("create_plots")
+
+    def _setup_mace_autograd(self, atoms, displacement):
+        """Setup MACE-specific data structures for autograd optimization."""
+        if not MACE_AUTOGRAD_AVAILABLE:
+            raise ImportError("MACE not available for autograd optimization")
+        
+        # Get parameters from the initialized calculator  
+        ref_model = self.models[0]
+        r_max = ref_model.r_max.item()
+        z_table = self.calculator.z_table
+        
+        # Create a data object for MACE, which is then batched.
+        config = config_from_atoms(atoms)
+        data = AtomicData.from_config(config, z_table=z_table, cutoff=r_max)
+        # Move the data to the correct device after batching.
+        data = Batch.from_data_list([data]).to(self.device)
+        
+        # Keep track of the original positions on the correct device.
+        original_positions_tensor = data.positions.clone()
+        
+        return {
+            'data': data,
+            'original_positions': original_positions_tensor,
+            'backend_type': 'mace'
+        }
+    
+    def _setup_allegro_autograd(self, atoms, displacement):
+        """Setup Allegro/NequIP-specific data structures for autograd optimization."""
+        if not NEQUIP_AUTOGRAD_AVAILABLE:
+            raise ImportError(
+                "NequIP/Allegro not available for autograd optimization. "
+                "Please install NequIP with: pip install nequip"
+            )
+        
+        # Get the first calculator to access transforms and setup
+        ref_calc = self.calculator._calculators[0]
+        
+        # Prepare data using NequIP's pipeline
+        data = from_ase(atoms)
+        for transform in ref_calc.transforms:
+            data = transform(data)
+        data = AtomicDataDict.to_(data, self.device)
+        
+        # Convert positions to tensor with proper dtype - we'll add gradients later
+        # Use clone() instead of torch.tensor() to avoid warning
+        positions_tensor = data[AtomicDataDict.POSITIONS_KEY]
+        if isinstance(positions_tensor, torch.Tensor):
+            original_positions_tensor = positions_tensor.detach().clone().to(device=self.device, dtype=self.dtype)
+        else:
+            original_positions_tensor = torch.tensor(
+                positions_tensor, 
+                device=self.device, 
+                dtype=self.dtype,
+                requires_grad=False
+            )
+        
+        # IMPORTANT: Ensure all data tensors are in the correct dtype to avoid mismatch errors
+        # Packaged models might load with float64, but we want consistent float32
+        for key, value in data.items():
+            if isinstance(value, torch.Tensor) and value.dtype.is_floating_point:
+                # Convert floating point tensors to the target dtype
+                data[key] = value.to(dtype=self.dtype, device=self.device)
+        
+        return {
+            'data': data,
+            'original_positions': original_positions_tensor,
+            'backend_type': 'allegro',
+            'ref_calc': ref_calc  # Store reference to calculator for transforms
+        }
 
     def _save_results(self, output_path, struct_name, initial_atoms, best_atoms,
                      initial_variance, best_variance, initial_energy, best_energy,

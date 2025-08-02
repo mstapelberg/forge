@@ -980,7 +980,9 @@ class VacancyDiffusion:
                 steps=neb_steps,
                 seed=self.seed,
                 device=device,
-                logfile=logfile  # Pass logfile parameter
+                logfile=logfile,  # Pass logfile parameter
+                calculator_type=self.backend,  # Pass backend type
+                species_to_type_name=self.species_to_type_name  # Pass species mapping
             )
             result = neb_calc.run()
             

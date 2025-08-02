@@ -19,7 +19,7 @@ import torch
 from monty.json import MontyEncoder, MontyDecoder
 import warnings
 from forge.workflows.relax import relax
-from forge.workflows.calculator_interface import UnifiedCalculator, create_calculator
+from forge.calculators.factory import create_ensemble_calculator
 
 class NEBMethod(Enum):
     """NEB calculation method."""
@@ -95,14 +95,12 @@ class NEBCalculation:
         self.species_to_type_name = species_to_type_name or {}
         np.random.seed(self.seed)  # Set seed for reproducibility
 
-    def _create_calculator(self) -> UnifiedCalculator:
-        """Create a new unified calculator instance."""
-        return create_calculator(
-            model_path=self.model_path,
-            calculator_type=self.calculator_type,
+    def _create_calculator(self):
+        """Create a new ensemble calculator instance."""
+        return create_ensemble_calculator(
+            model_paths=self.model_path,
+            backend=self.backend,
             device=self.device,
-            default_dtype="float32",
-            use_cueq=self.use_cueq,
             species_to_type_name=self.species_to_type_name
         )
 
@@ -130,7 +128,13 @@ class NEBCalculation:
         # Attach calculators only to intermediate images
         for image in images[1:-1]:
             calculator = self._create_calculator()
-            image.calc = calculator.calculator
+            # Handle both old UnifiedCalculator and new ensemble calculators
+            if hasattr(calculator, 'calculator'):
+                # Old UnifiedCalculator interface
+                image.calc = calculator.calculator
+            else:
+                # New ensemble calculator or direct ASE calculator
+                image.calc = calculator
 
         # Run optimization with logfile control
         opt = FIRE(neb, logfile=self.logfile)
@@ -597,7 +601,7 @@ class VacancyDiffusion:
         nn_cutoff: float = 2.8,
         nnn_cutoff: float = 3.2,
         seed: int = 42,
-        calculator_type: Optional[str] = None,
+        backend: Optional[str] = None,
         species_to_type_name: Optional[Dict[str, int]] = None,
     ):
         """
@@ -609,7 +613,7 @@ class VacancyDiffusion:
             nn_cutoff: Cutoff radius for nearest neighbors
             nnn_cutoff: Cutoff radius for next-nearest neighbors
             seed: Random seed for reproducibility
-            calculator_type: Type of calculator ('mace', 'allegro', or None for auto-detect)
+            backend: Calculator backend ('mace', 'allegro', or None for auto-detect)
             species_to_type_name: Species mapping for Allegro
         """
         self.atoms = atoms.copy()
@@ -617,7 +621,7 @@ class VacancyDiffusion:
         self.nn_cutoff = nn_cutoff
         self.nnn_cutoff = nnn_cutoff
         self.seed = seed
-        self.calculator_type = calculator_type
+        self.backend = backend
         self.species_to_type_name = species_to_type_name or {}
         self.analyzer = NEBAnalyzer()
         
@@ -747,27 +751,23 @@ class VacancyDiffusion:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         use_cueq = device == "cuda"
         
-        start_calculator = create_calculator(
-            model_path=self.model_path if hasattr(self, 'model_path') else [self.model_path], 
-            calculator_type=self.calculator_type,
+        start_calculator = create_ensemble_calculator(
+            model_paths=self.model_path, 
+            backend=self.backend,
             device=device, 
-            default_dtype="float32", 
-            use_cueq=use_cueq,
             species_to_type_name=self.species_to_type_name
         )
 
-        end_calculator = create_calculator(
-            model_path=self.model_path if hasattr(self, 'model_path') else [self.model_path], 
-            calculator_type=self.calculator_type,
+        end_calculator = create_ensemble_calculator(
+            model_paths=self.model_path, 
+            backend=self.backend,
             device=device, 
-            default_dtype="float32", 
-            use_cueq=use_cueq,
             species_to_type_name=self.species_to_type_name
         )
 
         rel_start_atoms = relax(
             atoms=start_atoms,
-            calculator=start_calculator.calculator,
+            calculator=start_calculator,
             relax_cell=False,  # Keep cell fixed
             fmax=relax_fmax,
             steps=relax_steps,
@@ -778,7 +778,7 @@ class VacancyDiffusion:
 
         rel_end_atoms = relax(
             atoms=end_atoms,
-            calculator=end_calculator.calculator,
+            calculator=end_calculator,
             relax_cell=False,  # Keep cell fixed
             fmax=relax_fmax,
             steps=relax_steps,

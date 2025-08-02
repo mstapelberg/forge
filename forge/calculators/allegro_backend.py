@@ -14,10 +14,13 @@ try:
     from nequip.model.inference_models import load_compiled_model
     from nequip.scripts._compile_utils import PAIR_NEQUIP_INPUTS, ASE_OUTPUTS
     from nequip.nn import graph_model
+    from nequip.data import AtomicDataDict, from_ase
     NEQUIP_AVAILABLE = True
 except ImportError:
     NEQUIP_AVAILABLE = False
     NequIPCalculator = None
+    AtomicDataDict = None
+    from_ase = None
 
 
 class AllegroBackend(BaseEnsembleCalculator):
@@ -44,6 +47,7 @@ class AllegroBackend(BaseEnsembleCalculator):
             
         self._device = device
         self._kwargs = kwargs  # Store kwargs for passing to calculators
+        self._atoms = None  # Store attached atoms for ASE interface
         
         # Store model paths for reference
         if isinstance(model_paths, str):
@@ -96,43 +100,54 @@ class AllegroBackend(BaseEnsembleCalculator):
                         else:
                             self._chemical_symbols = self._type_names
                     
-                elif file_extension == '.zip':
+                elif file_extension == '.zip' or model_path.endswith('.nequip.zip'):
                     # Packaged model - use _from_packaged_model (preserves gradients!)
-                    print(f"[INFO] Loading packaged model (.zip): {model_path_obj.name}")
-                    
+                    print(f"[INFO] Loading packaged model: {model_path_obj.name}")
                     calc = NequIPCalculator._from_packaged_model(
                         model_path,
                         device=device,
-                        chemical_symbols=kwargs.get('species_to_type_name', None)
-                        # Note: _from_packaged_model may not support all kwargs, so we keep it simple
+                        chemical_symbols=kwargs.get('species_to_type_name', None),
+                        **kwargs  # Pass kwargs like default_dtype
                     )
-                    
-                    # IMPORTANT: Convert model to float32 to avoid dtype mismatches
-                    if hasattr(calc.model, 'float'):
-                        calc.model = calc.model.float()  # Convert to float32
                     
                     # Extract metadata for packaged models
                     if i == 0:
                         # For packaged models, metadata is available through the model
-                        self._r_max = float(calc.model.metadata[graph_model.R_MAX_KEY])
-                        self._type_names = calc.model.metadata[graph_model.TYPE_NAMES_KEY]
-                        if isinstance(self._type_names, str):
-                            self._chemical_symbols = self._type_names.split(" ")
+                        if hasattr(calc, 'model') and hasattr(calc.model, 'metadata'):
+                            self._r_max = float(calc.model.metadata[graph_model.R_MAX_KEY])
+                            self._type_names = calc.model.metadata[graph_model.TYPE_NAMES_KEY]
+                            if isinstance(self._type_names, str):
+                                self._chemical_symbols = self._type_names.split(" ")
+                            else:
+                                self._chemical_symbols = self._type_names
                         else:
-                            self._chemical_symbols = self._type_names
-                
+                            # Cannot proceed without metadata - r_max is critical for calculations
+                            raise RuntimeError(
+                                f"Failed to extract metadata from packaged model: {model_path}. "
+                                f"The model does not have accessible metadata. "
+                                f"This is required for proper r_max and chemical symbols extraction. "
+                                f"Please ensure the model file is valid and contains the necessary metadata."
+                            )
+                    
                 else:
-                    raise ValueError(f"Unsupported model file format: {file_extension}. Supported formats: .pt2 (compiled), .zip (packaged)")
+                    raise ValueError(f"Unsupported model file format: {file_extension}. "
+                                   f"Supported formats: .pt2 (compiled), .zip/.nequip.zip (packaged)")
                 
                 self._calculators.append(calc)
-                
-                # Store reference to the underlying model for accessing properties
-                # The actual model is stored in calc.model
-                self._models.append(calc.model)
+                # Store the model for reference (but we'll use calculator interface for calculations)
+                if hasattr(calc, 'model'):
+                    self._models.append(calc.model)
+                else:
+                    # For compiled models, the model might not be directly accessible
+                    self._models.append(None)
                 
         except Exception as e:
-            print(f"[ERROR] Failed to initialize NequIPCalculator(s): {e}")
-            raise
+            raise RuntimeError(f"Failed to initialize Allegro backend: {e}")
+        
+        if not self._calculators:
+            raise RuntimeError("No calculators were successfully initialized")
+        
+        print(f"Successfully initialized AllegroBackend with {len(self._calculators)} model(s)")
     
     def forces_all(self, atoms: Atoms) -> np.ndarray:
         """Calculate forces using all models in the ensemble.
@@ -145,19 +160,45 @@ class AllegroBackend(BaseEnsembleCalculator):
         """
         forces_list = []
         
-        for calc in self._calculators:
-            # Clear previous results to prevent caching issues
-            atoms.results = {}
-            atoms.calc = calc
-            try:
-                # Force energy calculation to ensure forces are computed
-                atoms.get_potential_energy()
-                forces = atoms.get_forces()
+        # Store original calculator and temporarily remove it to avoid from_ase issues
+        original_calc = atoms.calc
+        atoms.calc = None
+        
+        try:
+            for i, calc in enumerate(self._calculators):
+                # Check if this is a compiled model (no gradients) or packaged model (with gradients)
+                if self._models[i] is None:
+                    # Compiled model - use calculator interface
+                    atoms_copy = atoms.copy()
+                    atoms_copy.calc = calc
+                    forces = atoms_copy.get_forces()
+                else:
+                    # Packaged model - use raw model directly (supports gradients)
+                    data = from_ase(atoms)
+                    
+                    # Apply transforms from the calculator
+                    for transform in calc.transforms:
+                        data = transform(data)
+                    
+                    # Move to device
+                    data = AtomicDataDict.to_(data, self._device)
+                    
+                    # Get the model from the calculator
+                    model = self._models[i]
+                    
+                    # Ensure model is in eval mode but parameters require gradients
+                    model.eval()
+                    for param in model.parameters():
+                        param.requires_grad_(True)
+                    
+                    # Forward pass to get forces (allow gradients for MCMC optimization)
+                    output = model(data)
+                    forces = output[AtomicDataDict.FORCE_KEY].cpu().detach().numpy()
+                
                 forces_list.append(forces)
-            except Exception as e:
-                print(f"Warning: Force calculation failed for model: {e}")
-                # Return zeros if calculation fails
-                return np.zeros((len(self._calculators), len(atoms), 3))
+        finally:
+            # Restore original calculator
+            atoms.calc = original_calc
         
         return np.array(forces_list)
     
@@ -170,71 +211,173 @@ class AllegroBackend(BaseEnsembleCalculator):
         Returns:
             Energies array of shape (n_models,)
         """
-        energies = []
+        energies_list = []
         
-        for calc in self._calculators:
-            atoms.results = {}
-            atoms.calc = calc
-            try:
-                energy = atoms.get_potential_energy()
-                energies.append(energy)
-            except Exception as e:
-                print(f"Warning: Energy calculation failed for model: {e}")
-                # Return zeros if calculation fails
-                return np.zeros(len(self._calculators))
+        # Store original calculator and temporarily remove it to avoid from_ase issues
+        original_calc = atoms.calc
+        atoms.calc = None
         
-        return np.array(energies)
+        try:
+            for i, calc in enumerate(self._calculators):
+                # Check if this is a compiled model (no gradients) or packaged model (with gradients)
+                if self._models[i] is None:
+                    # Compiled model - use calculator interface
+                    atoms_copy = atoms.copy()
+                    atoms_copy.calc = calc
+                    energy = atoms_copy.get_potential_energy()
+                else:
+                    # Packaged model - use raw model directly (supports gradients)
+                    data = from_ase(atoms)
+                    
+                    # Apply transforms from the calculator
+                    for transform in calc.transforms:
+                        data = transform(data)
+                    
+                    # Move to device
+                    data = AtomicDataDict.to_(data, self._device)
+                    
+                    # Get the model from the calculator
+                    model = self._models[i]
+                    
+                    # Ensure model is in eval mode but parameters require gradients
+                    model.eval()
+                    for param in model.parameters():
+                        param.requires_grad_(True)
+                    
+                    # Forward pass to get energy (allow gradients for MCMC optimization)
+                    output = model(data)
+                    energy = output[AtomicDataDict.TOTAL_ENERGY_KEY].cpu().detach().numpy()
+                
+                energies_list.append(energy)
+        finally:
+            # Restore original calculator
+            atoms.calc = original_calc
+        
+        return np.array(energies_list)
     
     @property
     def device(self) -> str:
-        """Get the device used by the calculator."""
+        """Get the device (cpu/cuda) used by the calculator."""
         return self._device
     
     @property
     def models(self) -> List[Any]:
         """Get the raw models in the ensemble."""
-        return self._models
+        # Filter out None values (compiled models where raw model is not accessible)
+        return [model for model in self._models if model is not None]
     
     @property
     def z_table(self) -> Any:
-        """Get the atomic number mapping table.
-        
-        For NequIP/Allegro models, this returns the chemical symbols from metadata.
-        """
-        if self._chemical_symbols is not None:
-            return self._chemical_symbols
-        elif self._calculators:
-            # Fallback to getting from calculator
-            try:
-                calc = self._calculators[0]
-                if hasattr(calc, 'chemical_symbols'):
-                    return calc.chemical_symbols
-                # Try to get from transforms
-                for transform in calc.transforms:
-                    if hasattr(transform, 'chemical_symbols'):
-                        return transform.chemical_symbols
-                return None
-            except Exception as e:
-                print(f"[WARN] Failed to get z_table from NequIP calculator: {e}")
-                return None
-        else:
-            raise RuntimeError("No calculators loaded")
+        """Get the atomic number mapping table."""
+        if self._calculators:
+            return self._calculators[0].z_table
+        return None
     
     @property
     def r_max(self) -> float:
         """Get the cutoff radius for the models."""
-        if self._r_max is not None:
-            return self._r_max
-        else:
-            print("[WARN] r_max not available from metadata, using default 5.0")
-            return 5.0
+        return self._r_max
     
     def get_mean_forces(self, atoms: Atoms) -> np.ndarray:
-        """Get mean forces across ensemble (convenience method)."""
-        all_forces = self.forces_all(atoms)
-        return np.mean(all_forces, axis=0)
+        """Get mean forces across all models."""
+        forces = self.forces_all(atoms)
+        return np.mean(forces, axis=0)
     
     def get_mean_energy(self, atoms: Atoms) -> float:
-        """Get mean energy across ensemble (convenience method)."""
-        all_energies = self.energies_all(atoms)
-        return float(np.mean(all_energies)) 
+        """Get mean energy across all models."""
+        energies = self.energies_all(atoms)
+        return float(np.mean(energies))
+    
+    def stresses_all(self, atoms: Atoms) -> np.ndarray:
+        """Calculate stresses using all models in the ensemble.
+        
+        Args:
+            atoms: ASE Atoms object to calculate stresses for
+            
+        Returns:
+            Stresses array of shape (n_models, 6) in Voigt notation
+        """
+        stresses_list = []
+        
+        # Store original calculator and temporarily remove it to avoid from_ase issues
+        original_calc = atoms.calc
+        atoms.calc = None
+        
+        try:
+            for i, calc in enumerate(self._calculators):
+                # Check if this is a compiled model (no gradients) or packaged model (with gradients)
+                if self._models[i] is None:
+                    # Compiled model - use calculator interface
+                    atoms_copy = atoms.copy()
+                    atoms_copy.calc = calc
+                    stress = atoms_copy.get_stress()
+                else:
+                    # Packaged model - use raw model directly (supports gradients)
+                    data = from_ase(atoms)
+                    
+                    # Apply transforms from the calculator
+                    for transform in calc.transforms:
+                        data = transform(data)
+                    
+                    # Move to device
+                    data = AtomicDataDict.to_(data, self._device)
+                    
+                    # Get the model from the calculator
+                    model = self._models[i]
+                    
+                    # Ensure model is in eval mode but parameters require gradients
+                    model.eval()
+                    for param in model.parameters():
+                        param.requires_grad_(True)
+                    
+                    # Forward pass to get stress (allow gradients for MCMC optimization)
+                    output = model(data)
+                    stress = output[AtomicDataDict.STRESS_KEY].cpu().detach().numpy()
+                
+                stresses_list.append(stress)
+        finally:
+            # Restore original calculator
+            atoms.calc = original_calc
+        
+        return np.array(stresses_list)
+    
+    def get_mean_stress(self, atoms: Atoms) -> np.ndarray:
+        """Get mean stress across all models."""
+        stresses = self.stresses_all(atoms)
+        return np.mean(stresses, axis=0)
+    
+    # ASE calculator interface methods - directly calculate properties
+    def get_potential_energy(self, atoms: Atoms = None, force_consistent: bool = False) -> float:
+        """ASE calculator interface: Get potential energy (mean of ensemble)."""
+        if atoms is None:
+            atoms = self._atoms
+        if atoms is None:
+            raise ValueError("No atoms provided and no atoms attached to calculator")
+        
+        return self.get_mean_energy(atoms)
+    
+    def get_forces(self, atoms: Atoms = None) -> np.ndarray:
+        """ASE calculator interface: Get forces (mean of ensemble)."""
+        if atoms is None:
+            atoms = self._atoms
+        if atoms is None:
+            raise ValueError("No atoms provided and no atoms attached to calculator")
+        
+        return self.get_mean_forces(atoms)
+    
+    def get_stress(self, atoms: Atoms = None) -> np.ndarray:
+        """ASE calculator interface: Get stress tensor (mean of ensemble)."""
+        if atoms is None:
+            atoms = self._atoms
+        if atoms is None:
+            raise ValueError("No atoms provided and no atoms attached to calculator")
+        
+        return self.get_mean_stress(atoms)
+    
+    def set_atoms(self, atoms: Atoms):
+        """ASE calculator interface: Set atoms for the calculator."""
+        self._atoms = atoms
+    
+    def get_atoms(self) -> Atoms:
+        """ASE calculator interface: Get atoms from the calculator."""
+        return self._atoms 

@@ -16,8 +16,8 @@ def example_basic_usage():
     print("=== Basic HybridNEBWorkflow Usage ===")
     
     # Configuration
-    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
-    output_dir = "../data/pel_het_search/module_example_results"
+    model_path = "../../data/potentials/allegro/exploit_rmax6.00_lmax2_layers2_mlp384_seed42.nequip.zip"
+    output_dir = "../../data/pel_het_search/module_example_results"
     
     # Example existing compositions
     existing_compositions = [
@@ -31,7 +31,7 @@ def example_basic_usage():
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=42,
         output_dir=output_dir,
-        calculator_type=None,  # Auto-detect
+        backend="allegro",
         species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
@@ -41,7 +41,7 @@ def example_basic_usage():
         n_new_compositions=1,
         elements=['V', 'Cr', 'Ti', 'W', 'Zr'],
         crystal_type='bcc',
-        dimensions=[4, 4, 4],  # Small for testing
+        dimensions=[3, 3, 3],  # Small for testing
         lattice_constant=3.01,
         temperature=873.15,
         n_steps=100,  # Few cycles for testing

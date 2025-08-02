@@ -627,12 +627,18 @@ class HybridNEBWorkflow:
         if plot_compositions and len(self.compositions) > 1:
             print("Creating composition analysis plots...")
             
+            # Use the proper workflow: reduce and cluster, then visualize
+            embeddings, clusters, metadata = self.composition_analyzer.reduce_and_cluster(
+                compositions=self.compositions,
+                n_clusters=min(5, len(self.compositions)),
+                comp_type='new',
+                seed=self.seed
+            )
+            
             # Create composition visualization
             self.composition_analyzer.visualize_compositions(
-                embeddings=np.array([[comp.get('V', 0), comp.get('Cr', 0), 
-                                    comp.get('Ti', 0), comp.get('W', 0), 
-                                    comp.get('Zr', 0)] for comp in self.compositions]),
-                metadata=[{'composition': comp} for comp in self.compositions],
+                embeddings=embeddings,
+                metadata=metadata,
                 save_path=self.output_dir / "composition_analysis.png"
             )
         

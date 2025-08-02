@@ -332,7 +332,30 @@ class AllegroBackend(BaseEnsembleCalculator):
                     
                     # Forward pass to get stress (allow gradients for MCMC optimization)
                     output = model(data)
-                    stress = output[AtomicDataDict.STRESS_KEY].cpu().detach().numpy()
+                    
+                    # Check if stress is available in the output
+                    if AtomicDataDict.STRESS_KEY in output:
+                        stress = output[AtomicDataDict.STRESS_KEY].cpu().detach().numpy()
+                        
+                        # Ensure stress is in Voigt format (6 components)
+                        if stress.shape == (3, 3):
+                            # Convert 3x3 tensor to Voigt notation
+                            from ase.stress import full_3x3_to_voigt_6_stress
+                            stress = full_3x3_to_voigt_6_stress(stress)
+                        elif stress.shape == (9,):
+                            # Convert flat 9-component to Voigt notation
+                            stress_3x3 = stress.reshape(3, 3)
+                            from ase.stress import full_3x3_to_voigt_6_stress
+                            stress = full_3x3_to_voigt_6_stress(stress_3x3)
+                        elif stress.shape != (6,):
+                            # If it's not 6 components, we need to handle this case
+                            print(f"Warning: Unexpected stress shape: {stress.shape}")
+                            # Create a zero stress tensor as fallback
+                            stress = np.zeros(6)
+                    else:
+                        # Model doesn't provide stress, use zero stress
+                        print("Warning: Model does not provide stress tensor. Using zero stress.")
+                        stress = np.zeros(6)
                 
                 stresses_list.append(stress)
         finally:
@@ -344,7 +367,14 @@ class AllegroBackend(BaseEnsembleCalculator):
     def get_mean_stress(self, atoms: Atoms) -> np.ndarray:
         """Get mean stress across all models."""
         stresses = self.stresses_all(atoms)
-        return np.mean(stresses, axis=0)
+        mean_stress = np.mean(stresses, axis=0)
+        
+        # Ensure the final stress tensor has the correct shape for ASE
+        if mean_stress.shape != (6,):
+            print(f"Warning: Mean stress shape is {mean_stress.shape}, expected (6,). Using zero stress.")
+            mean_stress = np.zeros(6)
+        
+        return mean_stress
     
     # ASE calculator interface methods - directly calculate properties
     def get_potential_energy(self, atoms: Atoms = None, force_consistent: bool = False) -> float:

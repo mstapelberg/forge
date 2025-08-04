@@ -55,13 +55,16 @@ def test_ase_interface_methods():
                 # Test ASE interface methods
                 print(f"✅ Successfully created {backend} calculator")
                 
-                # Test set_atoms and get_atoms
-                calc.set_atoms(atoms)
-                retrieved_atoms = calc.get_atoms()
-                if retrieved_atoms is atoms:
-                    print("✅ set_atoms() and get_atoms() work correctly")
+                # Test set_atoms and get_atoms (only for ensemble calculators)
+                if hasattr(calc, 'set_atoms'):
+                    calc.set_atoms(atoms)
+                    retrieved_atoms = calc.get_atoms()
+                    if retrieved_atoms is atoms:
+                        print("✅ set_atoms() and get_atoms() work correctly")
+                    else:
+                        print("❌ set_atoms() and get_atoms() failed")
                 else:
-                    print("❌ set_atoms() and get_atoms() failed")
+                    print("ℹ️  Native calculator - set_atoms() not available (expected)")
                 
                 # Test calculation_required
                 required = calc.calculation_required(atoms, ['energy', 'forces'])
@@ -113,7 +116,7 @@ def test_interface_inheritance():
         from forge.calculators.allegro_backend import AllegroBackend
         from forge.calculators.mace_backend import MACEBackend
         
-        # Check that backends inherit from BaseEnsembleCalculator
+        # Check that ensemble backends inherit from BaseEnsembleCalculator
         if issubclass(AllegroBackend, BaseEnsembleCalculator):
             print("✅ AllegroBackend inherits from BaseEnsembleCalculator")
         else:

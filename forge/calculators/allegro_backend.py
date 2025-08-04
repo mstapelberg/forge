@@ -8,6 +8,9 @@ from pathlib import Path
 
 from .interface import BaseEnsembleCalculator
 
+# Global cache for loaded models to avoid reloading from disk
+_model_cache = {}
+
 # Conditional import for NequIP/Allegro
 try:
     from nequip.ase import NequIPCalculator
@@ -70,68 +73,81 @@ class AllegroBackend(BaseEnsembleCalculator):
                 if not Path(model_path).exists():
                     raise FileNotFoundError(f"Model file not found: {model_path}")
                 
+                # Create cache key for this model
+                cache_key = f"{model_path}_{device}_{str(sorted(kwargs.items()))}"
+                
                 # Determine model format and load appropriately
                 model_path_obj = Path(model_path)
                 file_extension = model_path_obj.suffix.lower()
                 
-                if file_extension == '.pt2':
-                    # Compiled model - use from_compiled_model (no gradients)
-                    print(f"[INFO] Loading compiled model (.pt2): {model_path_obj.name}")
-                    calc = NequIPCalculator.from_compiled_model(
-                        model_path, 
-                        device=device,
-                        chemical_symbols=kwargs.get('species_to_type_name', None),
-                        **kwargs  # Pass kwargs like default_dtype
-                    )
-                    
-                    # Extract metadata for compiled models
-                    if i == 0:
-                        # For compiled models, we need to load the model separately to get metadata
-                        model, metadata = load_compiled_model(
+                # Check if model is already cached
+                if cache_key in _model_cache:
+                    print(f"[INFO] Using cached model: {Path(model_path).name}")
+                    calc = _model_cache[cache_key]
+                else:
+                    # Load new model based on file extension
+                    if file_extension == '.pt2' or model_path.endswith('.nequip.pt2'):
+                        # Compiled model - use from_compiled_model (no gradients)
+                        print(f"[INFO] Loading compiled model (.pt2): {model_path_obj.name}")
+                        calc = NequIPCalculator.from_compiled_model(
                             model_path, 
-                            device, 
-                            PAIR_NEQUIP_INPUTS, 
-                            ASE_OUTPUTS
+                            device=device,
+                            chemical_symbols=kwargs.get('species_to_type_name', None),
+                            **kwargs  # Pass kwargs like default_dtype
                         )
-                        self._r_max = float(metadata[graph_model.R_MAX_KEY])
-                        self._type_names = metadata[graph_model.TYPE_NAMES_KEY]
-                        if isinstance(self._type_names, str):
-                            self._chemical_symbols = self._type_names.split(" ")
-                        else:
-                            self._chemical_symbols = self._type_names
-                    
-                elif file_extension == '.zip' or model_path.endswith('.nequip.zip'):
-                    # Packaged model - use _from_packaged_model (preserves gradients!)
-                    print(f"[INFO] Loading packaged model: {model_path_obj.name}")
-                    calc = NequIPCalculator._from_packaged_model(
-                        model_path,
-                        device=device,
-                        chemical_symbols=kwargs.get('species_to_type_name', None),
-                        **kwargs  # Pass kwargs like default_dtype
-                    )
-                    
-                    # Extract metadata for packaged models
-                    if i == 0:
-                        # For packaged models, metadata is available through the model
-                        if hasattr(calc, 'model') and hasattr(calc.model, 'metadata'):
-                            self._r_max = float(calc.model.metadata[graph_model.R_MAX_KEY])
-                            self._type_names = calc.model.metadata[graph_model.TYPE_NAMES_KEY]
+                        
+                        # Extract metadata for compiled models
+                        if i == 0:
+                            # For compiled models, we need to load the model separately to get metadata
+                            model, metadata = load_compiled_model(
+                                model_path, 
+                                device, 
+                                PAIR_NEQUIP_INPUTS, 
+                                ASE_OUTPUTS
+                            )
+                            self._r_max = float(metadata[graph_model.R_MAX_KEY])
+                            self._type_names = metadata[graph_model.TYPE_NAMES_KEY]
                             if isinstance(self._type_names, str):
                                 self._chemical_symbols = self._type_names.split(" ")
                             else:
                                 self._chemical_symbols = self._type_names
-                        else:
-                            # Cannot proceed without metadata - r_max is critical for calculations
-                            raise RuntimeError(
-                                f"Failed to extract metadata from packaged model: {model_path}. "
-                                f"The model does not have accessible metadata. "
-                                f"This is required for proper r_max and chemical symbols extraction. "
-                                f"Please ensure the model file is valid and contains the necessary metadata."
-                            )
                     
-                else:
-                    raise ValueError(f"Unsupported model file format: {file_extension}. "
-                                   f"Supported formats: .pt2 (compiled), .zip/.nequip.zip (packaged)")
+                    elif file_extension == '.zip' or model_path.endswith('.nequip.zip'):
+                        # Packaged model - use _from_packaged_model (preserves gradients!)
+                        print(f"[INFO] Loading packaged model: {model_path_obj.name}")
+                        calc = NequIPCalculator._from_packaged_model(
+                            model_path,
+                            device=device,
+                            chemical_symbols=kwargs.get('species_to_type_name', None),
+                            **kwargs  # Pass kwargs like default_dtype
+                        )
+                        
+                        # Extract metadata for packaged models
+                        if i == 0:
+                            # For packaged models, metadata is available through the model
+                            if hasattr(calc, 'model') and hasattr(calc.model, 'metadata'):
+                                self._r_max = float(calc.model.metadata[graph_model.R_MAX_KEY])
+                                self._type_names = calc.model.metadata[graph_model.TYPE_NAMES_KEY]
+                                if isinstance(self._type_names, str):
+                                    self._chemical_symbols = self._type_names.split(" ")
+                                else:
+                                    self._chemical_symbols = self._type_names
+                            else:
+                                # Cannot proceed without metadata - r_max is critical for calculations
+                                raise RuntimeError(
+                                    f"Failed to extract metadata from packaged model: {model_path}. "
+                                    f"The model does not have accessible metadata. "
+                                    f"This is required for proper r_max and chemical symbols extraction. "
+                                    f"Please ensure the model file is valid and contains the necessary metadata."
+                                )
+                    
+                    else:
+                        raise ValueError(f"Unsupported model file format: {file_extension}. "
+                                       f"Supported formats: .pt2 (compiled), .zip/.nequip.zip (packaged)")
+                    
+                    # Cache the loaded calculator
+                    _model_cache[cache_key] = calc
+                    print(f"[INFO] Cached model: {Path(model_path).name}")
                 
                 self._calculators.append(calc)
                 # Store the model for reference (but we'll use calculator interface for calculations)

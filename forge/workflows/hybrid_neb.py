@@ -358,6 +358,8 @@ class HybridNEBWorkflow:
         convergence_window: int = 1000,
         energy_threshold: float = 0.0002,
         final_cell_relax: bool = True,
+        fmax: float = 0.05,
+        steps: int = 1000,
         md_timestep: float = 2.0,
         md_thermostat: str = 'langevin',
         friction: float = 0.02
@@ -426,6 +428,8 @@ class HybridNEBWorkflow:
         convergence_window: int,
         energy_threshold: float,
         final_cell_relax: bool,
+        fmax: float,
+        steps: int,
         md_timestep: float,
         md_thermostat: str,
         friction: float
@@ -452,7 +456,9 @@ class HybridNEBWorkflow:
         # Run hybrid MCMC
         optimized_atoms = hybrid_sampler.run_hybrid_mcmc(
             convergence_window=convergence_window,
-            energy_threshold=energy_threshold
+            energy_threshold=energy_threshold,
+            fmax=fmax,
+            steps=steps
         )
         
         return optimized_atoms

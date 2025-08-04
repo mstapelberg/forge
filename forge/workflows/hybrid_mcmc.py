@@ -101,7 +101,7 @@ class HybridMCMCSampler:
             self.atoms.calc = self.calculator
         self.current_energy = self.atoms.get_potential_energy()
 
-    def run_hybrid_mcmc(self, convergence_window: int = 1000, energy_threshold: float = 0.0002) -> Atoms:
+    def run_hybrid_mcmc(self, convergence_window: int = 1000, energy_threshold: float = 0.0002, fmax: float = 0.05, steps: int = 500) -> Atoms:
         """
         Run hybrid MCMC-MD simulation with convergence checking.
 
@@ -173,7 +173,7 @@ class HybridMCMCSampler:
         # Final cell relaxation if requested (following torch-sim pattern)
         if self.final_cell_relax:
             print("\nPerforming final cell relaxation...")
-            self._final_cell_relaxation()
+            self._final_cell_relaxation(fmax=fmax, steps=steps)
         
         return self.atoms
     
@@ -277,7 +277,7 @@ class HybridMCMCSampler:
         self.mc_acceptance_count += accepted_this_cycle
         self.mc_total_attempts += attempts_this_cycle
     
-    def _final_cell_relaxation(self):
+    def _final_cell_relaxation(self, fmax: float = 0.05, steps: int = 500):
         """Perform final cell relaxation after MCMC convergence."""
         from ase.optimize import FIRE
         from ase.filters import FrechetCellFilter
@@ -289,7 +289,7 @@ class HybridMCMCSampler:
         optimizer = FIRE(cell_filter)
         
         # Run cell optimization
-        optimizer.run(fmax=0.05, steps=200)
+        optimizer.run(fmax=fmax, steps=steps)
         
         # Update current energy
         self.current_energy = self.atoms.get_potential_energy()

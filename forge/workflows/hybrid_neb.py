@@ -405,7 +405,7 @@ class HybridNEBWorkflow:
             optimized_atoms = self._optimize_with_hybrid_mcmc(
                 atoms, temperature, md_temperature, n_steps, md_steps_per_cycle, 
                 mc_steps_per_cycle, convergence_window, energy_threshold,
-                final_cell_relax, md_timestep, md_thermostat, friction
+                final_cell_relax, fmax, steps, md_timestep, md_thermostat, friction
             )
             
             # Save optimized structure

@@ -53,23 +53,7 @@ from forge.workflows.hybrid_mcmc import HybridMCMCSampler
 
 
 class WCSamplingHybridSampler(HybridMCMCSampler):
-    """Hybrid sampler that records a scalar WC metric after each MD step.
-
-    This subclass overrides the MD phase to compute a scalar Warren–Cowley
-    metric after each MD integration step and appends it to `wc_series`.
-
-    Args:
-        wc_shells: Shell boundaries for WC calculator, e.g., [0.0, r1] for
-            first shell only or [0.0, r1, r2, ...] for multiple shells.
-        species_pair: Optional species pair (e.g. ("Cu", "Ni")) to extract
-            WC_{i,j} for that pair. If not provided, uses the mean absolute
-            off-diagonal of the first available shell.
-        wc_shell_index: Which shell index to report (default: 0 for first).
-        aggregate: Aggregation for WC matrix when `species_pair` is None.
-            Options: "mean_abs_offdiag" (default), "mean_abs_all",
-            "fro_norm" (Frobenius norm), "trace".
-        All other args are passed to the base `HybridMCMCSampler`.
-    """
+    """Hybrid sampler that records a scalar WC metric once per phase (MD, MC)."""
 
     def __init__(
         self,
@@ -87,74 +71,63 @@ class WCSamplingHybridSampler(HybridMCMCSampler):
         self.species_pair: Optional[Tuple[str, str]] = species_pair
         self.wc_series: List[float] = []
 
+    # --- Key change: run the base phase, then record once ---
     def _run_md_phase(self, cycle: int) -> None:
-        """Run MD, recording WC after each single MD step."""
-        # Based on the base implementation, but insert WC capture per step
-        from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
-        from ase.md import VelocityVerlet, Langevin
+        super()._run_md_phase(cycle)
+        self._record_wc_scalar()
 
-        if not hasattr(self.atoms, 'get_velocities') or self.atoms.get_velocities() is None:
-            MaxwellBoltzmannDistribution(self.atoms, temperature_K=self.md_temperature)
-
-        if self.md_thermostat == 'langevin':
-            md = Langevin(self.atoms, self.md_timestep, temperature_K=self.md_temperature, friction=self.friction)
-        else:
-            md = VelocityVerlet(self.atoms, self.md_timestep)
-
-        # inner loop; always explicit to capture WC per step
-        if self.verbose and self.md_steps_per_cycle > 10:
-            from tqdm import tqdm
-
-            md_pbar = tqdm(
-                range(self.md_steps_per_cycle),
-                desc=f"MD Phase (Cycle {cycle})",
-                unit="step",
-                leave=False,
-            )
-            for _ in md_pbar:
-                md.run(1)
-                self._record_wc_scalar()
-            md_pbar.close()
-        else:
-            for _ in range(self.md_steps_per_cycle):
-                md.run(1)
-                self._record_wc_scalar()
+    def _run_mc_phase(self, cycle: int) -> None:
+        super()._run_mc_phase(cycle)
+        self._record_wc_scalar()
 
     def _record_wc_scalar(self) -> None:
-        """Compute and append the scalar WC metric for the configured shell.
-
-        The method computes WC with the configured `wc_shells`, picks the
-        requested shell index, and derives a scalar either for a specific
-        species pair or via an aggregation function.
-        """
+        """Compute and append the scalar WC metric for the configured shell."""
         wc = WarrenCowleyCalculator(self.atoms, list(self.wc_shells))
-        params_by_shell: Dict[int, np.ndarray] = wc.calculate_parameters()
-        if self.wc_shell_index not in params_by_shell:
-            # No neighbors in this shell at this step; append NaN
+        params_by_shell = wc.calculate_parameters()
+        if not params_by_shell:
             self.wc_series.append(np.nan)
             return
 
-        params = params_by_shell[self.wc_shell_index]
+        # Accept both int indices (0/1-based) and radius keys (float/str)
+        shell_key = None
+        if self.wc_shell_index in params_by_shell:
+            shell_key = self.wc_shell_index
+        else:
+            # Fall back: sort by numeric value if keys are radii or 1-based
+            try:
+                ordered = sorted((float(k), k) for k in params_by_shell.keys())
+                if 0 <= self.wc_shell_index < len(ordered):
+                    shell_key = ordered[self.wc_shell_index][1]
+            except Exception:
+                pass
+
+        if shell_key is None:
+            self.wc_series.append(np.nan)
+            return
+
+        params = np.asarray(params_by_shell[shell_key])
+
+        # Single-species guard: off-diagonal is empty; prefer 0.0 over NaN
+        if params.ndim != 2 or params.shape[0] <= 1:
+            self.wc_series.append(0.0)
+            return
 
         if self.species_pair is not None:
-            # Extract index mapping from WC concentrations order
             types = list(wc.concentrations.keys())
             try:
                 i = types.index(self.species_pair[0])
                 j = types.index(self.species_pair[1])
             except ValueError:
-                # Species not present; record NaN
                 self.wc_series.append(np.nan)
                 return
-            value = float(params[i, j])
-            self.wc_series.append(value)
+            self.wc_series.append(float(params[i, j]))
             return
 
         # Aggregations
         if self.aggregate == "mean_abs_offdiag":
             mask = ~np.eye(params.shape[0], dtype=bool)
             vals = np.abs(params[mask])
-            self.wc_series.append(float(np.nanmean(vals) if vals.size else np.nan))
+            self.wc_series.append(float(np.mean(vals)) if vals.size else 0.0)
         elif self.aggregate == "mean_abs_all":
             self.wc_series.append(float(np.mean(np.abs(params))))
         elif self.aggregate == "fro_norm":
@@ -162,11 +135,9 @@ class WCSamplingHybridSampler(HybridMCMCSampler):
         elif self.aggregate == "trace":
             self.wc_series.append(float(np.trace(params)))
         else:
-            # Fallback to mean_abs_offdiag
             mask = ~np.eye(params.shape[0], dtype=bool)
             vals = np.abs(params[mask])
-            self.wc_series.append(float(np.nanmean(vals) if vals.size else np.nan))
-
+            self.wc_series.append(float(np.mean(vals)) if vals.size else 0.0)
 
 def infer_wc_shells(
     atoms: Atoms,
@@ -286,31 +257,35 @@ def run_for_size(
     mc_steps: Optional[int],
     temperature: float,
     md_temperature: Optional[float],
-    wc_shells: Sequence[float],
+    wc_shells: Optional[Sequence[float]],
     species_pair: Optional[Tuple[str, str]],
     aggregate: str,
     verbose: bool,
+    *,
+    num_shells: int = 1,
+    substitutions: Optional[Dict[str, float]] = None,
+    host_symbol: str = 'V',
+    rng: Optional[np.random.Generator] = None,
 ) -> Tuple[List[float], Atoms]:
-    """Run the hybrid sampler for a given supercell size and collect WC series.
-
-    Args:
-        base_atoms: Input primitive or small cell.
-        n: Supercell replication factor (n, n, n).
-        calculator: ASE calculator.
-        cycles: Number of hybrid cycles (MD+MC).
-        md_steps: MD steps per cycle.
-        mc_steps: MC steps per cycle; if None, uses number of atoms.
-        temperature: MC temperature in K.
-        md_temperature: MD thermostat target temperature in K.
-        wc_shells: Warren–Cowley shell boundaries.
-        species_pair: Optional pair to extract WC_{i,j}.
-        aggregate: Aggregation when pair is not provided.
-        verbose: Whether to show progress bars.
-
-    Returns:
-        (wc_series, final_atoms)
-    """
+    """Run the hybrid sampler for a given supercell size and collect WC series."""
     atoms = base_atoms.copy().repeat((n, n, n))
+
+    # NEW: apply requested random substitutions to the *actual* supercell
+    if substitutions:
+        if rng is None:
+            rng = np.random.default_rng()
+        _apply_random_substitutions(
+            atoms,
+            target_atpercent={k: float(v) for k, v in substitutions.items()},
+            host_symbol=host_symbol,
+            rng=rng,
+        )
+
+    # Infer shells on the geometry we will actually simulate (unless provided)
+    wc_shells_local = list(wc_shells) if wc_shells is not None else infer_wc_shells(
+        atoms, num_shells=int(num_shells)
+    )
+
     atoms.calc = calculator
 
     num_atoms = len(atoms)
@@ -324,14 +299,13 @@ def run_for_size(
         steps=cycles,
         md_steps_per_cycle=md_steps,
         mc_steps_per_cycle=mc_steps_per_cycle,
-        wc_shells=wc_shells,
+        wc_shells=wc_shells_local,
         species_pair=species_pair,
         aggregate=aggregate,
         verbose=verbose,
     )
     sampler.run_hybrid_mcmc()
     return sampler.wc_series, sampler.atoms
-
 
 def save_series_csv(path: Path, series: Sequence[float]) -> None:
     """Save a numeric time series to CSV with a header."""
@@ -422,40 +396,37 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         mc_steps_val = None
     else:
         mc_steps_val = int(args.mc_steps)
-
     size_to_series: Dict[int, List[float]] = {}
     rng = np.random.default_rng(int(args.seed))
+
     for n in range(int(args.size_min), int(args.size_max) + 1):
-        # Prepare supercell and apply random substitutions if building
-        tmp_atoms = atoms.copy().repeat((n, n, n))
+        # Provide substitutions only for the "build bcc V" path
+        subs = None
         if args.structure is None:
-            _apply_random_substitutions(
-                tmp_atoms,
-                target_atpercent={
-                    'Cr': float(args.cr_pct),
-                    'Ti': float(args.ti_pct),
-                    'W': float(args.w_pct),
-                    'Zr': float(args.zr_pct),
-                },
-                host_symbol='V',
-                rng=rng,
-            )
-        # Infer shells on the actual geometry
-        wc_shells = infer_wc_shells(tmp_atoms, num_shells=int(args.num_shells))
+            subs = {
+                'Cr': float(args.cr_pct),
+                'Ti': float(args.ti_pct),
+                'W': float(args.w_pct),
+                'Zr': float(args.zr_pct),
+            }
 
         series, _ = run_for_size(
-            base_atoms=(atoms if args.structure is not None else bulk('V', 'bcc', a=float(args.a), cubic=False)),
+            base_atoms=atoms,
             n=n,
             calculator=calc,
             cycles=int(args.cycles),
             md_steps=int(args.md_steps),
-            mc_steps=mc_steps_val,
+            mc_steps=(None if (isinstance(args.mc_steps, str) and args.mc_steps.lower() == 'natoms') else int(args.mc_steps)),
             temperature=float(args.temperature),
             md_temperature=(None if args.md_temperature is None else float(args.md_temperature)),
-            wc_shells=wc_shells,
+            wc_shells=None,  # infer on the actual geometry we just built
             species_pair=species_pair,
             aggregate=str(args.aggregate),
             verbose=bool(args.verbose),
+            num_shells=int(args.num_shells),
+            substitutions=subs,
+            host_symbol='V',
+            rng=rng,
         )
         size_to_series[n] = series
 

@@ -112,17 +112,19 @@ def example_step_by_step():
     structures = workflow.create_initial_structures(
         compositions=compositions,
         crystal_type='bcc',
-        dimensions=[3, 3, 3],  # Small for testing
-        lattice_constant=3.01
+        dimensions=[10, 10, 10],  # Small for testing
+        lattice_constant=3.01,
+        cubic=True
+
     )
     
     # Step 3: Optimize with hybrid MCMC-MD
     optimized_structures = workflow.optimize_with_hybrid_mcmc(
         structures=structures,
         temperature=873.15,
-        n_steps=50,  # Few cycles for testing
-        md_steps_per_cycle=20,
-        mc_steps_per_cycle=10,
+        n_steps=15,  # Few cycles for testing
+        md_steps_per_cycle=len(structures[0]),
+        mc_steps_per_cycle=1000,
         final_cell_relax=True
     )
     
@@ -131,8 +133,8 @@ def example_step_by_step():
         structures=optimized_structures,
         n_nearest=1,
         n_next_nearest=1,
-        num_images=3,  # Few images for testing
-        neb_steps=50   # Few steps for testing
+        num_images=5,  # Few images for testing
+        neb_steps=150   # Few steps for testing
     )
     
     # Step 5: Analyze results
@@ -187,9 +189,9 @@ if __name__ == "__main__":
     
     # Run examples (uncomment the ones you want to try)
     
-    example_basic_usage()
+    #example_basic_usage()
     example_step_by_step()
-    example_custom_optimization()
+    #example_custom_optimization()
     
     print("\nTo run examples, uncomment the desired function calls above.")
     print("Make sure you have the required model file and dependencies installed.")

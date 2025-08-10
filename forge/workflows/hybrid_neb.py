@@ -309,6 +309,7 @@ class HybridNEBWorkflow:
         crystal_type: str = 'bcc',
         dimensions: List[int] = [8, 8, 8],
         lattice_constant: float = 3.01,
+        cubic: bool = False,
         balance_element: str = 'V'
     ) -> List[Atoms]:
         """
@@ -336,7 +337,7 @@ class HybridNEBWorkflow:
                 dimensions=dimensions,
                 lattice_constant=lattice_constant,
                 balance_element=balance_element,
-                cubic=True
+                cubic=cubic
             )
             
             # Save initial structure

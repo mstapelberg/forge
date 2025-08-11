@@ -12,10 +12,7 @@ import json
 import sys
 from pathlib import Path
 
-# Add forge to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from scratch.scripts.defect_adversarial_attack import run_defect_adversarial_attacks
+from defect_adversarial_attack import run_defect_adversarial_attacks
 
 
 def create_example_compositions():
@@ -35,15 +32,24 @@ def main():
     compositions = create_example_compositions()
     
     # Model paths (update these to your actual model paths)
+    # For MACE models:
+    # model_paths = [
+    #     '../potentials/mace_gen_7_ensemble/job_gen_7-2025-04-14_model_0_pr_stagetwo.model',
+    #     '../potentials/mace_gen_7_ensemble/job_gen_7-2025-04-14_model_1_pr_stagetwo.model',
+    #     '../potentials/mace_gen_7_ensemble/job_gen_7-2025-04-14_model_2_pr_stagetwo.model',
+    # ]
+    
+    # For Allegro models:
     model_paths = [
-        '../potentials/mace_gen_7_ensemble/job_gen_7-2025-04-14_model_0_pr_stagetwo.model',
-        '../potentials/mace_gen_7_ensemble/job_gen_7-2025-04-14_model_1_pr_stagetwo.model',
-        '../potentials/mace_gen_7_ensemble/job_gen_7-2025-04-14_model_2_pr_stagetwo.model',
+        '../../data/potentials/allegro/exploit_rmax6.00_lmax2_layers2_mlp384_seed42.nequip.zip',
+        '../../data/potentials/allegro/exploit_rmax6.00_lmax2_layers2_mlp256_seed42.nequip.zip',
+        '../../data/potentials/allegro/exploit_rmax5.75_lmax2_layers2_mlp256_seed42.nequip.zip',
     ]
     
     print("=== Defect Adversarial Attack Example ===")
     print(f"Compositions: {compositions}")
     print(f"Model paths: {model_paths}")
+    print("Using Allegro models with autograd optimization")
     
     # Run the workflow
     trajectories = run_defect_adversarial_attacks(
@@ -65,10 +71,15 @@ def main():
         random_seed=42,
         select_n_from_trajectory=10,  # Select 10 structures from each trajectory
         
+        # Calculator-specific parameters
+        backend='allegro',  # Specify Allegro backend
+        require_structure_id=False,  # Allow use of reserved ID for new structures
+        species_to_type_name={'Ti': 'Ti', 'V': 'V', 'Cr': 'Cr', 'Zr': 'Zr', 'W': 'W'},  # Chemical symbols mapping for Allegro
+        
         # Output parameters
         output_dir='example_defect_aa_output',
         save_output=True,
-        debug=True
+        debug=False
     )
     
     print("\n=== Results ===")

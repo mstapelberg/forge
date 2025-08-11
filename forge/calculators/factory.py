@@ -1,6 +1,6 @@
 """Factory for creating appropriate calculator backends."""
 
-from typing import Union, List
+from typing import Union, List, Any
 from pathlib import Path
 
 from .interface import BaseEnsembleCalculator
@@ -24,8 +24,11 @@ def create_ensemble_calculator(
     backend: str = 'auto',
     device: str = 'cpu', 
     **kwargs
-) -> BaseEnsembleCalculator:
-    """Create an appropriate ensemble calculator backend.
+) -> Union[BaseEnsembleCalculator, Any]:
+    """Create an appropriate calculator backend.
+    
+    For single models, returns native ASE calculator for optimal performance.
+    For multiple models, returns ensemble calculator for uncertainty estimation.
     
     Args:
         model_paths: Path(s) to model file(s)
@@ -34,7 +37,8 @@ def create_ensemble_calculator(
         **kwargs: Additional arguments passed to the backend constructor
         
     Returns:
-        BaseEnsembleCalculator: Appropriate backend instance
+        For single model: Native ASE calculator (MACECalculator or NequIPCalculator)
+        For multiple models: BaseEnsembleCalculator instance
         
     Raises:
         ValueError: If backend type is unknown or cannot be auto-detected
@@ -52,10 +56,31 @@ def create_ensemble_calculator(
             raise FileNotFoundError(f"Model file not found: {path}")
     
     # Auto-detect backend if needed
-    if backend == 'auto':
+    if backend == 'auto' or backend is None:
         backend = _detect_backend(paths_list)
     
-    # Create appropriate backend
+    # For single model, return native calculator to avoid ensemble overhead
+    if len(paths_list) == 1:
+        model_path = paths_list[0]
+        if backend.lower() == 'mace':
+            if not MACE_AVAILABLE:
+                raise ImportError(
+                    "MACE backend requested but MACE is not available in this environment. "
+                    "Please install MACE with: pip install mace-torch"
+                )
+            # Return native MACECalculator for single model
+            return _create_native_mace_calculator(model_path, device, **kwargs)
+        
+        elif backend.lower() in ['allegro', 'nequip']:
+            if not NEQUIP_AVAILABLE:
+                raise ImportError(
+                    "Allegro/NequIP backend requested but NequIP is not available in this environment. "
+                    "Please install NequIP with: pip install nequip"
+                )
+            # Return native NequIPCalculator for single model
+            return _create_native_nequip_calculator(model_path, device, **kwargs)
+    
+    # For multiple models, use ensemble backend
     if backend.lower() == 'mace':
         if not MACE_AVAILABLE:
             raise ImportError(
@@ -76,6 +101,70 @@ def create_ensemble_calculator(
             f"Unknown backend: {backend}. "
             f"Available backends in this environment: {available_backends}"
         )
+
+
+def _create_native_mace_calculator(model_path: str, device: str, **kwargs) -> Any:
+    """Create native MACE calculator for single model.
+    
+    Args:
+        model_path: Path to MACE model file (.model)
+        device: Device to use ('cpu' or 'cuda')
+        **kwargs: Additional arguments passed to MACECalculator
+        
+    Returns:
+        MACECalculator instance
+    """
+    from mace.calculators.mace import MACECalculator
+    return MACECalculator(
+        model_paths=model_path,  # MACE accepts single path as str or list
+        device=device,
+        **kwargs
+    )
+
+
+def _create_native_nequip_calculator(model_path: str, device: str, **kwargs) -> Any:
+    """Create native NequIP/Allegro calculator for single model.
+    
+    Args:
+        model_path: Path to NequIP/Allegro model file (.pt2 or .zip)
+        device: Device to use ('cpu' or 'cuda')
+        **kwargs: Additional arguments including species_to_type_name
+        
+    Returns:
+        NequIPCalculator instance
+    """
+    from nequip.ase import NequIPCalculator
+    
+    # Handle species_to_type_name: convert dict {'V':0, 'Cr':1, ...} to sorted list ['V', 'Cr', ...]
+    species_to_type_name = kwargs.pop('species_to_type_name', None)
+    if isinstance(species_to_type_name, dict):
+        # Sort by type index (value) to get correct order
+        chemical_symbols = [elem for elem, idx in sorted(species_to_type_name.items(), key=lambda x: x[1])]
+    else:
+        chemical_symbols = species_to_type_name  # Could be None or list
+    
+    model_path_obj = Path(model_path)
+    file_extension = model_path_obj.suffix.lower()
+    
+    if file_extension == '.pt2' or model_path.endswith('.nequip.pt2'):
+        # Compiled model
+        return NequIPCalculator.from_compiled_model(
+            model_path, 
+            device=device,
+            chemical_symbols=chemical_symbols,
+            **kwargs
+        )
+    elif file_extension == '.zip' or model_path.endswith('.nequip.zip'):
+        # Packaged model
+        return NequIPCalculator._from_packaged_model(
+            model_path,
+            device=device,
+            chemical_symbols=chemical_symbols,
+            **kwargs
+        )
+    else:
+        raise ValueError(f"Unsupported model file format for native NequIP: {file_extension}. "
+                         f"Supported: .pt2 (compiled), .zip/.nequip.zip (packaged)")
 
 
 def _detect_backend(model_paths: List[str]) -> str:

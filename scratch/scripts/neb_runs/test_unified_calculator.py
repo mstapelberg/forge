@@ -18,10 +18,9 @@ import torch
 from ase import Atoms
 from ase.build import bulk
 
-from forge.workflows.calculator_interface import (
-    create_calculator, 
-    get_available_calculators, 
-    check_calculator_availability
+from forge.calculators.factory import (
+    create_ensemble_calculator, 
+    get_supported_backends
 )
 
 
@@ -29,13 +28,10 @@ def test_calculator_availability():
     """Test which calculators are available."""
     print("=== Testing Calculator Availability ===")
     
-    available = check_calculator_availability()
-    print(f"Available calculators: {available}")
+    available_backends = get_supported_backends()
+    print(f"Available backends: {available_backends}")
     
-    available_list = get_available_calculators()
-    print(f"Available calculator list: {available_list}")
-    
-    return available
+    return available_backends
 
 
 def test_mace_calculator():
@@ -43,8 +39,8 @@ def test_mace_calculator():
     print("\n=== Testing MACE Calculator ===")
     
     # Check if MACE is available
-    available = check_calculator_availability()
-    if not available.get('mace', False):
+    available_backends = get_supported_backends()
+    if 'mace' not in available_backends:
         print("MACE not available, skipping test")
         return False
     
@@ -57,12 +53,12 @@ def test_mace_calculator():
         model_path = "path/to/your/mace_model.model"  # Replace with actual path
         
         if os.path.exists(model_path):
-            calculator = create_calculator(
-                model_path=model_path,
-                calculator_type='mace',
+            calculator = create_ensemble_calculator(
+                model_paths=model_path,
+                backend='mace',
                 device="cpu"
             )
-            print(f"Successfully created MACE calculator: {calculator.calculator_type}")
+            print(f"Successfully created MACE calculator: {type(calculator).__name__}")
             
             # Test calculation
             result = calculator.calculate(atoms)
@@ -85,8 +81,8 @@ def test_allegro_calculator():
     print("\n=== Testing Allegro Calculator ===")
     
     # Check if Allegro is available
-    available = check_calculator_availability()
-    if not available.get('allegro', False):
+    available_backends = get_supported_backends()
+    if 'allegro' not in available_backends:
         print("Allegro not available, skipping test")
         return False
     
@@ -99,13 +95,13 @@ def test_allegro_calculator():
         model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"  # Replace with actual path
         
         if os.path.exists(model_path):
-            calculator = create_calculator(
-                model_path=model_path,
-                calculator_type='allegro',
+            calculator = create_ensemble_calculator(
+                model_paths=model_path,
+                backend='allegro',
                 device="cpu",
                 species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
             )
-            print(f"Successfully created Allegro calculator: {calculator.calculator_type}")
+            print(f"Successfully created Allegro calculator: {type(calculator).__name__}")
             
             # Test calculation
             result = calculator.calculate(atoms)
@@ -136,17 +132,17 @@ def test_auto_detection():
     
     for model_path, expected_type in test_cases:
         try:
-            calculator = create_calculator(
-                model_path=model_path,
-                calculator_type=None,  # Auto-detect
+            calculator = create_ensemble_calculator(
+                model_paths=model_path,
+                backend=expected_type,
                 device="cpu"
             )
-            print(f"Model path: {model_path} -> Detected type: {calculator.calculator_type}")
+            print(f"Model path: {model_path} -> Detected type: {calculator.backend}")
             
-            if calculator.calculator_type == expected_type:
+            if calculator.backend == expected_type:
                 print("✓ Auto-detection working correctly")
             else:
-                print(f"✗ Expected {expected_type}, got {calculator.calculator_type}")
+                print(f"✗ Expected {expected_type}, got {calculator.backend}")
                 
         except Exception as e:
             print(f"Model path: {model_path} -> Error: {e}")
@@ -158,9 +154,9 @@ def test_error_handling():
     
     # Test with invalid calculator type
     try:
-        calculator = create_calculator(
-            model_path="dummy.model",
-            calculator_type="invalid_type",
+        calculator = create_ensemble_calculator(
+            model_paths="dummy.model",
+            backend="invalid_type",
             device="cpu"
         )
         print("✗ Should have raised an error for invalid calculator type")
@@ -169,9 +165,9 @@ def test_error_handling():
     
     # Test with non-existent model file
     try:
-        calculator = create_calculator(
-            model_path="non_existent_file.model",
-            calculator_type="mace",
+        calculator = create_ensemble_calculator(
+            model_paths="non_existent_file.model",
+            backend="mace",
             device="cpu"
         )
         print("✗ Should have raised an error for non-existent file")
@@ -199,12 +195,12 @@ def main():
     
     # Summary
     print("\n=== Test Summary ===")
-    print(f"MACE available: {available.get('mace', False)}")
-    print(f"Allegro available: {available.get('allegro', False)}")
+    print(f"MACE available: {'mace' in available}")
+    print(f"Allegro available: {'allegro' in available}")
     print(f"MACE test passed: {mace_success}")
     print(f"Allegro test passed: {allegro_success}")
     
-    if not available.get('mace', False) and not available.get('allegro', False):
+    if 'mace' not in available and 'allegro' not in available:
         print("\n⚠️  Warning: Neither MACE nor Allegro is available!")
         print("Please install one of them to use the unified calculator interface.")
         print("- For MACE: pip install mace")

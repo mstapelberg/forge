@@ -9,7 +9,7 @@ from tqdm import tqdm
 from ase import Atoms
 
 from forge.analysis.wc_sro import WarrenCowleyCalculator
-from forge.workflows.calculator_interface import UnifiedCalculator, create_calculator
+from forge.calculators.factory import create_ensemble_calculator
 
 
 def get_default_bcc_shells(lattice_constant: float) -> List[float]:
@@ -201,8 +201,9 @@ class MonteCarloAlloySampler:
         else:
             self.tracker = None
         
-        # Handle unified calculator
-        if isinstance(self.calculator, UnifiedCalculator):
+        # Handle calculator - supports both old UnifiedCalculator and new ensemble calculators
+        if hasattr(self.calculator, 'calculator'):
+            # Old UnifiedCalculator interface
             self.atoms.calc = self.calculator.calculator
         else:
             self.atoms.calc = self.calculator

@@ -90,7 +90,7 @@ class GradientAdversarialOptimizer:
 
     def __init__(self, model_paths, device='cuda', learning_rate=0.01,
                  temperature=0.86, include_probability=True, debug=False,
-                 energy_list=None, use_energy_per_atom=False, backend='auto'):
+                 energy_list=None, use_energy_per_atom=False, backend='auto', **kwargs):
         """Initialize optimizer with model paths.
 
         Args:
@@ -103,6 +103,7 @@ class GradientAdversarialOptimizer:
             energy_list: List of energies (total or per atom) for normalization constant calculation
             use_energy_per_atom: If True, treat energy_list as energy/atom and use energy/atom for probability calc.
             backend: Calculator backend to use ('mace', 'allegro', or 'auto' for auto-detection)
+            **kwargs: Additional arguments passed to the calculator factory (e.g., species_to_type_name for Allegro)
         """
         self.model_paths = model_paths
         self.device = device
@@ -122,7 +123,8 @@ class GradientAdversarialOptimizer:
                 model_paths=self.model_paths,
                 backend=self.backend,
                 device=self.device,
-                default_dtype='float32'
+                default_dtype='float32',
+                **kwargs
             )
             if self.debug:
                 print(f"[DEBUG] Initialized {type(self.calculator).__name__} with {len(self.calculator.models)} models")
@@ -179,11 +181,9 @@ class GradientAdversarialOptimizer:
     def _calculate_energy(self, atoms):
         """Calculate mean TOTAL energy across ensemble models."""
         self.timer.start("energy_calculation")
-        energies = []
-        for model in self.calculator.models:
-            atoms.calc = model
-            energy = atoms.get_potential_energy()
-            energies.append(energy)
+        # Use the ensemble calculator's energy calculation method
+        # This works for both MACE and Allegro backends
+        energies = self.calculator.energies_all(atoms)
         mean_energy = float(np.mean(energies))
         self.timer.stop("energy_calculation")
         return mean_energy
@@ -243,7 +243,7 @@ class GradientAdversarialOptimizer:
         return probability
 
     def optimize(self, atoms, generation: int, n_iterations=60, min_distance=1.5, output_dir='.',
-                 patience: int = 20, shake_std: float = 0.05, shake: bool = False):
+                 patience: int = 20, shake_std: float = 0.05, shake: bool = False, require_structure_id: bool = False):
         """Run gradient-based adversarial attack optimization using PyTorch Autograd.
 
         Args:
@@ -265,7 +265,12 @@ class GradientAdversarialOptimizer:
         # --- Extract initial info ---
         parent_id = atoms.info.get('structure_id')
         if parent_id is None:
-            raise ValueError("Input 'atoms' object must have 'structure_id' in its info dictionary.")
+            if require_structure_id:
+                raise ValueError("Input 'atoms' object must have 'structure_id' in its info dictionary.")
+            else:
+                # Use reserved ID for new structures
+                parent_id = 99999999
+                atoms.info['structure_id'] = parent_id
         original_config_type = atoms.info.get('config_type', 'unknown')
         struct_name = atoms.info.get('structure_name', f'structure_{parent_id}')
         
@@ -721,13 +726,15 @@ class GradientAdversarialOptimizer:
         # self.timer.stop("save_results")
 
 class AdversarialCalculator:
-    def __init__(self, model_paths, device='cpu', default_dtype='float32'):
-        """Initialize calculator with MACE model ensemble.
+    def __init__(self, model_paths, device='cpu', default_dtype='float32', backend='auto', **kwargs):
+        """Initialize calculator with ensemble model support.
 
         Args:
-            model_paths (str or list): Path(s) to MACE model file(s)
+            model_paths (str or list): Path(s) to model file(s)
             device (str): Device to use ('cpu' or 'cuda')
             default_dtype (str): Default data type for calculations
+            backend (str): Calculator backend ('mace', 'allegro', or 'auto')
+            **kwargs: Additional arguments passed to the calculator (e.g., species_to_type_name for Allegro)
         """
         self.device = device
         self.default_dtype = default_dtype
@@ -739,32 +746,22 @@ class AdversarialCalculator:
             self.is_ensemble = True
             self.model_paths = model_paths
 
-        # Initialize each model separately to ensure proper loading
-        self.models = []
-        for model_path in self.model_paths:
-            # The use_cueq flag is specific to certain setups, so we handle it carefully.
-            calc_kwargs = {
-                'model_paths': model_path,
-                'device': self.device,
-                'default_dtype': self.default_dtype
-            }
-            if self.device == 'cuda':
-                # This flag may not always be present or needed.
-                # A try-except block could make this more robust if needed.
-                # For now, assume it's a valid kwarg for the user's MACE version.
-                try:
-                    # Attempt to initialize with use_cueq
-                    model = MACECalculator(**calc_kwargs, use_cueq=True)
-                except TypeError:
-                    # Fallback if use_cueq is not a valid argument
-                    print("[INFO] MACECalculator does not accept 'use_cueq'. Initializing without it.")
-                    model = MACECalculator(**calc_kwargs)
-            else:
-                model = MACECalculator(**calc_kwargs)
-            self.models.append(model)
+        # Initialize ensemble calculator using the factory
+        try:
+            self.calculator = create_ensemble_calculator(
+                model_paths=self.model_paths,
+                backend=self.backend,
+                device=self.device,
+                default_dtype=self.default_dtype,
+                **kwargs
+            )
+            self.models = self.calculator.models
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize ensemble calculator: {e}")
+            raise
 
     def calculate_forces(self, atoms):
-        """Calculate forces using MACE ensemble.
+        """Calculate forces using ensemble.
 
         Args:
             atoms (Atoms): ASE Atoms object
@@ -772,23 +769,7 @@ class AdversarialCalculator:
         Returns:
             np.ndarray: Forces array of shape (n_models, n_atoms, 3)
         """
-        forces_list = []
-        for model in self.models:
-            # To prevent ASE from using cached results from the previous model,
-            # we assign a new empty dictionary to .results.
-            # This is safer than .clear() as it creates the attribute if it's missing.
-            atoms.results = {}
-            atoms.calc = model
-            try:
-                # Force energy calculation to ensure forces are computed
-                atoms.get_potential_energy()
-                forces = atoms.get_forces()
-                forces_list.append(forces)
-            except Exception as e:
-                print(f"Warning: Force calculation failed for model: {e}")
-                return np.zeros((len(self.models), len(atoms), 3))
-
-        return np.array(forces_list)
+        return self.calculator.forces_all(atoms)
 
     def calculate_normalized_force_variance(self, forces):
         """Calculate normalized force variance across ensemble predictions.
@@ -799,14 +780,4 @@ class AdversarialCalculator:
         Returns:
             np.ndarray: Array of shape (n_atoms,) with normalized variances
         """
-        # Calculate force magnitudes, avoiding division by zero
-        force_magnitudes = np.linalg.norm(forces, axis=2, keepdims=True)
-        force_magnitudes = np.where(force_magnitudes < 1e-10, 1.0, force_magnitudes)
-
-        # Normalize forces
-        normalized_forces = forces / force_magnitudes
-
-        # Calculate variance across models for each atom
-        atom_variances = np.var(normalized_forces, axis=0)
-        total_atom_variances = np.sum(atom_variances, axis=1)
-        return total_atom_variances 
+        return self.calculator.calculate_normalized_force_variance(forces) 

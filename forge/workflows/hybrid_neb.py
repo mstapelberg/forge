@@ -34,7 +34,7 @@ from forge.analysis.composition import CompositionAnalyzer
 from forge.workflows.hybrid_mcmc import HybridMCMCSampler
 from forge.workflows.neb import VacancyDiffusion, NEBAnalyzer
 from forge.workflows.relax import relax
-from forge.workflows.calculator_interface import create_calculator, check_calculator_availability
+from forge.calculators.factory import create_ensemble_calculator, get_supported_backends
 
 # Suppress torch warnings
 warnings.filterwarnings("ignore", category=FutureWarning, 
@@ -62,7 +62,7 @@ class HybridNEBWorkflow:
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         seed: int = 42,
         output_dir: str = "hybrid_neb_results",
-        calculator_type: Optional[str] = None,
+        backend: Optional[str] = None,
         species_to_type_name: Optional[Dict[str, int]] = None
     ):
         """
@@ -73,7 +73,7 @@ class HybridNEBWorkflow:
             device: Device to run calculations on ('cuda' or 'cpu')
             seed: Random seed for reproducibility
             output_dir: Directory to save results
-            calculator_type: Type of calculator ('mace', 'allegro', or None for auto-detect)
+            backend: Calculator backend ('mace', 'allegro', or None for auto-detect)
             species_to_type_name: Species mapping for Allegro calculators
         """
         self.model_path = model_path
@@ -81,7 +81,7 @@ class HybridNEBWorkflow:
         self.seed = seed
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.calculator_type = calculator_type
+        self.backend = backend
         self.species_to_type_name = species_to_type_name or {}
         
         # Set random seeds for reproducibility
@@ -93,7 +93,7 @@ class HybridNEBWorkflow:
         
         # Initialize components
         self.composition_analyzer = CompositionAnalyzer()
-        self.unified_calculator = None
+        self.ensemble_calculator = None
         
         # Initialize calculators
         self._initialize_calculators()
@@ -104,26 +104,26 @@ class HybridNEBWorkflow:
         self.neb_results = []
         
     def _initialize_calculators(self):
-        """Initialize unified calculator for energy/force calculations."""
-        print(f"Initializing unified calculator on device: {self.device}")
+        """Initialize ensemble calculator for energy/force calculations."""
+        print(f"Initializing ensemble calculator on device: {self.device}")
         
-        # Check available calculators
-        available = check_calculator_availability()
-        print(f"Available calculators: {available}")
+        # Check available backends
+        available_backends = get_supported_backends()
+        print(f"Available backends: {available_backends}")
         
         try:
-            # Initialize unified calculator
-            self.unified_calculator = create_calculator(
-                model_path=self.model_path,
-                calculator_type=self.calculator_type,
+            # Initialize ensemble calculator using the new factory
+            self.ensemble_calculator = create_ensemble_calculator(
+                model_paths=self.model_path,
+                backend=self.backend,
                 device=self.device,
                 species_to_type_name=self.species_to_type_name
             )
-            print(f"Successfully initialized {self.unified_calculator.calculator_type} calculator")
+            print(f"Successfully initialized {type(self.ensemble_calculator).__name__} calculator")
         except Exception as e:
             print(f"Error: Could not initialize calculator: {e}")
             print(f"Model path: {self.model_path}")
-            print(f"Calculator type: {self.calculator_type}")
+            print(f"Backend: {self.backend}")
             print(f"Device: {self.device}")
             print(f"Species mapping: {self.species_to_type_name}")
             print("\nTroubleshooting tips:")
@@ -131,7 +131,7 @@ class HybridNEBWorkflow:
             print("2. Verify the model file format (.zip, .nequip.zip, or .pt2)")
             print("3. Ensure the species_to_type_name mapping is correct")
             print("4. Check if the required packages (nequip, mace) are installed")
-            self.unified_calculator = None
+            self.ensemble_calculator = None
     
     def generate_compositions(
         self,
@@ -309,6 +309,7 @@ class HybridNEBWorkflow:
         crystal_type: str = 'bcc',
         dimensions: List[int] = [8, 8, 8],
         lattice_constant: float = 3.01,
+        cubic: bool = False,
         balance_element: str = 'V'
     ) -> List[Atoms]:
         """
@@ -336,7 +337,7 @@ class HybridNEBWorkflow:
                 dimensions=dimensions,
                 lattice_constant=lattice_constant,
                 balance_element=balance_element,
-                cubic=True
+                cubic=cubic
             )
             
             # Save initial structure
@@ -358,6 +359,8 @@ class HybridNEBWorkflow:
         convergence_window: int = 1000,
         energy_threshold: float = 0.0002,
         final_cell_relax: bool = True,
+        fmax: float = 0.05,
+        steps: int = 1000,
         md_timestep: float = 2.0,
         md_thermostat: str = 'langevin',
         friction: float = 0.02
@@ -382,17 +385,17 @@ class HybridNEBWorkflow:
         Returns:
             List of optimized ASE Atoms objects
         """
-        if self.unified_calculator is None:
+        if self.ensemble_calculator is None:
             raise ValueError(
-                "Unified calculator not initialized. Please check:\n"
+                "Ensemble calculator not initialized. Please check:\n"
                 "1. Model file path and accessibility\n"
                 "2. Model file format (.zip, .nequip.zip, or .pt2)\n"
-                "3. Species mapping configuration\n"
+                "3. Backend configuration\n"
                 "4. Required packages installation (nequip, mace)\n"
                 f"Model path: {self.model_path}"
             )
         
-        print(f"Optimizing structures with hybrid MCMC-MD using {self.unified_calculator.calculator_type} calculator...")
+        print(f"Optimizing structures with hybrid MCMC-MD using {type(self.ensemble_calculator).__name__} calculator...")
         
         optimized_structures = []
         
@@ -403,7 +406,7 @@ class HybridNEBWorkflow:
             optimized_atoms = self._optimize_with_hybrid_mcmc(
                 atoms, temperature, md_temperature, n_steps, md_steps_per_cycle, 
                 mc_steps_per_cycle, convergence_window, energy_threshold,
-                final_cell_relax, md_timestep, md_thermostat, friction
+                final_cell_relax, fmax, steps, md_timestep, md_thermostat, friction
             )
             
             # Save optimized structure
@@ -426,17 +429,19 @@ class HybridNEBWorkflow:
         convergence_window: int,
         energy_threshold: float,
         final_cell_relax: bool,
+        fmax: float,
+        steps: int,
         md_timestep: float,
         md_thermostat: str,
         friction: float
     ) -> Atoms:
         """Optimize structure using hybrid MCMC-MD with unified calculator."""
-        print(f"Using hybrid MCMC-MD optimization with {self.unified_calculator.calculator_type} calculator")
+        print(f"Using hybrid MCMC-MD optimization with {type(self.ensemble_calculator).__name__} calculator")
         
         # Create hybrid MCMC sampler with unified calculator
         hybrid_sampler = HybridMCMCSampler(
             atoms=atoms,
-            calculator=self.unified_calculator,
+            calculator=self.ensemble_calculator,
             temperature=temperature,
             md_temperature=md_temperature,
             steps=n_steps,
@@ -452,7 +457,9 @@ class HybridNEBWorkflow:
         # Run hybrid MCMC
         optimized_atoms = hybrid_sampler.run_hybrid_mcmc(
             convergence_window=convergence_window,
-            energy_threshold=energy_threshold
+            energy_threshold=energy_threshold,
+            fmax=fmax,
+            steps=steps
         )
         
         return optimized_atoms
@@ -496,12 +503,12 @@ class HybridNEBWorkflow:
         """
         print("Running NEB calculations for vacancy diffusion...")
         
-        if self.unified_calculator is None:
+        if self.ensemble_calculator is None:
             raise ValueError(
-                "Unified calculator not initialized. Please check:\n"
+                "Ensemble calculator not initialized. Please check:\n"
                 "1. Model file path and accessibility\n"
                 "2. Model file format (.zip, .nequip.zip, or .pt2)\n"
-                "3. Species mapping configuration\n"
+                "3. Backend configuration\n"
                 "4. Required packages installation (nequip, mace)\n"
                 f"Model path: {self.model_path}"
             )
@@ -523,7 +530,7 @@ class HybridNEBWorkflow:
                 nn_cutoff=2.8,
                 nnn_cutoff=3.2,
                 seed=self.seed + i,
-                calculator_type=self.calculator_type,
+                backend=self.backend,
                 species_to_type_name=self.species_to_type_name
             )
             
@@ -627,12 +634,18 @@ class HybridNEBWorkflow:
         if plot_compositions and len(self.compositions) > 1:
             print("Creating composition analysis plots...")
             
+            # Use the proper workflow: reduce and cluster, then visualize
+            embeddings, clusters, metadata = self.composition_analyzer.reduce_and_cluster(
+                compositions=self.compositions,
+                n_clusters=min(5, len(self.compositions)),
+                comp_type='new',
+                seed=self.seed
+            )
+            
             # Create composition visualization
             self.composition_analyzer.visualize_compositions(
-                embeddings=np.array([[comp.get('V', 0), comp.get('Cr', 0), 
-                                    comp.get('Ti', 0), comp.get('W', 0), 
-                                    comp.get('Zr', 0)] for comp in self.compositions]),
-                metadata=[{'composition': comp} for comp in self.compositions],
+                embeddings=embeddings,
+                metadata=metadata,
                 save_path=self.output_dir / "composition_analysis.png"
             )
         
@@ -792,7 +805,7 @@ def main():
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=seed,
         output_dir=output_dir,
-        calculator_type=None,  # Auto-detect based on model file
+        backend=None,  # Auto-detect based on model file
         species_to_type_name={'V': 0, 'Cr': 1, 'Ti': 2, 'W': 3, 'Zr': 4}
     )
     

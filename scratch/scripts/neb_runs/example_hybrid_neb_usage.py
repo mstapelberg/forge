@@ -36,7 +36,7 @@ def example_basic_workflow():
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=42,
         output_dir=output_dir,
-        calculator_type=None,  # Auto-detect based on model file
+        backend="allegro",
         species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
@@ -84,7 +84,7 @@ def example_composition_generation():
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=123,
         output_dir=output_dir,
-        calculator_type=None,  # Auto-detect based on model file
+        backend="allegro",
         species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
@@ -126,7 +126,7 @@ def example_optimization_only():
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=456,
         output_dir=output_dir,
-        calculator_type=None,  # Auto-detect based on model file
+        backend="allegro",
         species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
@@ -177,7 +177,7 @@ def example_neb_only():
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=789,
         output_dir=output_dir,
-        calculator_type=None,  # Auto-detect based on model file
+        backend="allegro",
         species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
@@ -230,7 +230,7 @@ def example_custom_workflow():
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=999,
         output_dir=output_dir,
-        calculator_type=None,  # Auto-detect based on model file
+        backend="allegro",
         species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     

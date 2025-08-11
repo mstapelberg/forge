@@ -35,7 +35,7 @@ from forge.analysis.composition import CompositionAnalyzer
 from forge.workflows.hybrid_mcmc import HybridMCMCSampler
 from forge.workflows.neb import VacancyDiffusion, NEBAnalyzer
 from forge.workflows.relax import relax
-from forge.workflows.calculator_interface import create_calculator, check_calculator_availability
+from forge.calculators.factory import create_ensemble_calculator, get_supported_backends
 
 # Suppress torch warnings
 warnings.filterwarnings("ignore", category=FutureWarning, 
@@ -57,7 +57,7 @@ class HybridNEBWorkflow:
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         seed: int = 42,
         output_dir: str = "hybrid_neb_results",
-        calculator_type: Optional[str] = None,
+        backend: Optional[str] = None,
         species_to_type_name: Optional[Dict[str, int]] = None
     ):
         """
@@ -68,7 +68,7 @@ class HybridNEBWorkflow:
             device: Device to run calculations on
             seed: Random seed for reproducibility
             output_dir: Directory to save results
-            calculator_type: Type of calculator ('mace', 'allegro', or None for auto-detect)
+            backend: Calculator backend ('mace', 'allegro', or None for auto-detect)
             species_to_type_name: Species mapping for Allegro
         """
         self.model_path = model_path
@@ -76,7 +76,7 @@ class HybridNEBWorkflow:
         self.seed = seed
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.calculator_type = calculator_type
+        self.backend = backend
         self.species_to_type_name = species_to_type_name or {}
         
         # Set random seeds
@@ -88,7 +88,7 @@ class HybridNEBWorkflow:
         
         # Initialize components
         self.composition_analyzer = CompositionAnalyzer()
-        self.unified_calculator = None
+        self.ensemble_calculator = None
         
         # Initialize calculators
         self._initialize_calculators()
@@ -99,25 +99,25 @@ class HybridNEBWorkflow:
         self.neb_results = []
         
     def _initialize_calculators(self):
-        """Initialize unified calculator."""
-        print(f"Initializing unified calculator on device: {self.device}")
+        """Initialize ensemble calculator."""
+        print(f"Initializing ensemble calculator on device: {self.device}")
         
         # Check available calculators
-        available = check_calculator_availability()
-        print(f"Available calculators: {available}")
+        available = get_supported_backends()
+        print(f"Available backends: {available}")
         
         try:
-            # Initialize unified calculator
-            self.unified_calculator = create_calculator(
-                model_path=self.model_path,
-                calculator_type=self.calculator_type,
+            # Initialize ensemble calculator
+            self.ensemble_calculator = create_ensemble_calculator(
+                model_paths=self.model_path,
+                backend=self.backend,
                 device=self.device,
                 species_to_type_name=self.species_to_type_name
             )
-            print(f"Successfully initialized {self.unified_calculator.calculator_type} calculator")
+            print(f"Successfully initialized {type(self.ensemble_calculator).__name__} calculator")
         except Exception as e:
             print(f"Warning: Could not initialize calculator: {e}")
-            self.unified_calculator = None
+            self.ensemble_calculator = None
     
     def generate_compositions(
         self,
@@ -338,9 +338,9 @@ class HybridNEBWorkflow:
         Returns:
             List of optimized ASE Atoms objects
         """
-        print(f"Optimizing structures with hybrid MCMC-MD using {self.unified_calculator.calculator_type} calculator...")
+        print(f"Optimizing structures with hybrid MCMC-MD using {self.ensemble_calculator.backend} calculator...")
         
-        if self.unified_calculator is None:
+        if self.ensemble_calculator is None:
             raise ValueError("Unified calculator not initialized. Please check model path and installation.")
         
         optimized_structures = []
@@ -382,12 +382,12 @@ class HybridNEBWorkflow:
         friction: float
     ) -> Atoms:
         """Optimize structure using hybrid MCMC-MD with unified calculator."""
-        print(f"Using hybrid MCMC-MD optimization with {self.unified_calculator.calculator_type} calculator")
+        print(f"Using hybrid MCMC-MD optimization with {self.ensemble_calculator.backend} calculator")
         
         # Create hybrid MCMC sampler with unified calculator
         hybrid_sampler = HybridMCMCSampler(
             atoms=atoms,
-            calculator=self.unified_calculator,
+            calculator=self.ensemble_calculator,
             temperature=temperature,
             md_temperature=md_temperature,
             steps=n_steps,
@@ -466,7 +466,7 @@ class HybridNEBWorkflow:
                 nn_cutoff=2.8,
                 nnn_cutoff=3.2,
                 seed=self.seed + i,
-                calculator_type=self.calculator_type,
+                backend=self.backend,
                 species_to_type_name=self.species_to_type_name
             )
             
@@ -708,7 +708,7 @@ def main():
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=seed,
         output_dir=output_dir,
-        calculator_type=None,  # Auto-detect based on model file
+        backend=None,  # Auto-detect based on model file
         species_to_type_name={'V': 0, 'Cr': 1, 'Ti': 2, 'W': 3, 'Zr': 4}
     )
     

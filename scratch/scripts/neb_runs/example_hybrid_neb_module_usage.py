@@ -16,8 +16,8 @@ def example_basic_usage():
     print("=== Basic HybridNEBWorkflow Usage ===")
     
     # Configuration
-    model_path = "../data/potentials/allegro/gen-8-exploit_rmax6.00_lmax2_layers2_mlp384.nequip.zip"
-    output_dir = "../data/pel_het_search/module_example_results"
+    model_path = "../../data/potentials/allegro/exploit_rmax6.00_lmax2_layers2_mlp384_seed42.nequip.zip"
+    output_dir = "../../data/pel_het_search/module_example_results"
     
     # Example existing compositions
     existing_compositions = [
@@ -31,7 +31,7 @@ def example_basic_usage():
         device="cuda" if torch.cuda.is_available() else "cpu",
         seed=42,
         output_dir=output_dir,
-        calculator_type=None,  # Auto-detect
+        backend="allegro",
         species_to_type_name={'Ti': 0, 'V': 1, 'Cr': 2, 'Zr': 3, 'W': 4}
     )
     
@@ -41,7 +41,7 @@ def example_basic_usage():
         n_new_compositions=1,
         elements=['V', 'Cr', 'Ti', 'W', 'Zr'],
         crystal_type='bcc',
-        dimensions=[4, 4, 4],  # Small for testing
+        dimensions=[3, 3, 3],  # Small for testing
         lattice_constant=3.01,
         temperature=873.15,
         n_steps=100,  # Few cycles for testing
@@ -112,17 +112,19 @@ def example_step_by_step():
     structures = workflow.create_initial_structures(
         compositions=compositions,
         crystal_type='bcc',
-        dimensions=[3, 3, 3],  # Small for testing
-        lattice_constant=3.01
+        dimensions=[10, 10, 10],  # Small for testing
+        lattice_constant=3.01,
+        cubic=True
+
     )
     
     # Step 3: Optimize with hybrid MCMC-MD
     optimized_structures = workflow.optimize_with_hybrid_mcmc(
         structures=structures,
         temperature=873.15,
-        n_steps=50,  # Few cycles for testing
-        md_steps_per_cycle=20,
-        mc_steps_per_cycle=10,
+        n_steps=15,  # Few cycles for testing
+        md_steps_per_cycle=len(structures[0]),
+        mc_steps_per_cycle=1000,
         final_cell_relax=True
     )
     
@@ -131,8 +133,8 @@ def example_step_by_step():
         structures=optimized_structures,
         n_nearest=1,
         n_next_nearest=1,
-        num_images=3,  # Few images for testing
-        neb_steps=50   # Few steps for testing
+        num_images=5,  # Few images for testing
+        neb_steps=150   # Few steps for testing
     )
     
     # Step 5: Analyze results
@@ -187,9 +189,9 @@ if __name__ == "__main__":
     
     # Run examples (uncomment the ones you want to try)
     
-    example_basic_usage()
+    #example_basic_usage()
     example_step_by_step()
-    example_custom_optimization()
+    #example_custom_optimization()
     
     print("\nTo run examples, uncomment the desired function calls above.")
     print("Make sure you have the required model file and dependencies installed.")

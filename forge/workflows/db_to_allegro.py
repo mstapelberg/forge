@@ -121,6 +121,7 @@ def _prepare_data_for_allegro(
     train_ratio: Optional[float],
     val_ratio: Optional[float],
     test_ratio: Optional[float],
+    test_structure_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """Prepares data for an Allegro job, supporting both HPO and standalone modes.
 
@@ -159,8 +160,9 @@ def _prepare_data_for_allegro(
             - "val_path": Path(s) to the validation data file(s).
             - "test_path": Path to the test data file.
             - "chemical_symbols": A list of unique, sorted chemical symbols.
-            - "structure_splits": A dict with the train/val/test structure IDs.
-                Empty in HPO mode.
+            - "structure_splits": A dict with the train/val/test structure IDs
+              (empty in HPO mode). If `test_structure_ids` is provided, the
+              'test' key will reflect those IDs.
 
     Raises:
         ValueError: If required arguments for a specific mode are missing.
@@ -221,27 +223,65 @@ def _prepare_data_for_allegro(
             random.seed(seed)
             final_ids = random.sample(all_db_ids, num_to_sample)
         
-        val_paths = [f"data/{job_name}_val.xyz"] # Val-A, will be created by _prepare_structure_splits
+        val_paths = [f"data/{job_name}_val.xyz"]  # Val-A, will be created by _prepare_structure_splits
         if val_b_ids:
             logger.info(f"Using {len(val_b_ids)} structures for Val-B set.")
             _save_structures_to_xyz(db_manager, val_b_ids, job_data_dir / f"{job_name}_val_b.xyz")
             final_ids = [sid for sid in final_ids if sid not in val_b_ids]
             val_paths.append(f"data/{job_name}_val_b.xyz")
 
-        if not final_ids:
+        if not final_ids and not test_structure_ids:
             raise ValueError("No structures selected for standalone run.")
 
-        chemical_symbols = _extract_chemical_symbols(db_manager, final_ids)
-        
-        structure_splits = _prepare_structure_splits(
-            db_manager, final_ids, job_name, job_dir, job_data_dir,
-            train_ratio, val_ratio, test_ratio, seed
-        )
+        ids_for_symbols = final_ids if final_ids else (test_structure_ids or [])
+        chemical_symbols = _extract_chemical_symbols(db_manager, ids_for_symbols)
+
+        structure_splits: Dict[str, List[int]] = {"train": [], "val": [], "test": []}
+
+        # Handle explicit test set if provided
+        test_path = f"data/{job_name}_test.xyz"
+        if test_structure_ids:
+            logger.info(f"Using {len(test_structure_ids)} explicitly provided structures for Test set.")
+            # Save the fixed test set and remove from pool
+            _save_structures_to_xyz(db_manager, test_structure_ids, job_data_dir / f"{job_name}_test.xyz")
+            final_ids = [sid for sid in final_ids if sid not in set(test_structure_ids)]
+            logger.info(
+                "Fixed test IDs provided: overriding automatic test split to 0. "
+                "Remaining pool will be split into train/val only."
+            )
+            # Avoid allocating additional test data via automatic split
+            local_test_ratio = 0.0
+        else:
+            local_test_ratio = test_ratio if test_ratio is not None else 0.1
+
+        if final_ids:
+            auto_splits = _prepare_structure_splits(
+                db_manager,
+                final_ids,
+                job_name,
+                job_dir,
+                job_data_dir,
+                train_ratio,
+                val_ratio,
+                local_test_ratio,
+                seed,
+            )
+            structure_splits.update(auto_splits)
+        elif not test_structure_ids:
+            raise ValueError("No structures available for train/val after exclusions.")
+
+        if test_structure_ids:
+            # Ensure fixed test file contents are preserved even if the splitter wrote a small test set
+            _save_structures_to_xyz(db_manager, test_structure_ids, job_data_dir / f"{job_name}_test.xyz")
+            structure_splits["test"] = list(test_structure_ids)
+            logger.info(
+                f"Finalized fixed test set with {len(test_structure_ids)} structures and overwrote any auto-written test file."
+            )
 
         return {
             "train_path": f"data/{job_name}_train.xyz",
             "val_path": val_paths,
-            "test_path": f"data/{job_name}_test.xyz",
+            "test_path": test_path,
             "chemical_symbols": chemical_symbols,
             "structure_splits": structure_splits,
         }
@@ -578,6 +618,7 @@ def prepare_allegro_job(
     num_structures: Optional[int] = None,
     structure_ids: Optional[List[int]] = None,
     val_b_ids: Optional[List[int]] = None,
+    test_structure_ids: Optional[List[int]] = None,
     train_ratio: Optional[float] = 0.8,
     val_ratio: Optional[float] = 0.1,
     test_ratio: Optional[float] = 0.1,
@@ -637,9 +678,13 @@ def prepare_allegro_job(
         num_structures (Optional[int]): Number of structures to sample from the DB.
         structure_ids (Optional[List[int]]): Specific list of structure IDs to use.
         val_b_ids (Optional[List[int]]): IDs for the 'hard' validation set.
+        test_structure_ids (Optional[List[int]]): Specific structure IDs to force
+            into the test set in standalone mode. These IDs will be excluded from
+            the train/val pool and written directly to the test .xyz file.
         train_ratio (Optional[float]): Fraction of data for the training set.
         val_ratio (Optional[float]): Fraction of data for the validation set.
-        test_ratio (Optional[float]): Fraction of data for the test set.
+        test_ratio (Optional[float]): Fraction of data for the test set. Ignored
+            if `test_structure_ids` are provided (test set is fixed).
         loss_coeffs (Optional[Dict[str, Any]]): Coefficients for the loss terms.
         loss_schedule (Optional[Dict[int, Dict[str, float]]]): Schedule for the
             LossCoefficientScheduler.
@@ -683,6 +728,7 @@ def prepare_allegro_job(
         seed=seed, num_structures=num_structures, structure_ids=structure_ids,
         val_b_ids=val_b_ids,
         train_ratio=train_ratio, val_ratio=val_ratio, test_ratio=test_ratio,
+        test_structure_ids=test_structure_ids,
     )
     
     # Explicitly gather all keyword arguments for the config builder
@@ -692,6 +738,7 @@ def prepare_allegro_job(
         'data_test_path': data_test_path, 'chemical_symbols_list': chemical_symbols_list,
         'num_structures': num_structures, 'structure_ids': structure_ids,
         'val_b_ids': val_b_ids,
+        'test_structure_ids': test_structure_ids,
         'train_ratio': train_ratio, 'val_ratio': val_ratio, 'test_ratio': test_ratio,
         'loss_coeffs': loss_coeffs,
         'loss_schedule': loss_schedule, 'sampler': sampler,

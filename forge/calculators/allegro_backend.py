@@ -49,7 +49,9 @@ class AllegroBackend(BaseEnsembleCalculator):
             )
             
         self._device = device
-        self._kwargs = kwargs  # Store kwargs for passing to calculators
+        # Control whether to enable autograd during model forward (default: False for speed)
+        self._enable_gradients = bool(kwargs.pop('enable_gradients', False))
+        self._kwargs = kwargs  # Store remaining kwargs for passing to calculators
         self._atoms = None  # Store attached atoms for ASE interface
         
         # Store model paths for reference
@@ -192,25 +194,19 @@ class AllegroBackend(BaseEnsembleCalculator):
                     atoms_copy.calc = calc
                     forces = atoms_copy.get_forces()
                 else:
-                    # Packaged model - use raw model directly (supports gradients)
+                    # Packaged model - use raw model directly
                     data = from_ase(atoms)
-                    
-                    # Apply transforms from the calculator
                     for transform in calc.transforms:
                         data = transform(data)
-                    
-                    # Move to device
                     data = AtomicDataDict.to_(data, self._device)
-                    
-                    # Get the model from the calculator
                     model = self._models[i]
-                    
-                    # Ensure model is in eval mode but parameters require gradients
                     model.eval()
+                    # Forces typically require gradients w.r.t. positions; keep parameter grads off
                     for param in model.parameters():
-                        param.requires_grad_(True)
-                    
-                    # Forward pass to get forces (allow gradients for MCMC optimization)
+                        param.requires_grad_(False)
+                    # Ensure positions track gradients for force computation
+                    if AtomicDataDict.POSITIONS_KEY in data:
+                        data[AtomicDataDict.POSITIONS_KEY].requires_grad_(True)
                     output = model(data)
                     forces = output[AtomicDataDict.FORCE_KEY].cpu().detach().numpy()
                 
@@ -245,26 +241,18 @@ class AllegroBackend(BaseEnsembleCalculator):
                     atoms_copy.calc = calc
                     energy = atoms_copy.get_potential_energy()
                 else:
-                    # Packaged model - use raw model directly (supports gradients)
+                    # Packaged model - use raw model directly
                     data = from_ase(atoms)
-                    
-                    # Apply transforms from the calculator
                     for transform in calc.transforms:
                         data = transform(data)
-                    
-                    # Move to device
                     data = AtomicDataDict.to_(data, self._device)
-                    
-                    # Get the model from the calculator
                     model = self._models[i]
-                    
-                    # Ensure model is in eval mode but parameters require gradients
                     model.eval()
+                    # Energies do not require backprop by default
                     for param in model.parameters():
-                        param.requires_grad_(True)
-                    
-                    # Forward pass to get energy (allow gradients for MCMC optimization)
-                    output = model(data)
+                        param.requires_grad_(False)
+                    with torch.no_grad():
+                        output = model(data)
                     energy = output[AtomicDataDict.TOTAL_ENERGY_KEY].cpu().detach().numpy()
                 
                 energies_list.append(energy)
@@ -331,26 +319,18 @@ class AllegroBackend(BaseEnsembleCalculator):
                     atoms_copy.calc = calc
                     stress = atoms_copy.get_stress()
                 else:
-                    # Packaged model - use raw model directly (supports gradients)
+                    # Packaged model - use raw model directly
                     data = from_ase(atoms)
-                    
-                    # Apply transforms from the calculator
                     for transform in calc.transforms:
                         data = transform(data)
-                    
-                    # Move to device
                     data = AtomicDataDict.to_(data, self._device)
-                    
-                    # Get the model from the calculator
                     model = self._models[i]
-                    
-                    # Ensure model is in eval mode but parameters require gradients
                     model.eval()
+                    # Stresses: default to no-grad; if needed user can call forces_all with grad path
                     for param in model.parameters():
-                        param.requires_grad_(True)
-                    
-                    # Forward pass to get stress (allow gradients for MCMC optimization)
-                    output = model(data)
+                        param.requires_grad_(False)
+                    with torch.no_grad():
+                        output = model(data)
                     
                     # Check if stress is available in the output
                     if AtomicDataDict.STRESS_KEY in output:
@@ -431,6 +411,105 @@ class AllegroBackend(BaseEnsembleCalculator):
         stress = self.get_mean_stress(atoms)
         self.results['stress'] = stress
         return stress
+
+    def predict_all(self, atoms: Atoms) -> dict:
+        """Compute energies, forces, and stresses for all models in a single pass per model.
+        
+        Returns a dict with optional keys 'energies', 'forces', 'stresses', each a numpy array
+        stacked along the model axis. This method minimizes redundant forwards for packaged models
+        and disables autograd by default for speed.
+        """
+        energies_list = []
+        forces_list = []
+        stresses_list = []
+
+        original_calc = atoms.calc
+        atoms.calc = None
+        try:
+            for i, calc in enumerate(self._calculators):
+                if self._models[i] is None:
+                    # Compiled model via ASE calculator; try to leverage calculator caching
+                    atoms_copy = atoms.copy()
+                    atoms_copy.calc = calc
+                    # Request forces first (usually computes everything)
+                    try:
+                        f = atoms_copy.get_forces()
+                        forces_list.append(f)
+                    except Exception:
+                        forces_list.append(None)
+                    try:
+                        e = atoms_copy.get_potential_energy()
+                        energies_list.append(e)
+                    except Exception:
+                        energies_list.append(None)
+                    try:
+                        s = atoms_copy.get_stress()
+                        stresses_list.append(s)
+                    except Exception:
+                        stresses_list.append(None)
+                else:
+                    # Packaged model; single forward
+                    data = from_ase(atoms)
+                    for transform in calc.transforms:
+                        data = transform(data)
+                    data = AtomicDataDict.to_(data, self._device)
+
+                    model = self._models[i]
+                    model.eval()
+                    # For unified forward, enable grad only if requested and for forces
+                    need_forces = True
+                    if not self._enable_gradients and need_forces:
+                        # Use autograd on positions only
+                        for param in model.parameters():
+                            param.requires_grad_(False)
+                        if AtomicDataDict.POSITIONS_KEY in data:
+                            data[AtomicDataDict.POSITIONS_KEY].requires_grad_(True)
+                        output = model(data)
+                    else:
+                        for param in model.parameters():
+                            param.requires_grad_(self._enable_gradients)
+                        output = model(data)
+
+                    # Extract outputs (optional keys)
+                    if AtomicDataDict.TOTAL_ENERGY_KEY in output:
+                        e = output[AtomicDataDict.TOTAL_ENERGY_KEY].cpu().detach().numpy()
+                        energies_list.append(e)
+                    else:
+                        energies_list.append(None)
+                    if AtomicDataDict.FORCE_KEY in output:
+                        f = output[AtomicDataDict.FORCE_KEY].cpu().detach().numpy()
+                        forces_list.append(f)
+                    else:
+                        forces_list.append(None)
+                    if AtomicDataDict.STRESS_KEY in output:
+                        s = output[AtomicDataDict.STRESS_KEY].cpu().detach().numpy()
+                        # Normalize stress to Voigt 6 as in stresses_all
+                        from ase.stress import full_3x3_to_voigt_6_stress
+                        if s.shape == (3, 3):
+                            s = full_3x3_to_voigt_6_stress(s)
+                        elif s.shape == (1, 3, 3):
+                            s = full_3x3_to_voigt_6_stress(s[0])
+                        elif s.shape == (9,):
+                            s = full_3x3_to_voigt_6_stress(s.reshape(3, 3))
+                        stresses_list.append(s)
+                    else:
+                        stresses_list.append(None)
+        finally:
+            atoms.calc = original_calc
+
+        result = {}
+        if any(e is not None for e in energies_list):
+            # Replace Nones with NaN for stacking, then squeeze to 1D
+            e_vals = [np.nan if e is None else e for e in energies_list]
+            result['energies'] = np.array(e_vals)
+        if any(f is not None for f in forces_list):
+            f_vals = [np.zeros_like(forces_list[0]) if f is None else f for f in forces_list]
+            result['forces'] = np.stack(f_vals, axis=0)
+        if any(s is not None for s in stresses_list):
+            # Normalize stress to Voigt 6 if needed is handled by caller
+            s_vals = [np.zeros(6) if s is None else s for s in stresses_list]
+            result['stresses'] = np.array(s_vals)
+        return result
     
     def set_atoms(self, atoms: Atoms):
         """ASE calculator interface: Set atoms for the calculator."""

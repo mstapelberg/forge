@@ -1,0 +1,1929 @@
+/home/myless/.mambaforge/envs/forge-allegro/lib/python3.12/site-packages/spaghetti/network.py:41: FutureWarning: The next major release of pysal/spaghetti (2.0.0) will drop support for all ``libpysal.cg`` geometries. This change is a first step in refactoring ``spaghetti`` that is expected to result in dramatically reduced runtimes for network instantiation and operations. Users currently requiring network and point pattern input as ``libpysal.cg`` geometries should prepare for this simply by converting to ``shapely`` geometries.
+  warnings.warn(dep_msg, FutureWarning, stacklevel=1)
+NGLView not installed. 3D visualization will be unavailable.
+INFO:computed_ensemble_stats:Found 5 model(s)
+INFO:computed_ensemble_stats:Found 1 .xyz file(s)
+INFO:nequip.model.saved_models.package:[rank: 0] Loading model from package file: /home/myless/Packages/forge/scratch/data/potentials/allegro/gen-8-aa/exploit_rmax5.50_lmax2_layers2_mlp256_seed42.nequip.zip ...
+INFO:nequip.model.saved_models.package:[rank: 0] Loading model from package file: /home/myless/Packages/forge/scratch/data/potentials/allegro/gen-8-aa/exploit_rmax5.50_lmax2_layers2_mlp384_seed42.nequip.zip ...
+INFO:nequip.model.saved_models.package:[rank: 0] Loading model from package file: /home/myless/Packages/forge/scratch/data/potentials/allegro/gen-8-aa/exploit_rmax5.75_lmax2_layers2_mlp256_seed42.nequip.zip ...
+INFO:nequip.model.saved_models.package:[rank: 0] Loading model from package file: /home/myless/Packages/forge/scratch/data/potentials/allegro/gen-8-aa/exploit_rmax6.00_lmax2_layers2_mlp256_seed42.nequip.zip ...
+INFO:nequip.model.saved_models.package:[rank: 0] Loading model from package file: /home/myless/Packages/forge/scratch/data/potentials/allegro/gen-8-aa/exploit_rmax6.00_lmax2_layers2_mlp384_seed42.nequip.zip ...
+XYZ files:   0%|          | 0/1 [00:00<?, ?file/s]
+chunk_0006.xyz: 0frame [00:00, ?frame/s][A/home/myless/Packages/forge/scratch/scripts/dataset_analysis/computed_ensemble_stats.py:330: DeprecationWarning: Conversion of an array with ndim > 0 to a scalar is deprecated, and will error in future. Ensure you extract a single element from your array before performing this operation. (Deprecated NumPy 1.25.)
+  pred["energy"] = float(e_all[i])
+
+chunk_0006.xyz: 1frame [00:01,  1.92s/frame][A
+chunk_0006.xyz: 2frame [00:02,  1.14frame/s][A
+chunk_0006.xyz: 3frame [00:02,  1.80frame/s][A
+chunk_0006.xyz: 4frame [00:02,  2.50frame/s][A
+chunk_0006.xyz: 5frame [00:02,  3.19frame/s][A
+chunk_0006.xyz: 6frame [00:02,  3.82frame/s][A
+chunk_0006.xyz: 7frame [00:02,  4.52frame/s][A
+chunk_0006.xyz: 9frame [00:03,  6.66frame/s][A
+chunk_0006.xyz: 11frame [00:03,  7.44frame/s][A
+chunk_0006.xyz: 12frame [00:03,  7.13frame/s][A
+chunk_0006.xyz: 14frame [00:03,  7.78frame/s][A
+chunk_0006.xyz: 15frame [00:03,  7.36frame/s][A
+chunk_0006.xyz: 16frame [00:03,  7.05frame/s][A
+chunk_0006.xyz: 17frame [00:04,  7.12frame/s][A
+chunk_0006.xyz: 18frame [00:04,  7.16frame/s][A
+chunk_0006.xyz: 19frame [00:04,  7.28frame/s][A
+chunk_0006.xyz: 21frame [00:04,  7.67frame/s][A
+chunk_0006.xyz: 22frame [00:04,  7.27frame/s][A
+chunk_0006.xyz: 24frame [00:04,  7.82frame/s][A
+chunk_0006.xyz: 25frame [00:05,  7.39frame/s][A
+chunk_0006.xyz: 26frame [00:05,  7.42frame/s][A
+chunk_0006.xyz: 27frame [00:05,  7.07frame/s][A
+chunk_0006.xyz: 29frame [00:05,  9.15frame/s][A
+chunk_0006.xyz: 30frame [00:05,  8.25frame/s][A
+chunk_0006.xyz: 31frame [00:05,  7.98frame/s][A
+chunk_0006.xyz: 32frame [00:06,  7.42frame/s][A
+chunk_0006.xyz: 33frame [00:06,  7.05frame/s][A
+chunk_0006.xyz: 34frame [00:06,  6.80frame/s][A
+chunk_0006.xyz: 36frame [00:06,  7.62frame/s][A
+chunk_0006.xyz: 37frame [00:06,  7.23frame/s][A
+chunk_0006.xyz: 38frame [00:06,  6.95frame/s][A
+chunk_0006.xyz: 39frame [00:07,  7.10frame/s][A
+chunk_0006.xyz: 40frame [00:07,  6.83frame/s][A
+chunk_0006.xyz: 41frame [00:07,  6.66frame/s][A
+chunk_0006.xyz: 42frame [00:07,  6.52frame/s][A
+chunk_0006.xyz: 44frame [00:07,  8.76frame/s][A
+chunk_0006.xyz: 45frame [00:07,  7.97frame/s][A
+chunk_0006.xyz: 46frame [00:07,  7.44frame/s][A
+chunk_0006.xyz: 48frame [00:08,  8.11frame/s][A
+chunk_0006.xyz: 50frame [00:08,  8.42frame/s][A
+chunk_0006.xyz: 52frame [00:08, 10.14frame/s][A
+chunk_0006.xyz: 54frame [00:08,  9.64frame/s][A
+chunk_0006.xyz: 56frame [00:09,  8.20frame/s][A
+chunk_0006.xyz: 57frame [00:09,  7.76frame/s][A
+chunk_0006.xyz: 58frame [00:09,  7.38frame/s][A
+chunk_0006.xyz: 59frame [00:09,  7.08frame/s][A
+chunk_0006.xyz: 60frame [00:09,  7.15frame/s][A
+chunk_0006.xyz: 61frame [00:09,  6.90frame/s][A
+chunk_0006.xyz: 62frame [00:09,  6.71frame/s][A
+chunk_0006.xyz: 63frame [00:10,  6.58frame/s][A
+chunk_0006.xyz: 64frame [00:10,  6.48frame/s][A
+chunk_0006.xyz: 65frame [00:10,  6.40frame/s][A
+chunk_0006.xyz: 67frame [00:10,  7.69frame/s][A
+chunk_0006.xyz: 68frame [00:10,  7.68frame/s][A
+chunk_0006.xyz: 69frame [00:10,  7.24frame/s][A
+chunk_0006.xyz: 70frame [00:11,  6.95frame/s][A
+chunk_0006.xyz: 71frame [00:11,  6.74frame/s][A
+chunk_0006.xyz: 72frame [00:11,  6.60frame/s][A
+chunk_0006.xyz: 73frame [00:11,  6.47frame/s][A
+chunk_0006.xyz: 74frame [00:11,  7.17frame/s][A
+chunk_0006.xyz: 75frame [00:11,  7.21frame/s][A
+chunk_0006.xyz: 77frame [00:12,  7.86frame/s][A
+chunk_0006.xyz: 78frame [00:12,  7.38frame/s][A
+chunk_0006.xyz: 80frame [00:12,  8.03frame/s][A
+chunk_0006.xyz: 81frame [00:12,  7.52frame/s][A
+chunk_0006.xyz: 83frame [00:12,  8.97frame/s][A
+chunk_0006.xyz: 84frame [00:12,  8.20frame/s][A
+chunk_0006.xyz: 85frame [00:13,  7.61frame/s][A
+chunk_0006.xyz: 87frame [00:13,  9.19frame/s][A
+chunk_0006.xyz: 89frame [00:13,  9.53frame/s][A
+chunk_0006.xyz: 91frame [00:13,  9.12frame/s][A
+chunk_0006.xyz: 92frame [00:13,  8.36frame/s][A
+chunk_0006.xyz: 93frame [00:13,  7.77frame/s][A
+chunk_0006.xyz: 94frame [00:14,  7.35frame/s][A
+chunk_0006.xyz: 95frame [00:14,  7.34frame/s][A
+chunk_0006.xyz: 96frame [00:14,  7.01frame/s][A
+chunk_0006.xyz: 97frame [00:14,  7.09frame/s][A
+chunk_0006.xyz: 98frame [00:14,  6.84frame/s][A
+chunk_0006.xyz: 99frame [00:14,  6.64frame/s][A
+chunk_0006.xyz: 100frame [00:15,  6.81frame/s][A
+chunk_0006.xyz: 102frame [00:15,  9.36frame/s][A
+chunk_0006.xyz: 103frame [00:15,  8.34frame/s][A
+chunk_0006.xyz: 104frame [00:15,  7.67frame/s][A
+chunk_0006.xyz: 105frame [00:15,  7.21frame/s][A
+chunk_0006.xyz: 107frame [00:15,  7.63frame/s][A
+chunk_0006.xyz: 108frame [00:16,  7.26frame/s][A
+chunk_0006.xyz: 109frame [00:16,  6.99frame/s][A
+chunk_0006.xyz: 110frame [00:16,  6.78frame/s][A
+chunk_0006.xyz: 112frame [00:16,  7.41frame/s][A
+chunk_0006.xyz: 113frame [00:16,  7.09frame/s][A
+chunk_0006.xyz: 114frame [00:16,  6.87frame/s][A
+chunk_0006.xyz: 116frame [00:17,  7.59frame/s][A
+chunk_0006.xyz: 118frame [00:17,  8.14frame/s][A
+chunk_0006.xyz: 119frame [00:17,  7.60frame/s][A
+chunk_0006.xyz: 120frame [00:17,  7.22frame/s][A
+chunk_0006.xyz: 122frame [00:17,  7.77frame/s][A
+chunk_0006.xyz: 123frame [00:18,  7.25frame/s][A
+chunk_0006.xyz: 124frame [00:18,  6.95frame/s][A
+chunk_0006.xyz: 125frame [00:18,  6.74frame/s][A
+chunk_0006.xyz: 126frame [00:18,  6.83frame/s][A
+chunk_0006.xyz: 127frame [00:18,  6.10frame/s][A
+chunk_0006.xyz: 129frame [00:18,  7.09frame/s][A
+chunk_0006.xyz: 130frame [00:19,  7.07frame/s][A
+chunk_0006.xyz: 131frame [00:19,  7.06frame/s][A
+chunk_0006.xyz: 132frame [00:19,  6.75frame/s][A
+chunk_0006.xyz: 133frame [00:19,  6.56frame/s][A
+chunk_0006.xyz: 134frame [00:19,  6.43frame/s][A
+chunk_0006.xyz: 135frame [00:19,  6.34frame/s][A
+chunk_0006.xyz: 136frame [00:20,  6.29frame/s][A
+chunk_0006.xyz: 137frame [00:20,  6.28frame/s][A
+chunk_0006.xyz: 138frame [00:20,  6.25frame/s][A
+chunk_0006.xyz: 139frame [00:20,  6.23frame/s][A
+chunk_0006.xyz: 140frame [00:20,  6.22frame/s][A
+chunk_0006.xyz: 142frame [00:20,  8.39frame/s][A
+chunk_0006.xyz: 143frame [00:21,  8.03frame/s][A
+chunk_0006.xyz: 144frame [00:21,  8.24frame/s][A
+chunk_0006.xyz: 145frame [00:21,  7.60frame/s][A
+chunk_0006.xyz: 147frame [00:21,  9.45frame/s][A
+chunk_0006.xyz: 148frame [00:21,  8.39frame/s][A
+chunk_0006.xyz: 149frame [00:21,  8.33frame/s][A
+chunk_0006.xyz: 150frame [00:21,  7.68frame/s][A
+chunk_0006.xyz: 152frame [00:22,  7.80frame/s][A
+chunk_0006.xyz: 154frame [00:22,  7.76frame/s][A
+chunk_0006.xyz: 155frame [00:22,  7.31frame/s][A
+chunk_0006.xyz: 157frame [00:22,  8.85frame/s][A
+chunk_0006.xyz: 158frame [00:22,  8.47frame/s][A
+chunk_0006.xyz: 159frame [00:22,  8.10frame/s][A
+chunk_0006.xyz: 160frame [00:23,  7.51frame/s][A
+chunk_0006.xyz: 161frame [00:23,  7.07frame/s][A
+chunk_0006.xyz: 163frame [00:23,  7.64frame/s][A
+chunk_0006.xyz: 165frame [00:23,  8.76frame/s][A
+chunk_0006.xyz: 167frame [00:23,  8.51frame/s][A
+chunk_0006.xyz: 168frame [00:24,  7.90frame/s][A
+chunk_0006.xyz: 170frame [00:24,  7.96frame/s][A
+chunk_0006.xyz: 172frame [00:24,  8.02frame/s][A
+chunk_0006.xyz: 173frame [00:24,  7.57frame/s][A
+chunk_0006.xyz: 174frame [00:24,  7.46frame/s][A
+chunk_0006.xyz: 175frame [00:25,  7.11frame/s][A
+chunk_0006.xyz: 176frame [00:25,  6.85frame/s][A
+chunk_0006.xyz: 177frame [00:25,  6.61frame/s][A
+chunk_0006.xyz: 179frame [00:25,  7.17frame/s][A
+chunk_0006.xyz: 180frame [00:25,  6.93frame/s][A
+chunk_0006.xyz: 181frame [00:25,  7.50frame/s][A
+chunk_0006.xyz: 182frame [00:26,  7.09frame/s][A
+chunk_0006.xyz: 183frame [00:26,  7.10frame/s][A
+chunk_0006.xyz: 185frame [00:26,  7.82frame/s][A
+chunk_0006.xyz: 186frame [00:26,  7.29frame/s][A
+chunk_0006.xyz: 187frame [00:26,  6.99frame/s][A
+chunk_0006.xyz: 188frame [00:26,  7.08frame/s][A
+chunk_0006.xyz: 189frame [00:27,  6.77frame/s][A
+chunk_0006.xyz: 191frame [00:27,  7.41frame/s][A
+chunk_0006.xyz: 192frame [00:27,  7.04frame/s][A
+chunk_0006.xyz: 194frame [00:27,  7.70frame/s][A
+chunk_0006.xyz: 195frame [00:27,  7.31frame/s][A
+chunk_0006.xyz: 196frame [00:28,  6.97frame/s][A
+chunk_0006.xyz: 197frame [00:28,  6.77frame/s][A
+chunk_0006.xyz: 198frame [00:28,  6.56frame/s][A
+chunk_0006.xyz: 199frame [00:28,  6.44frame/s][A
+chunk_0006.xyz: 201frame [00:28,  8.71frame/s][A
+chunk_0006.xyz: 202frame [00:28,  7.93frame/s][A
+chunk_0006.xyz: 203frame [00:28,  7.36frame/s][A
+chunk_0006.xyz: 204frame [00:29,  6.97frame/s][A
+chunk_0006.xyz: 206frame [00:29,  7.65frame/s][A
+chunk_0006.xyz: 207frame [00:29,  7.20frame/s][A
+chunk_0006.xyz: 209frame [00:29,  7.85frame/s][A
+chunk_0006.xyz: 210frame [00:29,  7.43frame/s][A
+chunk_0006.xyz: 211frame [00:30,  7.08frame/s][A
+chunk_0006.xyz: 212frame [00:30,  6.85frame/s][A
+chunk_0006.xyz: 214frame [00:30,  7.29frame/s][A
+chunk_0006.xyz: 215frame [00:30,  7.02frame/s][A
+chunk_0006.xyz: 217frame [00:30,  7.59frame/s][A
+chunk_0006.xyz: 218frame [00:31,  7.20frame/s][A
+chunk_0006.xyz: 220frame [00:31,  8.93frame/s][A
+chunk_0006.xyz: 221frame [00:31,  8.10frame/s][A
+chunk_0006.xyz: 222frame [00:31,  7.58frame/s][A
+chunk_0006.xyz: 223frame [00:31,  7.16frame/s][A
+chunk_0006.xyz: 224frame [00:31,  6.90frame/s][A
+chunk_0006.xyz: 226frame [00:32,  7.46frame/s][A
+chunk_0006.xyz: 227frame [00:32,  7.14frame/s][A
+chunk_0006.xyz: 228frame [00:32,  6.86frame/s][A
+chunk_0006.xyz: 229frame [00:32,  6.67frame/s][A
+chunk_0006.xyz: 230frame [00:32,  6.53frame/s][A
+chunk_0006.xyz: 232frame [00:32,  7.39frame/s][A
+chunk_0006.xyz: 233frame [00:33,  7.03frame/s][A
+chunk_0006.xyz: 235frame [00:33,  6.84frame/s][A
+chunk_0006.xyz: 236frame [00:33,  6.70frame/s][A
+chunk_0006.xyz: 238frame [00:33,  7.19frame/s][A
+chunk_0006.xyz: 239frame [00:33,  6.91frame/s][A
+chunk_0006.xyz: 241frame [00:34,  7.39frame/s][A
+chunk_0006.xyz: 242frame [00:34,  7.08frame/s][A
+chunk_0006.xyz: 244frame [00:34,  7.41frame/s][A
+chunk_0006.xyz: 245frame [00:34,  7.11frame/s][A
+chunk_0006.xyz: 246frame [00:34,  6.89frame/s][A
+chunk_0006.xyz: 248frame [00:35,  8.79frame/s][A
+chunk_0006.xyz: 249frame [00:35,  8.02frame/s][A
+chunk_0006.xyz: 250frame [00:35,  7.48frame/s][A
+chunk_0006.xyz: 251frame [00:35,  7.36frame/s][A
+chunk_0006.xyz: 252frame [00:35,  6.98frame/s][A
+chunk_0006.xyz: 253frame [00:35,  6.74frame/s][A
+chunk_0006.xyz: 254frame [00:36,  6.52frame/s][A
+chunk_0006.xyz: 255frame [00:36,  6.69frame/s][A
+chunk_0006.xyz: 257frame [00:36,  7.38frame/s][A
+chunk_0006.xyz: 258frame [00:36,  7.07frame/s][A
+chunk_0006.xyz: 260frame [00:36,  7.46frame/s][A
+chunk_0006.xyz: 261frame [00:36,  7.36frame/s][A
+chunk_0006.xyz: 263frame [00:37,  8.96frame/s][A
+chunk_0006.xyz: 264frame [00:37,  8.18frame/s][A
+chunk_0006.xyz: 265frame [00:37,  7.59frame/s][A
+chunk_0006.xyz: 267frame [00:37,  7.79frame/s][A
+chunk_0006.xyz: 268frame [00:37,  7.34frame/s][A
+chunk_0006.xyz: 269frame [00:38,  6.98frame/s][A
+chunk_0006.xyz: 270frame [00:38,  6.78frame/s][A
+chunk_0006.xyz: 271frame [00:38,  6.58frame/s][A
+chunk_0006.xyz: 272frame [00:38,  6.46frame/s][A
+chunk_0006.xyz: 273frame [00:38,  6.33frame/s][A
+chunk_0006.xyz: 274frame [00:38,  6.27frame/s][A
+chunk_0006.xyz: 275frame [00:38,  6.19frame/s][A
+chunk_0006.xyz: 276frame [00:39,  6.17frame/s][A
+chunk_0006.xyz: 277frame [00:39,  6.14frame/s][A
+chunk_0006.xyz: 279frame [00:39,  7.23frame/s][A
+chunk_0006.xyz: 280frame [00:39,  6.96frame/s][A
+chunk_0006.xyz: 281frame [00:39,  6.71frame/s][A
+chunk_0006.xyz: 282frame [00:40,  6.56frame/s][A
+chunk_0006.xyz: 283frame [00:40,  6.44frame/s][A
+chunk_0006.xyz: 284frame [00:40,  6.33frame/s][A
+chunk_0006.xyz: 285frame [00:40,  6.30frame/s][A
+chunk_0006.xyz: 286frame [00:40,  6.26frame/s][A
+chunk_0006.xyz: 287frame [00:40,  6.18frame/s][A
+chunk_0006.xyz: 288frame [00:40,  6.15frame/s][A
+chunk_0006.xyz: 289frame [00:41,  6.15frame/s][A
+chunk_0006.xyz: 291frame [00:41,  7.14frame/s][A
+chunk_0006.xyz: 293frame [00:41,  7.49frame/s][A
+chunk_0006.xyz: 294frame [00:41,  7.15frame/s][A
+chunk_0006.xyz: 295frame [00:41,  6.88frame/s][A
+chunk_0006.xyz: 296frame [00:42,  6.65frame/s][A
+chunk_0006.xyz: 297frame [00:42,  6.53frame/s][A
+chunk_0006.xyz: 298frame [00:42,  6.42frame/s][A
+chunk_0006.xyz: 299frame [00:42,  6.35frame/s][A
+chunk_0006.xyz: 300frame [00:42,  6.29frame/s][A
+chunk_0006.xyz: 302frame [00:43,  6.89frame/s][A
+chunk_0006.xyz: 304frame [00:43,  7.32frame/s][A
+chunk_0006.xyz: 305frame [00:43,  7.28frame/s][A
+chunk_0006.xyz: 306frame [00:43,  7.48frame/s][A
+chunk_0006.xyz: 307frame [00:43,  7.07frame/s][A
+chunk_0006.xyz: 308frame [00:43,  6.80frame/s][A
+chunk_0006.xyz: 309frame [00:44,  6.89frame/s][A
+chunk_0006.xyz: 310frame [00:44,  6.71frame/s][A
+chunk_0006.xyz: 312frame [00:44,  7.49frame/s][A
+chunk_0006.xyz: 313frame [00:44,  7.11frame/s][A
+chunk_0006.xyz: 315frame [00:44,  7.61frame/s][A
+chunk_0006.xyz: 316frame [00:44,  7.23frame/s][A
+chunk_0006.xyz: 318frame [00:45,  8.99frame/s][A
+chunk_0006.xyz: 319frame [00:45,  8.17frame/s][A
+chunk_0006.xyz: 320frame [00:45,  7.61frame/s][A
+chunk_0006.xyz: 321frame [00:45,  7.10frame/s][A
+chunk_0006.xyz: 322frame [00:45,  6.83frame/s][A
+chunk_0006.xyz: 323frame [00:45,  6.59frame/s][A
+chunk_0006.xyz: 324frame [00:46,  6.49frame/s][A
+chunk_0006.xyz: 325frame [00:46,  6.40frame/s][A
+chunk_0006.xyz: 326frame [00:46,  6.33frame/s][A
+chunk_0006.xyz: 328frame [00:46,  7.03frame/s][A
+chunk_0006.xyz: 330frame [00:46,  7.57frame/s][A
+chunk_0006.xyz: 331frame [00:47,  7.19frame/s][A
+chunk_0006.xyz: 332frame [00:47,  7.13frame/s][A
+chunk_0006.xyz: 333frame [00:47,  7.12frame/s][A
+chunk_0006.xyz: 334frame [00:47,  6.86frame/s][A
+chunk_0006.xyz: 335frame [00:47,  6.64frame/s][A
+chunk_0006.xyz: 336frame [00:47,  6.75frame/s][A
+chunk_0006.xyz: 337frame [00:47,  6.53frame/s][A
+chunk_0006.xyz: 338frame [00:48,  6.42frame/s][A
+chunk_0006.xyz: 339frame [00:48,  6.33frame/s][A
+chunk_0006.xyz: 341frame [00:48,  7.11frame/s][A
+chunk_0006.xyz: 342frame [00:48,  6.88frame/s][A
+chunk_0006.xyz: 343frame [00:48,  6.65frame/s][A
+chunk_0006.xyz: 345frame [00:49,  7.31frame/s][A
+chunk_0006.xyz: 347frame [00:49,  8.82frame/s][A
+chunk_0006.xyz: 348frame [00:49,  8.05frame/s][A
+chunk_0006.xyz: 349frame [00:49,  7.52frame/s][A
+chunk_0006.xyz: 351frame [00:49,  7.73frame/s][A
+chunk_0006.xyz: 352frame [00:49,  7.30frame/s][A
+chunk_0006.xyz: 354frame [00:50,  7.54frame/s][A
+chunk_0006.xyz: 355frame [00:50,  7.44frame/s][A
+chunk_0006.xyz: 356frame [00:50,  7.10frame/s][A
+chunk_0006.xyz: 357frame [00:50,  6.83frame/s][A
+chunk_0006.xyz: 358frame [00:50,  6.61frame/s][A
+chunk_0006.xyz: 359frame [00:51,  6.46frame/s][A
+chunk_0006.xyz: 360frame [00:51,  6.66frame/s][A
+chunk_0006.xyz: 361frame [00:51,  6.80frame/s][A
+chunk_0006.xyz: 362frame [00:51,  6.64frame/s][A
+chunk_0006.xyz: 363frame [00:51,  6.51frame/s][A
+chunk_0006.xyz: 365frame [00:51,  8.62frame/s][A
+chunk_0006.xyz: 366frame [00:51,  7.85frame/s][A
+chunk_0006.xyz: 367frame [00:52,  7.63frame/s][A
+chunk_0006.xyz: 369frame [00:52,  7.80frame/s][A
+chunk_0006.xyz: 370frame [00:52,  7.35frame/s][A
+chunk_0006.xyz: 371frame [00:52,  6.98frame/s][A
+chunk_0006.xyz: 372frame [00:52,  6.71frame/s][A
+chunk_0006.xyz: 373frame [00:52,  6.80frame/s][A
+chunk_0006.xyz: 375frame [00:53,  7.45frame/s][A
+chunk_0006.xyz: 376frame [00:53,  7.10frame/s][A
+chunk_0006.xyz: 377frame [00:53,  6.84frame/s][A
+chunk_0006.xyz: 378frame [00:53,  6.60frame/s][A
+chunk_0006.xyz: 379frame [00:53,  6.47frame/s][A
+chunk_0006.xyz: 380frame [00:53,  6.41frame/s][A
+chunk_0006.xyz: 382frame [00:54,  8.35frame/s][A
+chunk_0006.xyz: 383frame [00:54,  7.66frame/s][A
+chunk_0006.xyz: 385frame [00:54,  7.85frame/s][A
+chunk_0006.xyz: 386frame [00:54,  7.39frame/s][A
+chunk_0006.xyz: 388frame [00:54,  8.00frame/s][A
+chunk_0006.xyz: 390frame [00:55,  8.16frame/s][A
+chunk_0006.xyz: 391frame [00:55,  7.68frame/s][A
+chunk_0006.xyz: 392frame [00:55,  7.21frame/s][A
+chunk_0006.xyz: 393frame [00:55,  7.44frame/s][A
+chunk_0006.xyz: 394frame [00:55,  7.06frame/s][A
+chunk_0006.xyz: 395frame [00:55,  6.77frame/s][A
+chunk_0006.xyz: 397frame [00:56,  7.64frame/s][A
+chunk_0006.xyz: 399frame [00:56,  8.99frame/s][A
+chunk_0006.xyz: 400frame [00:56,  8.48frame/s][A
+chunk_0006.xyz: 401frame [00:56,  7.76frame/s][A
+chunk_0006.xyz: 403frame [00:56,  8.27frame/s][A
+chunk_0006.xyz: 405frame [00:57,  8.37frame/s][A
+chunk_0006.xyz: 406frame [00:57,  7.74frame/s][A
+chunk_0006.xyz: 407frame [00:57,  7.34frame/s][A
+chunk_0006.xyz: 409frame [00:57,  7.93frame/s][A
+chunk_0006.xyz: 410frame [00:57,  7.46frame/s][A
+chunk_0006.xyz: 411frame [00:57,  7.10frame/s][A
+chunk_0006.xyz: 412frame [00:58,  6.82frame/s][A
+chunk_0006.xyz: 413frame [00:58,  6.67frame/s][A
+chunk_0006.xyz: 414frame [00:58,  6.55frame/s][A
+chunk_0006.xyz: 416frame [00:58,  8.72frame/s][A
+chunk_0006.xyz: 417frame [00:58,  8.24frame/s][A
+chunk_0006.xyz: 418frame [00:58,  7.51frame/s][A
+chunk_0006.xyz: 419frame [00:59,  7.08frame/s][A
+chunk_0006.xyz: 421frame [00:59,  8.20frame/s][A
+chunk_0006.xyz: 422frame [00:59,  7.65frame/s][A
+chunk_0006.xyz: 424frame [00:59,  8.05frame/s][A
+chunk_0006.xyz: 426frame [00:59,  8.18frame/s][A
+chunk_0006.xyz: 428frame [01:00,  8.01frame/s][A
+chunk_0006.xyz: 430frame [01:00,  7.94frame/s][A
+chunk_0006.xyz: 431frame [01:00,  7.50frame/s][A
+chunk_0006.xyz: 433frame [01:00,  7.56frame/s][A
+chunk_0006.xyz: 434frame [01:00,  7.21frame/s][A
+chunk_0006.xyz: 436frame [01:01,  8.20frame/s][A
+chunk_0006.xyz: 437frame [01:01,  7.67frame/s][A
+chunk_0006.xyz: 438frame [01:01,  7.24frame/s][A
+chunk_0006.xyz: 439frame [01:01,  6.92frame/s][A
+chunk_0006.xyz: 440frame [01:01,  6.73frame/s][A
+chunk_0006.xyz: 441frame [01:01,  6.56frame/s][A
+chunk_0006.xyz: 442frame [01:02,  6.47frame/s][A
+chunk_0006.xyz: 443frame [01:02,  6.38frame/s][A
+chunk_0006.xyz: 444frame [01:02,  6.29frame/s][A
+chunk_0006.xyz: 445frame [01:02,  6.23frame/s][A
+chunk_0006.xyz: 446frame [01:02,  6.21frame/s][A
+chunk_0006.xyz: 447frame [01:02,  6.19frame/s][A
+chunk_0006.xyz: 448frame [01:03,  6.14frame/s][A
+chunk_0006.xyz: 450frame [01:03,  6.91frame/s][A
+chunk_0006.xyz: 451frame [01:03,  6.68frame/s][A
+chunk_0006.xyz: 452frame [01:03,  6.57frame/s][A
+chunk_0006.xyz: 453frame [01:03,  6.45frame/s][A
+chunk_0006.xyz: 455frame [01:04,  7.03frame/s][A
+chunk_0006.xyz: 457frame [01:04,  7.51frame/s][A
+chunk_0006.xyz: 459frame [01:04,  8.66frame/s][A
+chunk_0006.xyz: 460frame [01:04,  8.00frame/s][A
+chunk_0006.xyz: 461frame [01:04,  7.53frame/s][A
+chunk_0006.xyz: 462frame [01:04,  7.11frame/s][A
+chunk_0006.xyz: 463frame [01:05,  7.09frame/s][A
+chunk_0006.xyz: 464frame [01:05,  6.81frame/s][A
+chunk_0006.xyz: 466frame [01:05,  8.03frame/s][A
+chunk_0006.xyz: 467frame [01:05,  7.53frame/s][A
+chunk_0006.xyz: 468frame [01:05,  7.13frame/s][A
+chunk_0006.xyz: 469frame [01:05,  6.85frame/s][A
+chunk_0006.xyz: 471frame [01:06,  7.39frame/s][A
+chunk_0006.xyz: 473frame [01:06,  8.15frame/s][A
+chunk_0006.xyz: 474frame [01:06,  7.62frame/s][A
+chunk_0006.xyz: 475frame [01:06,  7.25frame/s][A
+chunk_0006.xyz: 477frame [01:06,  7.63frame/s][A
+chunk_0006.xyz: 479frame [01:07,  8.14frame/s][A
+chunk_0006.xyz: 480frame [01:07,  7.63frame/s][A
+chunk_0006.xyz: 482frame [01:07,  7.65frame/s][A
+chunk_0006.xyz: 483frame [01:07,  7.68frame/s][A
+chunk_0006.xyz: 484frame [01:07,  7.24frame/s][A
+chunk_0006.xyz: 485frame [01:08,  6.97frame/s][A
+chunk_0006.xyz: 486frame [01:08,  6.75frame/s][A
+chunk_0006.xyz: 487frame [01:08,  6.56frame/s][A
+chunk_0006.xyz: 488frame [01:08,  6.42frame/s][A
+chunk_0006.xyz: 489frame [01:08,  6.30frame/s][A
+chunk_0006.xyz: 490frame [01:08,  6.23frame/s][A
+chunk_0006.xyz: 492frame [01:09,  6.98frame/s][A
+chunk_0006.xyz: 494frame [01:09,  7.49frame/s][A
+chunk_0006.xyz: 496frame [01:09,  8.77frame/s][A
+chunk_0006.xyz: 498frame [01:09,  8.88frame/s][A
+chunk_0006.xyz: 499frame [01:09,  8.18frame/s][A
+chunk_0006.xyz: 501frame [01:10,  9.46frame/s][A
+chunk_0006.xyz: 502frame [01:10,  8.56frame/s][A
+chunk_0006.xyz: 503frame [01:10,  7.86frame/s][A
+chunk_0006.xyz: 504frame [01:10,  7.39frame/s][A
+chunk_0006.xyz: 505frame [01:10,  7.07frame/s][A
+chunk_0006.xyz: 507frame [01:10,  7.52frame/s][A
+chunk_0006.xyz: 508frame [01:11,  7.42frame/s][A
+chunk_0006.xyz: 509frame [01:11,  7.02frame/s][A
+chunk_0006.xyz: 511frame [01:11,  8.65frame/s][A
+chunk_0006.xyz: 512frame [01:11,  7.96frame/s][A
+chunk_0006.xyz: 513frame [01:11,  7.41frame/s][A
+chunk_0006.xyz: 514frame [01:11,  7.05frame/s][A
+chunk_0006.xyz: 515frame [01:11,  7.59frame/s][A
+chunk_0006.xyz: 516frame [01:12,  7.13frame/s][A
+chunk_0006.xyz: 518frame [01:12,  7.60frame/s][A
+chunk_0006.xyz: 519frame [01:12,  7.44frame/s][A
+chunk_0006.xyz: 521frame [01:12,  7.55frame/s][A
+chunk_0006.xyz: 523frame [01:13,  7.91frame/s][A
+chunk_0006.xyz: 524frame [01:13,  7.50frame/s][A
+chunk_0006.xyz: 525frame [01:13,  7.13frame/s][A
+chunk_0006.xyz: 526frame [01:13,  6.87frame/s][A
+chunk_0006.xyz: 527frame [01:13,  6.68frame/s][A
+chunk_0006.xyz: 528frame [01:13,  6.52frame/s][A
+chunk_0006.xyz: 529frame [01:14,  6.42frame/s][A
+chunk_0006.xyz: 531frame [01:14,  7.07frame/s][A
+chunk_0006.xyz: 532frame [01:14,  6.83frame/s][A
+chunk_0006.xyz: 533frame [01:14,  6.65frame/s][A
+chunk_0006.xyz: 535frame [01:14,  7.18frame/s][A
+chunk_0006.xyz: 536frame [01:14,  6.89frame/s][A
+chunk_0006.xyz: 537frame [01:15,  6.69frame/s][A
+chunk_0006.xyz: 538frame [01:15,  6.54frame/s][A
+chunk_0006.xyz: 539frame [01:15,  6.43frame/s][A
+chunk_0006.xyz: 540frame [01:15,  6.36frame/s][A
+chunk_0006.xyz: 541frame [01:15,  6.31frame/s][A
+chunk_0006.xyz: 543frame [01:16,  6.84frame/s][A
+chunk_0006.xyz: 544frame [01:16,  6.62frame/s][A
+chunk_0006.xyz: 545frame [01:16,  6.65frame/s][A
+chunk_0006.xyz: 546frame [01:16,  6.78frame/s][A
+chunk_0006.xyz: 547frame [01:16,  6.60frame/s][A
+chunk_0006.xyz: 548frame [01:16,  6.75frame/s][A
+chunk_0006.xyz: 549frame [01:16,  6.53frame/s][A
+chunk_0006.xyz: 551frame [01:17,  8.87frame/s][A
+chunk_0006.xyz: 552frame [01:17,  8.02frame/s][A
+chunk_0006.xyz: 553frame [01:17,  7.39frame/s][A
+chunk_0006.xyz: 555frame [01:17,  8.25frame/s][A
+chunk_0006.xyz: 557frame [01:17,  8.20frame/s][A
+chunk_0006.xyz: 558frame [01:18,  7.64frame/s][A
+chunk_0006.xyz: 559frame [01:18,  7.24frame/s][A
+chunk_0006.xyz: 560frame [01:18,  7.48frame/s][A
+chunk_0006.xyz: 561frame [01:18,  7.11frame/s][A
+chunk_0006.xyz: 562frame [01:18,  6.80frame/s][A
+chunk_0006.xyz: 564frame [01:18,  7.28frame/s][A
+chunk_0006.xyz: 565frame [01:19,  6.98frame/s][A
+chunk_0006.xyz: 566frame [01:19,  6.76frame/s][A
+chunk_0006.xyz: 567frame [01:19,  6.58frame/s][A
+chunk_0006.xyz: 568frame [01:19,  6.46frame/s][A
+chunk_0006.xyz: 569frame [01:19,  6.38frame/s][A
+chunk_0006.xyz: 570frame [01:19,  6.32frame/s][A
+chunk_0006.xyz: 571frame [01:20,  6.27frame/s][A
+chunk_0006.xyz: 573frame [01:20,  7.58frame/s][A
+chunk_0006.xyz: 575frame [01:20,  8.13frame/s][A
+chunk_0006.xyz: 576frame [01:20,  8.30frame/s][A
+chunk_0006.xyz: 577frame [01:20,  7.69frame/s][A
+chunk_0006.xyz: 578frame [01:20,  7.25frame/s][A
+chunk_0006.xyz: 579frame [01:21,  6.92frame/s][A
+chunk_0006.xyz: 581frame [01:21,  7.54frame/s][A
+chunk_0006.xyz: 582frame [01:21,  7.13frame/s][A
+chunk_0006.xyz: 583frame [01:21,  6.85frame/s][A
+chunk_0006.xyz: 584frame [01:21,  7.41frame/s][A
+chunk_0006.xyz: 585frame [01:21,  7.05frame/s][A
+chunk_0006.xyz: 587frame [01:22,  9.07frame/s][A
+chunk_0006.xyz: 589frame [01:22,  8.96frame/s][A
+chunk_0006.xyz: 590frame [01:22,  8.11frame/s][A
+chunk_0006.xyz: 592frame [01:22,  7.93frame/s][A
+chunk_0006.xyz: 593frame [01:22,  7.47frame/s][A
+chunk_0006.xyz: 595frame [01:23,  7.77frame/s][A
+chunk_0006.xyz: 596frame [01:23,  7.61frame/s][A
+chunk_0006.xyz: 597frame [01:23,  7.19frame/s][A
+chunk_0006.xyz: 598frame [01:23,  6.91frame/s][A
+chunk_0006.xyz: 600frame [01:23,  7.73frame/s][A
+chunk_0006.xyz: 601frame [01:23,  7.30frame/s][A
+chunk_0006.xyz: 602frame [01:24,  6.99frame/s][A
+chunk_0006.xyz: 603frame [01:24,  6.76frame/s][A
+chunk_0006.xyz: 605frame [01:24,  6.85frame/s][A
+chunk_0006.xyz: 606frame [01:24,  6.65frame/s][A
+chunk_0006.xyz: 607frame [01:24,  6.53frame/s][A
+chunk_0006.xyz: 608frame [01:25,  6.42frame/s][A
+chunk_0006.xyz: 609frame [01:25,  6.54frame/s][A
+chunk_0006.xyz: 611frame [01:25,  8.45frame/s][A
+chunk_0006.xyz: 613frame [01:25,  9.70frame/s][A
+chunk_0006.xyz: 614frame [01:25,  8.60frame/s][A
+chunk_0006.xyz: 615frame [01:25,  7.84frame/s][A
+chunk_0006.xyz: 616frame [01:25,  7.38frame/s][A
+chunk_0006.xyz: 618frame [01:26,  7.69frame/s][A
+chunk_0006.xyz: 619frame [01:26,  7.52frame/s][A
+chunk_0006.xyz: 620frame [01:26,  7.17frame/s][A
+chunk_0006.xyz: 622frame [01:26,  7.65frame/s][A
+chunk_0006.xyz: 623frame [01:26,  7.22frame/s][A
+chunk_0006.xyz: 624frame [01:27,  6.94frame/s][A
+chunk_0006.xyz: 625frame [01:27,  6.75frame/s][A
+chunk_0006.xyz: 626frame [01:27,  6.62frame/s][A
+chunk_0006.xyz: 627frame [01:27,  6.73frame/s][A
+chunk_0006.xyz: 628frame [01:27,  6.54frame/s][A
+chunk_0006.xyz: 629frame [01:27,  6.39frame/s][A
+chunk_0006.xyz: 630frame [01:28,  6.31frame/s][A
+chunk_0006.xyz: 632frame [01:28,  7.13frame/s][A
+chunk_0006.xyz: 633frame [01:28,  6.87frame/s][A
+chunk_0006.xyz: 634frame [01:28,  6.64frame/s][A
+chunk_0006.xyz: 635frame [01:28,  6.76frame/s][A
+chunk_0006.xyz: 636frame [01:28,  6.88frame/s][A
+chunk_0006.xyz: 637frame [01:29,  7.01frame/s][A
+chunk_0006.xyz: 638frame [01:29,  6.74frame/s][A
+chunk_0006.xyz: 639frame [01:29,  6.54frame/s][A
+chunk_0006.xyz: 640frame [01:29,  6.42frame/s][A
+chunk_0006.xyz: 642frame [01:29,  7.14frame/s][A
+chunk_0006.xyz: 643frame [01:29,  6.89frame/s][A
+chunk_0006.xyz: 644frame [01:30,  6.66frame/s][A
+chunk_0006.xyz: 645frame [01:30,  6.52frame/s][A
+chunk_0006.xyz: 646frame [01:30,  6.42frame/s][A
+chunk_0006.xyz: 648frame [01:30,  7.13frame/s][A
+chunk_0006.xyz: 649frame [01:30,  6.87frame/s][A
+chunk_0006.xyz: 650frame [01:30,  6.70frame/s][A
+chunk_0006.xyz: 651frame [01:31,  6.51frame/s][A
+chunk_0006.xyz: 652frame [01:31,  6.44frame/s][A
+chunk_0006.xyz: 653frame [01:31,  6.34frame/s][A
+chunk_0006.xyz: 655frame [01:31,  6.99frame/s][A
+chunk_0006.xyz: 656frame [01:31,  6.78frame/s][A
+chunk_0006.xyz: 657frame [01:32,  6.60frame/s][A
+chunk_0006.xyz: 659frame [01:32,  7.31frame/s][A
+chunk_0006.xyz: 660frame [01:32,  7.28frame/s][A
+chunk_0006.xyz: 662frame [01:32,  7.71frame/s][A
+chunk_0006.xyz: 663frame [01:32,  7.57frame/s][A
+chunk_0006.xyz: 664frame [01:32,  7.16frame/s][A
+chunk_0006.xyz: 666frame [01:33,  7.65frame/s][A
+chunk_0006.xyz: 667frame [01:33,  7.51frame/s][A
+chunk_0006.xyz: 668frame [01:33,  7.09frame/s][A
+chunk_0006.xyz: 669frame [01:33,  6.83frame/s][A
+chunk_0006.xyz: 670frame [01:33,  7.42frame/s][A
+chunk_0006.xyz: 671frame [01:33,  7.07frame/s][A
+chunk_0006.xyz: 673frame [01:34,  8.75frame/s][A
+chunk_0006.xyz: 674frame [01:34,  7.91frame/s][A
+chunk_0006.xyz: 675frame [01:34,  7.41frame/s][A
+chunk_0006.xyz: 676frame [01:34,  7.01frame/s][A
+chunk_0006.xyz: 677frame [01:34,  6.75frame/s][A
+chunk_0006.xyz: 678frame [01:34,  6.57frame/s][A
+chunk_0006.xyz: 679frame [01:35,  6.43frame/s][A
+chunk_0006.xyz: 681frame [01:35,  7.15frame/s][A
+chunk_0006.xyz: 683frame [01:35,  7.69frame/s][A
+chunk_0006.xyz: 684frame [01:35,  7.33frame/s][A
+chunk_0006.xyz: 686frame [01:35,  7.65frame/s][A
+chunk_0006.xyz: 687frame [01:36,  7.25frame/s][A
+chunk_0006.xyz: 688frame [01:36,  6.97frame/s][A
+chunk_0006.xyz: 690frame [01:36,  7.61frame/s][A
+chunk_0006.xyz: 691frame [01:36,  7.21frame/s][A
+chunk_0006.xyz: 693frame [01:36,  7.73frame/s][A
+chunk_0006.xyz: 694frame [01:36,  7.83frame/s][A
+chunk_0006.xyz: 695frame [01:37,  7.28frame/s][A
+chunk_0006.xyz: 696frame [01:37,  7.24frame/s][A
+chunk_0006.xyz: 698frame [01:37,  7.53frame/s][A
+chunk_0006.xyz: 699frame [01:37,  7.72frame/s][A
+chunk_0006.xyz: 700frame [01:37,  7.27frame/s][A
+chunk_0006.xyz: 701frame [01:37,  6.91frame/s][A
+chunk_0006.xyz: 702frame [01:38,  6.95frame/s][A
+chunk_0006.xyz: 703frame [01:38,  6.75frame/s][A
+chunk_0006.xyz: 704frame [01:38,  6.55frame/s][A
+chunk_0006.xyz: 705frame [01:38,  7.01frame/s][A
+chunk_0006.xyz: 706frame [01:38,  7.03frame/s][A
+chunk_0006.xyz: 707frame [01:38,  6.74frame/s][A
+chunk_0006.xyz: 708frame [01:39,  6.49frame/s][A
+chunk_0006.xyz: 710frame [01:39,  7.17frame/s][A
+chunk_0006.xyz: 711frame [01:39,  6.93frame/s][A
+chunk_0006.xyz: 712frame [01:39,  6.69frame/s][A
+chunk_0006.xyz: 713frame [01:39,  6.49frame/s][A
+chunk_0006.xyz: 714frame [01:39,  6.36frame/s][A
+chunk_0006.xyz: 715frame [01:40,  6.34frame/s][A
+chunk_0006.xyz: 716frame [01:40,  6.30frame/s][A
+chunk_0006.xyz: 717frame [01:40,  6.22frame/s][A
+chunk_0006.xyz: 718frame [01:40,  6.44frame/s][A
+chunk_0006.xyz: 719frame [01:40,  6.90frame/s][A
+chunk_0006.xyz: 721frame [01:40,  7.57frame/s][A
+chunk_0006.xyz: 722frame [01:41,  7.19frame/s][A
+chunk_0006.xyz: 724frame [01:41,  7.36frame/s][A
+chunk_0006.xyz: 725frame [01:41,  7.29frame/s][A
+chunk_0006.xyz: 727frame [01:41,  8.04frame/s][A
+chunk_0006.xyz: 729frame [01:41,  8.26frame/s][A
+chunk_0006.xyz: 730frame [01:42,  7.75frame/s][A
+chunk_0006.xyz: 732frame [01:42,  8.02frame/s][A
+chunk_0006.xyz: 733frame [01:42,  7.51frame/s][A
+chunk_0006.xyz: 734frame [01:42,  7.13frame/s][A
+chunk_0006.xyz: 735frame [01:42,  6.84frame/s][A
+chunk_0006.xyz: 736frame [01:42,  6.64frame/s][A
+chunk_0006.xyz: 738frame [01:43,  7.65frame/s][A
+chunk_0006.xyz: 739frame [01:43,  7.18frame/s][A
+chunk_0006.xyz: 740frame [01:43,  6.90frame/s][A
+chunk_0006.xyz: 741frame [01:43,  6.70frame/s][A
+chunk_0006.xyz: 742frame [01:43,  6.56frame/s][A
+chunk_0006.xyz: 743frame [01:43,  6.47frame/s][A
+chunk_0006.xyz: 744frame [01:44,  6.63frame/s][A
+chunk_0006.xyz: 745frame [01:44,  6.49frame/s][A
+chunk_0006.xyz: 746frame [01:44,  6.36frame/s][A
+chunk_0006.xyz: 747frame [01:44,  6.32frame/s][A
+chunk_0006.xyz: 749frame [01:44,  7.08frame/s][A
+chunk_0006.xyz: 751frame [01:45,  7.50frame/s][A
+chunk_0006.xyz: 752frame [01:45,  7.14frame/s][A
+chunk_0006.xyz: 753frame [01:45,  7.66frame/s][A
+chunk_0006.xyz: 754frame [01:45,  7.19frame/s][A
+chunk_0006.xyz: 755frame [01:45,  6.88frame/s][A
+chunk_0006.xyz: 756frame [01:45,  6.70frame/s][A
+chunk_0006.xyz: 757frame [01:46,  6.53frame/s][A
+chunk_0006.xyz: 758frame [01:46,  6.83frame/s][A
+chunk_0006.xyz: 759frame [01:46,  6.60frame/s][A
+chunk_0006.xyz: 761frame [01:46,  7.27frame/s][A
+chunk_0006.xyz: 763frame [01:46,  7.55frame/s][A
+chunk_0006.xyz: 764frame [01:46,  7.23frame/s][A
+chunk_0006.xyz: 765frame [01:47,  6.92frame/s][A
+chunk_0006.xyz: 766frame [01:47,  6.69frame/s][A
+chunk_0006.xyz: 767frame [01:47,  6.54frame/s][A
+chunk_0006.xyz: 768frame [01:47,  6.67frame/s][A
+chunk_0006.xyz: 769frame [01:47,  6.55frame/s][A
+chunk_0006.xyz: 771frame [01:47,  8.32frame/s][A
+chunk_0006.xyz: 772frame [01:48,  7.63frame/s][A
+chunk_0006.xyz: 773frame [01:48,  7.17frame/s][A
+chunk_0006.xyz: 775frame [01:48,  7.54frame/s][A
+chunk_0006.xyz: 777frame [01:48,  7.88frame/s][A
+chunk_0006.xyz: 778frame [01:48,  7.45frame/s][A
+chunk_0006.xyz: 779frame [01:49,  7.35frame/s][A
+chunk_0006.xyz: 780frame [01:49,  7.01frame/s][A
+chunk_0006.xyz: 781frame [01:49,  6.74frame/s][A
+chunk_0006.xyz: 782frame [01:49,  6.57frame/s][A
+chunk_0006.xyz: 783frame [01:49,  6.43frame/s][A
+chunk_0006.xyz: 784frame [01:49,  6.35frame/s][A
+chunk_0006.xyz: 785frame [01:50,  6.25frame/s][A
+chunk_0006.xyz: 786frame [01:50,  6.25frame/s][A
+chunk_0006.xyz: 787frame [01:50,  6.26frame/s][A
+chunk_0006.xyz: 788frame [01:50,  6.23frame/s][A
+chunk_0006.xyz: 789frame [01:50,  6.18frame/s][A
+chunk_0006.xyz: 790frame [01:50,  6.18frame/s][A
+chunk_0006.xyz: 791frame [01:50,  6.21frame/s][A
+chunk_0006.xyz: 793frame [01:51,  7.69frame/s][A
+chunk_0006.xyz: 794frame [01:51,  7.29frame/s][A
+chunk_0006.xyz: 795frame [01:51,  6.96frame/s][A
+chunk_0006.xyz: 796frame [01:51,  6.70frame/s][A
+chunk_0006.xyz: 797frame [01:51,  7.04frame/s][A
+chunk_0006.xyz: 799frame [01:52,  7.50frame/s][A
+chunk_0006.xyz: 800frame [01:52,  7.10frame/s][A
+chunk_0006.xyz: 801frame [01:52,  7.10frame/s][A
+chunk_0006.xyz: 803frame [01:52,  7.46frame/s][A
+chunk_0006.xyz: 804frame [01:52,  7.08frame/s][A
+chunk_0006.xyz: 805frame [01:52,  6.81frame/s][A
+chunk_0006.xyz: 806frame [01:53,  6.62frame/s][A
+chunk_0006.xyz: 807frame [01:53,  6.44frame/s][A
+chunk_0006.xyz: 808frame [01:53,  6.36frame/s][A
+chunk_0006.xyz: 809frame [01:53,  6.56frame/s][A
+chunk_0006.xyz: 810frame [01:53,  7.28frame/s][A
+chunk_0006.xyz: 811frame [01:53,  6.91frame/s][A
+chunk_0006.xyz: 812frame [01:53,  6.60frame/s][A
+chunk_0006.xyz: 814frame [01:54,  7.44frame/s][A
+chunk_0006.xyz: 816frame [01:54,  9.12frame/s][A
+chunk_0006.xyz: 817frame [01:54,  8.25frame/s][A
+chunk_0006.xyz: 818frame [01:54,  7.67frame/s][A
+chunk_0006.xyz: 819frame [01:54,  7.23frame/s][A
+chunk_0006.xyz: 820frame [01:54,  7.18frame/s][A
+chunk_0006.xyz: 821frame [01:55,  6.88frame/s][A
+chunk_0006.xyz: 822frame [01:55,  6.65frame/s][A
+chunk_0006.xyz: 823frame [01:55,  6.53frame/s][A
+chunk_0006.xyz: 824frame [01:55,  6.42frame/s][A
+chunk_0006.xyz: 825frame [01:55,  6.34frame/s][A
+chunk_0006.xyz: 826frame [01:55,  6.27frame/s][A
+chunk_0006.xyz: 827frame [01:56,  6.56frame/s][A
+chunk_0006.xyz: 829frame [01:56,  7.36frame/s][A
+chunk_0006.xyz: 830frame [01:56,  7.02frame/s][A
+chunk_0006.xyz: 831frame [01:56,  7.03frame/s][A
+chunk_0006.xyz: 832frame [01:56,  6.74frame/s][A
+chunk_0006.xyz: 833frame [01:56,  6.59frame/s][A
+chunk_0006.xyz: 834frame [01:57,  6.43frame/s][A
+chunk_0006.xyz: 836frame [01:57,  7.32frame/s][A
+chunk_0006.xyz: 837frame [01:57,  7.28frame/s][A
+chunk_0006.xyz: 838frame [01:57,  7.23frame/s][A
+chunk_0006.xyz: 839frame [01:57,  6.92frame/s][A
+chunk_0006.xyz: 840frame [01:57,  6.93frame/s][A
+chunk_0006.xyz: 841frame [01:58,  6.67frame/s][A
+chunk_0006.xyz: 843frame [01:58,  7.22frame/s][A
+chunk_0006.xyz: 844frame [01:58,  6.94frame/s][A
+chunk_0006.xyz: 845frame [01:58,  6.76frame/s][A
+chunk_0006.xyz: 846frame [01:58,  6.83frame/s][A
+chunk_0006.xyz: 848frame [01:58,  8.24frame/s][A
+chunk_0006.xyz: 849frame [01:59,  7.68frame/s][A
+chunk_0006.xyz: 850frame [01:59,  7.52frame/s][A
+chunk_0006.xyz: 851frame [01:59,  7.06frame/s][A
+chunk_0006.xyz: 852frame [01:59,  6.82frame/s][A
+chunk_0006.xyz: 853frame [01:59,  6.59frame/s][A
+chunk_0006.xyz: 854frame [01:59,  6.47frame/s][A
+chunk_0006.xyz: 855frame [02:00,  6.35frame/s][A
+chunk_0006.xyz: 856frame [02:00,  6.26frame/s][A
+chunk_0006.xyz: 857frame [02:00,  6.23frame/s][A
+chunk_0006.xyz: 858frame [02:00,  6.21frame/s][A
+chunk_0006.xyz: 860frame [02:00,  7.17frame/s][A
+chunk_0006.xyz: 861frame [02:00,  6.86frame/s][A
+chunk_0006.xyz: 862frame [02:01,  6.70frame/s][A
+chunk_0006.xyz: 863frame [02:01,  6.58frame/s][A
+chunk_0006.xyz: 865frame [02:01,  7.22frame/s][A
+chunk_0006.xyz: 867frame [02:01,  7.80frame/s][A
+chunk_0006.xyz: 868frame [02:01,  7.41frame/s][A
+chunk_0006.xyz: 869frame [02:02,  7.04frame/s][A
+chunk_0006.xyz: 871frame [02:02,  7.74frame/s][A
+chunk_0006.xyz: 872frame [02:02,  7.36frame/s][A
+chunk_0006.xyz: 873frame [02:02,  7.04frame/s][A
+chunk_0006.xyz: 874frame [02:02,  6.80frame/s][A
+chunk_0006.xyz: 875frame [02:02,  6.57frame/s][A
+chunk_0006.xyz: 876frame [02:03,  6.45frame/s][A
+chunk_0006.xyz: 877frame [02:03,  6.37frame/s][A
+chunk_0006.xyz: 878frame [02:03,  6.29frame/s][A
+chunk_0006.xyz: 879frame [02:03,  6.25frame/s][A
+chunk_0006.xyz: 880frame [02:03,  6.25frame/s][A
+chunk_0006.xyz: 882frame [02:03,  7.18frame/s][A
+chunk_0006.xyz: 883frame [02:04,  7.17frame/s][A
+chunk_0006.xyz: 885frame [02:04,  7.60frame/s][A
+chunk_0006.xyz: 886frame [02:04,  7.23frame/s][A
+chunk_0006.xyz: 888frame [02:04,  7.48frame/s][A
+chunk_0006.xyz: 889frame [02:04,  7.18frame/s][A
+chunk_0006.xyz: 890frame [02:05,  6.89frame/s][A
+chunk_0006.xyz: 891frame [02:05,  6.70frame/s][A
+chunk_0006.xyz: 892frame [02:05,  6.52frame/s][A
+chunk_0006.xyz: 894frame [02:05,  8.13frame/s][A
+chunk_0006.xyz: 895frame [02:05,  7.52frame/s][A
+chunk_0006.xyz: 896frame [02:05,  7.44frame/s][A
+chunk_0006.xyz: 897frame [02:06,  7.05frame/s][A
+chunk_0006.xyz: 899frame [02:06,  7.68frame/s][A
+chunk_0006.xyz: 900frame [02:06,  7.23frame/s][A
+chunk_0006.xyz: 901frame [02:06,  6.93frame/s][A
+chunk_0006.xyz: 903frame [02:06,  7.74frame/s][A
+chunk_0006.xyz: 904frame [02:06,  7.90frame/s][A
+chunk_0006.xyz: 906frame [02:07,  8.30frame/s][A
+chunk_0006.xyz: 908frame [02:07,  8.50frame/s][A
+chunk_0006.xyz: 910frame [02:07,  8.35frame/s][A
+chunk_0006.xyz: 911frame [02:07,  7.78frame/s][A
+chunk_0006.xyz: 913frame [02:08,  7.95frame/s][A
+chunk_0006.xyz: 914frame [02:08,  7.47frame/s][A
+chunk_0006.xyz: 915frame [02:08,  7.07frame/s][A
+chunk_0006.xyz: 916frame [02:08,  6.80frame/s][A
+chunk_0006.xyz: 917frame [02:08,  6.63frame/s][A
+chunk_0006.xyz: 918frame [02:08,  6.49frame/s][A
+chunk_0006.xyz: 919frame [02:09,  6.43frame/s][A
+chunk_0006.xyz: 921frame [02:09,  7.92frame/s][A
+chunk_0006.xyz: 922frame [02:09,  7.72frame/s][A
+chunk_0006.xyz: 924frame [02:09,  8.25frame/s][A
+chunk_0006.xyz: 925frame [02:09,  7.64frame/s][A
+chunk_0006.xyz: 926frame [02:09,  7.20frame/s][A
+chunk_0006.xyz: 928frame [02:10,  7.67frame/s][A
+chunk_0006.xyz: 929frame [02:10,  7.27frame/s][A
+chunk_0006.xyz: 930frame [02:10,  7.23frame/s][A
+chunk_0006.xyz: 931frame [02:10,  6.89frame/s][A
+chunk_0006.xyz: 932frame [02:10,  6.67frame/s][A
+chunk_0006.xyz: 934frame [02:10,  8.66frame/s][A
+chunk_0006.xyz: 935frame [02:11,  8.22frame/s][A
+chunk_0006.xyz: 936frame [02:11,  7.88frame/s][A
+chunk_0006.xyz: 938frame [02:11,  8.07frame/s][A
+chunk_0006.xyz: 939frame [02:11,  7.50frame/s][A
+chunk_0006.xyz: 941frame [02:11,  7.74frame/s][A
+chunk_0006.xyz: 942frame [02:11,  7.31frame/s][A
+chunk_0006.xyz: 943frame [02:12,  7.01frame/s][A
+chunk_0006.xyz: 945frame [02:12,  7.50frame/s][A
+chunk_0006.xyz: 946frame [02:12,  7.14frame/s][A
+chunk_0006.xyz: 947frame [02:12,  6.88frame/s][A
+chunk_0006.xyz: 948frame [02:12,  6.66frame/s][A
+chunk_0006.xyz: 950frame [02:13,  8.72frame/s][A
+chunk_0006.xyz: 951frame [02:13,  7.91frame/s][A
+chunk_0006.xyz: 952frame [02:13,  7.42frame/s][A
+chunk_0006.xyz: 953frame [02:13,  7.01frame/s][A
+chunk_0006.xyz: 955frame [02:13,  7.49frame/s][A
+chunk_0006.xyz: 956frame [02:13,  7.38frame/s][A
+chunk_0006.xyz: 957frame [02:14,  7.06frame/s][A
+chunk_0006.xyz: 958frame [02:14,  7.08frame/s][A
+chunk_0006.xyz: 959frame [02:14,  7.11frame/s][A
+chunk_0006.xyz: 960frame [02:14,  6.82frame/s][A
+chunk_0006.xyz: 961frame [02:14,  6.62frame/s][A
+chunk_0006.xyz: 962frame [02:14,  6.75frame/s][A
+chunk_0006.xyz: 963frame [02:14,  7.37frame/s][A
+chunk_0006.xyz: 964frame [02:15,  6.97frame/s][A
+chunk_0006.xyz: 966frame [02:15,  8.37frame/s][A
+chunk_0006.xyz: 967frame [02:15,  7.74frame/s][A
+chunk_0006.xyz: 969frame [02:15,  8.14frame/s][A
+chunk_0006.xyz: 970frame [02:15,  7.59frame/s][A
+chunk_0006.xyz: 971frame [02:15,  7.18frame/s][A
+chunk_0006.xyz: 972frame [02:16,  6.89frame/s][A
+chunk_0006.xyz: 974frame [02:16,  7.41frame/s][A
+chunk_0006.xyz: 975frame [02:16,  7.36frame/s][A
+chunk_0006.xyz: 976frame [02:16,  7.05frame/s][A
+chunk_0006.xyz: 978frame [02:16,  7.98frame/s][A
+chunk_0006.xyz: 980frame [02:17,  8.20frame/s][A
+chunk_0006.xyz: 981frame [02:17,  7.64frame/s][A
+chunk_0006.xyz: 982frame [02:17,  7.20frame/s][A
+chunk_0006.xyz: 983frame [02:17,  6.89frame/s][A
+chunk_0006.xyz: 984frame [02:17,  6.63frame/s][A
+chunk_0006.xyz: 985frame [02:17,  6.47frame/s][A
+chunk_0006.xyz: 987frame [02:18,  7.06frame/s][A
+chunk_0006.xyz: 989frame [02:18,  7.40frame/s][A
+chunk_0006.xyz: 991frame [02:18,  8.08frame/s][A
+chunk_0006.xyz: 992frame [02:18,  7.59frame/s][A
+chunk_0006.xyz: 994frame [02:19,  7.82frame/s][A
+chunk_0006.xyz: 995frame [02:19,  7.38frame/s][A
+chunk_0006.xyz: 996frame [02:19,  7.09frame/s][A
+chunk_0006.xyz: 998frame [02:19,  7.65frame/s][A
+chunk_0006.xyz: 999frame [02:19,  7.69frame/s][A
+chunk_0006.xyz: 1000frame [02:19,  7.26frame/s][A
+chunk_0006.xyz: 1001frame [02:20,  6.88frame/s][A
+chunk_0006.xyz: 1002frame [02:20,  6.67frame/s][A
+chunk_0006.xyz: 1004frame [02:20,  7.34frame/s][A
+chunk_0006.xyz: 1005frame [02:20,  7.81frame/s][A
+chunk_0006.xyz: 1006frame [02:20,  7.60frame/s][A
+chunk_0006.xyz: 1008frame [02:20,  8.20frame/s][A
+chunk_0006.xyz: 1009frame [02:21,  7.62frame/s][A
+chunk_0006.xyz: 1010frame [02:21,  7.16frame/s][A
+chunk_0006.xyz: 1011frame [02:21,  6.88frame/s][A
+chunk_0006.xyz: 1012frame [02:21,  6.64frame/s][A
+chunk_0006.xyz: 1014frame [02:21,  7.95frame/s][A
+chunk_0006.xyz: 1015frame [02:21,  7.37frame/s][A
+chunk_0006.xyz: 1016frame [02:22,  6.99frame/s][A
+chunk_0006.xyz: 1017frame [02:22,  6.75frame/s][A
+chunk_0006.xyz: 1018frame [02:22,  6.57frame/s][A
+chunk_0006.xyz: 1019frame [02:22,  6.45frame/s][A
+chunk_0006.xyz: 1021frame [02:22,  7.32frame/s][A
+chunk_0006.xyz: 1022frame [02:22,  7.01frame/s][A
+chunk_0006.xyz: 1024frame [02:23,  7.63frame/s][A
+chunk_0006.xyz: 1025frame [02:23,  7.24frame/s][A
+chunk_0006.xyz: 1026frame [02:23,  6.98frame/s][A
+chunk_0006.xyz: 1027frame [02:23,  6.75frame/s][A
+chunk_0006.xyz: 1028frame [02:23,  6.59frame/s][A
+chunk_0006.xyz: 1030frame [02:24,  7.28frame/s][A
+chunk_0006.xyz: 1031frame [02:24,  6.98frame/s][A
+chunk_0006.xyz: 1032frame [02:24,  6.68frame/s][A
+chunk_0006.xyz: 1033frame [02:24,  6.51frame/s][A
+chunk_0006.xyz: 1034frame [02:24,  6.68frame/s][A
+chunk_0006.xyz: 1036frame [02:24,  7.30frame/s][A
+chunk_0006.xyz: 1038frame [02:25,  7.72frame/s][A
+chunk_0006.xyz: 1039frame [02:25,  7.26frame/s][A
+chunk_0006.xyz: 1041frame [02:25,  7.56frame/s][A
+chunk_0006.xyz: 1042frame [02:25,  7.18frame/s][A
+chunk_0006.xyz: 1043frame [02:25,  6.87frame/s][A
+chunk_0006.xyz: 1045frame [02:26,  7.40frame/s][A
+chunk_0006.xyz: 1047frame [02:26,  8.84frame/s][A
+chunk_0006.xyz: 1048frame [02:26,  8.11frame/s][A
+chunk_0006.xyz: 1050frame [02:26,  8.19frame/s][A
+chunk_0006.xyz: 1052frame [02:26,  8.95frame/s][A
+chunk_0006.xyz: 1053frame [02:27,  8.19frame/s][A
+chunk_0006.xyz: 1055frame [02:27,  8.37frame/s][A
+chunk_0006.xyz: 1056frame [02:27,  7.79frame/s][A
+chunk_0006.xyz: 1057frame [02:27,  7.39frame/s][A
+chunk_0006.xyz: 1058frame [02:27,  7.05frame/s][A
+chunk_0006.xyz: 1059frame [02:27,  7.03frame/s][A
+chunk_0006.xyz: 1060frame [02:28,  6.78frame/s][A
+chunk_0006.xyz: 1061frame [02:28,  6.60frame/s][A
+chunk_0006.xyz: 1062frame [02:28,  6.47frame/s][A
+chunk_0006.xyz: 1063frame [02:28,  6.34frame/s][A
+chunk_0006.xyz: 1064frame [02:28,  6.27frame/s][A
+chunk_0006.xyz: 1065frame [02:28,  6.27frame/s][A
+chunk_0006.xyz: 1066frame [02:29,  6.21frame/s][A
+chunk_0006.xyz: 1068frame [02:29,  7.18frame/s][A
+chunk_0006.xyz: 1069frame [02:29,  6.90frame/s][A
+chunk_0006.xyz: 1070frame [02:29,  6.68frame/s][A
+chunk_0006.xyz: 1071frame [02:29,  6.76frame/s][A
+chunk_0006.xyz: 1072frame [02:29,  6.59frame/s][A
+chunk_0006.xyz: 1074frame [02:30,  8.10frame/s][A
+chunk_0006.xyz: 1075frame [02:30,  7.53frame/s][A
+chunk_0006.xyz: 1076frame [02:30,  7.10frame/s][A
+chunk_0006.xyz: 1077frame [02:30,  6.83frame/s][A
+chunk_0006.xyz: 1078frame [02:30,  6.64frame/s][A
+chunk_0006.xyz: 1079frame [02:30,  6.50frame/s][A
+chunk_0006.xyz: 1081frame [02:31,  7.51frame/s][A
+chunk_0006.xyz: 1082frame [02:31,  7.13frame/s][A
+chunk_0006.xyz: 1083frame [02:31,  6.85frame/s][A
+chunk_0006.xyz: 1084frame [02:31,  6.65frame/s][A
+chunk_0006.xyz: 1085frame [02:31,  6.47frame/s][A
+chunk_0006.xyz: 1086frame [02:31,  6.39frame/s][A
+chunk_0006.xyz: 1087frame [02:32,  6.30frame/s][A
+chunk_0006.xyz: 1088frame [02:32,  6.23frame/s][A
+chunk_0006.xyz: 1089frame [02:32,  6.22frame/s][A
+chunk_0006.xyz: 1090frame [02:32,  6.21frame/s][A
+chunk_0006.xyz: 1091frame [02:32,  6.20frame/s][A
+chunk_0006.xyz: 1092frame [02:32,  6.19frame/s][A
+chunk_0006.xyz: 1093frame [02:33,  6.17frame/s][A
+chunk_0006.xyz: 1094frame [02:33,  6.20frame/s][A
+chunk_0006.xyz: 1095frame [02:33,  6.15frame/s][A
+chunk_0006.xyz: 1096frame [02:33,  6.16frame/s][A
+chunk_0006.xyz: 1097frame [02:33,  6.14frame/s][A
+chunk_0006.xyz: 1098frame [02:33,  6.15frame/s][A
+chunk_0006.xyz: 1099frame [02:34,  6.15frame/s][A
+chunk_0006.xyz: 1100frame [02:34,  6.18frame/s][A
+chunk_0006.xyz: 1101frame [02:34,  6.12frame/s][A
+chunk_0006.xyz: 1102frame [02:34,  6.14frame/s][A
+chunk_0006.xyz: 1103frame [02:34,  6.12frame/s][A
+chunk_0006.xyz: 1104frame [02:34,  6.14frame/s][A
+chunk_0006.xyz: 1105frame [02:35,  6.12frame/s][A
+chunk_0006.xyz: 1106frame [02:35,  6.14frame/s][A
+chunk_0006.xyz: 1108frame [02:35,  6.94frame/s][A
+chunk_0006.xyz: 1109frame [02:35,  6.73frame/s][A
+chunk_0006.xyz: 1111frame [02:35,  7.40frame/s][A
+chunk_0006.xyz: 1113frame [02:36,  7.83frame/s][A
+chunk_0006.xyz: 1114frame [02:36,  7.41frame/s][A
+chunk_0006.xyz: 1115frame [02:36,  7.32frame/s][A
+chunk_0006.xyz: 1116frame [02:36,  7.02frame/s][A
+chunk_0006.xyz: 1118frame [02:36,  8.21frame/s][A
+chunk_0006.xyz: 1120frame [02:36,  9.39frame/s][A
+chunk_0006.xyz: 1121frame [02:37,  8.51frame/s][A
+chunk_0006.xyz: 1123frame [02:37,  8.34frame/s][A
+chunk_0006.xyz: 1124frame [02:37,  7.75frame/s][A
+chunk_0006.xyz: 1125frame [02:37,  7.31frame/s][A
+chunk_0006.xyz: 1126frame [02:37,  7.28frame/s][A
+chunk_0006.xyz: 1127frame [02:37,  6.95frame/s][A
+chunk_0006.xyz: 1128frame [02:38,  6.69frame/s][A
+chunk_0006.xyz: 1129frame [02:38,  6.53frame/s][A
+chunk_0006.xyz: 1130frame [02:38,  6.42frame/s][A
+chunk_0006.xyz: 1131frame [02:38,  6.35frame/s][A
+chunk_0006.xyz: 1132frame [02:38,  6.29frame/s][A
+chunk_0006.xyz: 1133frame [02:38,  6.53frame/s][A
+chunk_0006.xyz: 1134frame [02:39,  6.68frame/s][A
+chunk_0006.xyz: 1135frame [02:39,  6.52frame/s][A
+chunk_0006.xyz: 1136frame [02:39,  6.43frame/s][A
+chunk_0006.xyz: 1137frame [02:39,  6.63frame/s][A
+chunk_0006.xyz: 1138frame [02:39,  6.50frame/s][A
+chunk_0006.xyz: 1140frame [02:39,  8.28frame/s][A
+chunk_0006.xyz: 1142frame [02:39,  9.25frame/s][A
+chunk_0006.xyz: 1143frame [02:40,  8.66frame/s][A
+chunk_0006.xyz: 1144frame [02:40,  7.94frame/s][A
+chunk_0006.xyz: 1145frame [02:40,  7.76frame/s][A
+chunk_0006.xyz: 1146frame [02:40,  7.26frame/s][A
+chunk_0006.xyz: 1147frame [02:40,  6.93frame/s][A
+chunk_0006.xyz: 1148frame [02:40,  6.68frame/s][A
+chunk_0006.xyz: 1149frame [02:41,  6.52frame/s][A
+chunk_0006.xyz: 1150frame [02:41,  6.42frame/s][A
+chunk_0006.xyz: 1152frame [02:41,  7.27frame/s][A
+chunk_0006.xyz: 1153frame [02:41,  7.26frame/s][A
+chunk_0006.xyz: 1154frame [02:41,  6.94frame/s][A
+chunk_0006.xyz: 1155frame [02:41,  6.71frame/s][A
+chunk_0006.xyz: 1157frame [02:42,  7.39frame/s][A
+chunk_0006.xyz: 1158frame [02:42,  7.08frame/s][A
+chunk_0006.xyz: 1159frame [02:42,  6.78frame/s][A
+chunk_0006.xyz: 1160frame [02:42,  6.61frame/s][A
+chunk_0006.xyz: 1161frame [02:42,  7.09frame/s][A
+chunk_0006.xyz: 1162frame [02:42,  6.80frame/s][A
+chunk_0006.xyz: 1164frame [02:43,  7.34frame/s][A
+chunk_0006.xyz: 1166frame [02:43,  7.72frame/s][A
+chunk_0006.xyz: 1167frame [02:43,  7.35frame/s][A
+chunk_0006.xyz: 1169frame [02:43,  7.81frame/s][A
+chunk_0006.xyz: 1171frame [02:44,  7.77frame/s][A
+chunk_0006.xyz: 1172frame [02:44,  7.36frame/s][A
+chunk_0006.xyz: 1173frame [02:44,  7.05frame/s][A
+chunk_0006.xyz: 1174frame [02:44,  6.79frame/s][A
+chunk_0006.xyz: 1175frame [02:44,  6.61frame/s][A
+chunk_0006.xyz: 1176frame [02:44,  6.48frame/s][A
+chunk_0006.xyz: 1177frame [02:45,  6.35frame/s][A
+chunk_0006.xyz: 1178frame [02:45,  6.54frame/s][A
+chunk_0006.xyz: 1180frame [02:45,  7.39frame/s][A
+chunk_0006.xyz: 1181frame [02:45,  7.05frame/s][A
+chunk_0006.xyz: 1182frame [02:45,  6.77frame/s][A
+chunk_0006.xyz: 1184frame [02:45,  8.53frame/s][A
+chunk_0006.xyz: 1185frame [02:46,  7.83frame/s][A
+chunk_0006.xyz: 1186frame [02:46,  7.34frame/s][A
+chunk_0006.xyz: 1187frame [02:46,  7.01frame/s][A
+chunk_0006.xyz: 1189frame [02:46,  8.19frame/s][A
+chunk_0006.xyz: 1190frame [02:46,  7.60frame/s][A
+chunk_0006.xyz: 1191frame [02:46,  7.47frame/s][A
+chunk_0006.xyz: 1193frame [02:47,  8.03frame/s][A
+chunk_0006.xyz: 1194frame [02:47,  7.53frame/s][A
+chunk_0006.xyz: 1196frame [02:47,  7.55frame/s][A
+chunk_0006.xyz: 1197frame [02:47,  7.19frame/s][A
+chunk_0006.xyz: 1198frame [02:47,  6.88frame/s][A
+chunk_0006.xyz: 1199frame [02:47,  6.63frame/s][A
+chunk_0006.xyz: 1201frame [02:48,  7.18frame/s][A
+chunk_0006.xyz: 1202frame [02:48,  6.91frame/s][A
+chunk_0006.xyz: 1203frame [02:48,  6.73frame/s][A
+chunk_0006.xyz: 1205frame [02:48,  7.86frame/s][A
+chunk_0006.xyz: 1207frame [02:48,  8.06frame/s][A
+chunk_0006.xyz: 1208frame [02:49,  7.57frame/s][A
+chunk_0006.xyz: 1209frame [02:49,  7.16frame/s][A
+chunk_0006.xyz: 1210frame [02:49,  6.88frame/s][A
+chunk_0006.xyz: 1211frame [02:49,  6.70frame/s][A
+chunk_0006.xyz: 1212frame [02:49,  6.54frame/s][A
+chunk_0006.xyz: 1213frame [02:49,  6.41frame/s][A
+chunk_0006.xyz: 1214frame [02:50,  6.28frame/s][A
+chunk_0006.xyz: 1216frame [02:50,  7.21frame/s][A
+chunk_0006.xyz: 1217frame [02:50,  6.90frame/s][A
+chunk_0006.xyz: 1218frame [02:50,  6.71frame/s][A
+chunk_0006.xyz: 1219frame [02:50,  6.84frame/s][A
+chunk_0006.xyz: 1221frame [02:51,  7.62frame/s][A
+chunk_0006.xyz: 1223frame [02:51,  7.80frame/s][A
+chunk_0006.xyz: 1224frame [02:51,  7.39frame/s][A
+chunk_0006.xyz: 1226frame [02:51,  8.84frame/s][A
+chunk_0006.xyz: 1227frame [02:51,  8.06frame/s][A
+chunk_0006.xyz: 1228frame [02:51,  7.48frame/s][A
+chunk_0006.xyz: 1230frame [02:52,  7.71frame/s][A
+chunk_0006.xyz: 1231frame [02:52,  7.28frame/s][A
+chunk_0006.xyz: 1232frame [02:52,  7.76frame/s][A
+chunk_0006.xyz: 1233frame [02:52,  7.23frame/s][A
+chunk_0006.xyz: 1234frame [02:52,  6.95frame/s][A
+chunk_0006.xyz: 1235frame [02:52,  6.71frame/s][A
+chunk_0006.xyz: 1237frame [02:53,  8.80frame/s][A
+chunk_0006.xyz: 1238frame [02:53,  7.92frame/s][A
+chunk_0006.xyz: 1240frame [02:53,  7.84frame/s][A
+chunk_0006.xyz: 1242frame [02:53,  8.84frame/s][A
+chunk_0006.xyz: 1243frame [02:53,  8.08frame/s][A
+chunk_0006.xyz: 1244frame [02:53,  7.83frame/s][A
+chunk_0006.xyz: 1245frame [02:54,  7.29frame/s][A
+chunk_0006.xyz: 1246frame [02:54,  6.92frame/s][A
+chunk_0006.xyz: 1247frame [02:54,  6.66frame/s][A
+chunk_0006.xyz: 1248frame [02:54,  7.00frame/s][A
+chunk_0006.xyz: 1250frame [02:54,  7.45frame/s][A
+chunk_0006.xyz: 1251frame [02:55,  7.07frame/s][A
+chunk_0006.xyz: 1252frame [02:55,  6.82frame/s][A
+chunk_0006.xyz: 1253frame [02:55,  6.60frame/s][A
+chunk_0006.xyz: 1254frame [02:55,  6.51frame/s][A
+chunk_0006.xyz: 1255frame [02:55,  6.38frame/s][A
+chunk_0006.xyz: 1256frame [02:55,  6.29frame/s][A
+chunk_0006.xyz: 1257frame [02:55,  6.23frame/s][A
+chunk_0006.xyz: 1258frame [02:56,  6.21frame/s][A
+chunk_0006.xyz: 1260frame [02:56,  6.94frame/s][A
+chunk_0006.xyz: 1261frame [02:56,  6.76frame/s][A
+chunk_0006.xyz: 1262frame [02:56,  6.56frame/s][A
+chunk_0006.xyz: 1263frame [02:56,  6.40frame/s][A
+chunk_0006.xyz: 1264frame [02:57,  6.36frame/s][A
+chunk_0006.xyz: 1265frame [02:57,  6.32frame/s][A
+chunk_0006.xyz: 1266frame [02:57,  6.22frame/s][A
+chunk_0006.xyz: 1267frame [02:57,  6.20frame/s][A
+chunk_0006.xyz: 1268frame [02:57,  6.14frame/s][A
+chunk_0006.xyz: 1269frame [02:57,  6.18frame/s][A
+chunk_0006.xyz: 1270frame [02:58,  6.13frame/s][A
+chunk_0006.xyz: 1271frame [02:58,  6.42frame/s][A
+chunk_0006.xyz: 1272frame [02:58,  6.31frame/s][A
+chunk_0006.xyz: 1274frame [02:58,  7.95frame/s][A
+chunk_0006.xyz: 1275frame [02:58,  7.39frame/s][A
+chunk_0006.xyz: 1276frame [02:58,  7.78frame/s][A
+chunk_0006.xyz: 1277frame [02:58,  7.23frame/s][A
+chunk_0006.xyz: 1278frame [02:59,  6.93frame/s][A
+chunk_0006.xyz: 1279frame [02:59,  6.70frame/s][A
+chunk_0006.xyz: 1281frame [02:59,  7.68frame/s][A
+chunk_0006.xyz: 1283frame [02:59,  7.65frame/s][A
+chunk_0006.xyz: 1284frame [02:59,  7.27frame/s][A
+chunk_0006.xyz: 1286frame [03:00,  7.67frame/s][A
+chunk_0006.xyz: 1288frame [03:00,  7.91frame/s][A
+chunk_0006.xyz: 1290frame [03:00,  8.87frame/s][A
+chunk_0006.xyz: 1291frame [03:00,  8.15frame/s][A
+chunk_0006.xyz: 1292frame [03:00,  7.88frame/s][A
+chunk_0006.xyz: 1294frame [03:01,  8.18frame/s][A
+chunk_0006.xyz: 1295frame [03:01,  7.62frame/s][A
+chunk_0006.xyz: 1296frame [03:01,  7.51frame/s][A
+chunk_0006.xyz: 1297frame [03:01,  7.08frame/s][A
+chunk_0006.xyz: 1299frame [03:01,  7.58frame/s][A
+chunk_0006.xyz: 1300frame [03:01,  7.23frame/s][A
+chunk_0006.xyz: 1302frame [03:02,  7.63frame/s][A
+chunk_0006.xyz: 1303frame [03:02,  7.26frame/s][A
+chunk_0006.xyz: 1304frame [03:02,  6.95frame/s][A
+chunk_0006.xyz: 1306frame [03:02,  8.90frame/s][A
+chunk_0006.xyz: 1307frame [03:02,  8.13frame/s][A
+chunk_0006.xyz: 1308frame [03:02,  7.58frame/s][A
+chunk_0006.xyz: 1309frame [03:03,  7.16frame/s][A
+chunk_0006.xyz: 1310frame [03:03,  6.89frame/s][A
+chunk_0006.xyz: 1311frame [03:03,  6.67frame/s][A
+chunk_0006.xyz: 1312frame [03:03,  6.49frame/s][A
+chunk_0006.xyz: 1313frame [03:03,  6.41frame/s][A
+chunk_0006.xyz: 1314frame [03:03,  6.31frame/s][A
+chunk_0006.xyz: 1316frame [03:04,  7.01frame/s][A
+chunk_0006.xyz: 1317frame [03:04,  6.75frame/s][A
+chunk_0006.xyz: 1318frame [03:04,  6.56frame/s][A
+chunk_0006.xyz: 1319frame [03:04,  6.42frame/s][A
+chunk_0006.xyz: 1320frame [03:04,  6.60frame/s][A
+chunk_0006.xyz: 1321frame [03:05,  6.50frame/s][A
+chunk_0006.xyz: 1322frame [03:05,  6.42frame/s][A
+chunk_0006.xyz: 1323frame [03:05,  6.38frame/s][A
+chunk_0006.xyz: 1324frame [03:05,  6.60frame/s][A
+chunk_0006.xyz: 1326frame [03:05,  8.57frame/s][A
+chunk_0006.xyz: 1327frame [03:05,  7.84frame/s][A
+chunk_0006.xyz: 1328frame [03:05,  7.36frame/s][A
+chunk_0006.xyz: 1330frame [03:06,  7.80frame/s][A
+chunk_0006.xyz: 1331frame [03:06,  7.33frame/s][A
+chunk_0006.xyz: 1332frame [03:06,  7.02frame/s][A
+chunk_0006.xyz: 1333frame [03:06,  6.78frame/s][A
+chunk_0006.xyz: 1334frame [03:06,  6.85frame/s][A
+chunk_0006.xyz: 1335frame [03:06,  6.64frame/s][A
+chunk_0006.xyz: 1337frame [03:07,  8.68frame/s][A
+chunk_0006.xyz: 1338frame [03:07,  7.87frame/s][A
+chunk_0006.xyz: 1339frame [03:07,  7.31frame/s][A
+chunk_0006.xyz: 1340frame [03:07,  6.93frame/s][A
+chunk_0006.xyz: 1341frame [03:07,  6.68frame/s][A
+chunk_0006.xyz: 1342frame [03:07,  7.33frame/s][A
+chunk_0006.xyz: 1343frame [03:08,  6.98frame/s][A
+chunk_0006.xyz: 1344frame [03:08,  6.77frame/s][A
+chunk_0006.xyz: 1345frame [03:08,  6.56frame/s][A
+chunk_0006.xyz: 1346frame [03:08,  6.43frame/s][A
+chunk_0006.xyz: 1347frame [03:08,  6.39frame/s][A
+chunk_0006.xyz: 1348frame [03:08,  6.32frame/s][A
+chunk_0006.xyz: 1349frame [03:08,  6.26frame/s][A
+chunk_0006.xyz: 1350frame [03:09,  6.24frame/s][A
+chunk_0006.xyz: 1351frame [03:09,  6.19frame/s][A
+chunk_0006.xyz: 1352frame [03:09,  6.13frame/s][A
+chunk_0006.xyz: 1353frame [03:09,  6.14frame/s][A
+chunk_0006.xyz: 1354frame [03:09,  6.09frame/s][A
+chunk_0006.xyz: 1356frame [03:10,  7.08frame/s][A
+chunk_0006.xyz: 1357frame [03:10,  6.83frame/s][A
+chunk_0006.xyz: 1358frame [03:10,  6.62frame/s][A
+chunk_0006.xyz: 1360frame [03:10,  8.54frame/s][A
+chunk_0006.xyz: 1361frame [03:10,  7.81frame/s][A
+chunk_0006.xyz: 1362frame [03:10,  7.31frame/s][A
+chunk_0006.xyz: 1364frame [03:11,  7.56frame/s][A
+chunk_0006.xyz: 1365frame [03:11,  7.13frame/s][A
+chunk_0006.xyz: 1366frame [03:11,  6.86frame/s][A
+chunk_0006.xyz: 1368frame [03:11,  8.55frame/s][A
+chunk_0006.xyz: 1369frame [03:11,  7.87frame/s][A
+chunk_0006.xyz: 1370frame [03:11,  7.37frame/s][A
+chunk_0006.xyz: 1371frame [03:12,  7.28frame/s][A
+chunk_0006.xyz: 1373frame [03:12,  7.62frame/s][A
+chunk_0006.xyz: 1374frame [03:12,  7.75frame/s][A
+chunk_0006.xyz: 1375frame [03:12,  8.15frame/s][A
+chunk_0006.xyz: 1376frame [03:12,  7.48frame/s][A
+chunk_0006.xyz: 1377frame [03:12,  7.06frame/s][A
+chunk_0006.xyz: 1378frame [03:12,  6.83frame/s][A
+chunk_0006.xyz: 1379frame [03:13,  6.60frame/s][A
+chunk_0006.xyz: 1380frame [03:13,  6.45frame/s][A
+chunk_0006.xyz: 1382frame [03:13,  7.26frame/s][A
+chunk_0006.xyz: 1383frame [03:13,  6.94frame/s][A
+chunk_0006.xyz: 1384frame [03:13,  6.72frame/s][A
+chunk_0006.xyz: 1385frame [03:14,  6.54frame/s][A
+chunk_0006.xyz: 1386frame [03:14,  6.44frame/s][A
+chunk_0006.xyz: 1388frame [03:14,  7.25frame/s][A
+chunk_0006.xyz: 1389frame [03:14,  6.98frame/s][A
+chunk_0006.xyz: 1390frame [03:14,  6.71frame/s][A
+chunk_0006.xyz: 1391frame [03:14,  6.51frame/s][A
+chunk_0006.xyz: 1392frame [03:15,  7.10frame/s][A
+chunk_0006.xyz: 1393frame [03:15,  6.82frame/s][A
+chunk_0006.xyz: 1394frame [03:15,  6.65frame/s][A
+chunk_0006.xyz: 1395frame [03:15,  7.17frame/s][A
+chunk_0006.xyz: 1396frame [03:15,  7.75frame/s][A
+chunk_0006.xyz: 1397frame [03:15,  7.25frame/s][A
+chunk_0006.xyz: 1398frame [03:15,  6.89frame/s][A
+chunk_0006.xyz: 1399frame [03:16,  6.67frame/s][A
+chunk_0006.xyz: 1400frame [03:16,  6.51frame/s][A
+chunk_0006.xyz: 1401frame [03:16,  6.38frame/s][A
+chunk_0006.xyz: 1402frame [03:16,  6.32frame/s][A
+chunk_0006.xyz: 1403frame [03:16,  6.53frame/s][A
+chunk_0006.xyz: 1405frame [03:16,  8.17frame/s][A
+chunk_0006.xyz: 1406frame [03:17,  7.53frame/s][A
+chunk_0006.xyz: 1408frame [03:17,  9.39frame/s][A
+chunk_0006.xyz: 1410frame [03:17,  8.73frame/s][A
+chunk_0006.xyz: 1411frame [03:17,  8.04frame/s][A
+chunk_0006.xyz: 1412frame [03:17,  7.51frame/s][A
+chunk_0006.xyz: 1413frame [03:17,  7.12frame/s][A
+chunk_0006.xyz: 1414frame [03:18,  7.42frame/s][A
+chunk_0006.xyz: 1415frame [03:18,  6.99frame/s][A
+chunk_0006.xyz: 1416frame [03:18,  6.78frame/s][A
+chunk_0006.xyz: 1418frame [03:18,  7.94frame/s][A
+chunk_0006.xyz: 1419frame [03:18,  7.47frame/s][A
+chunk_0006.xyz: 1421frame [03:18,  7.86frame/s][A
+chunk_0006.xyz: 1422frame [03:19,  7.41frame/s][A
+chunk_0006.xyz: 1423frame [03:19,  7.09frame/s][A
+chunk_0006.xyz: 1424frame [03:19,  7.09frame/s][A
+chunk_0006.xyz: 1425frame [03:19,  6.81frame/s][A
+chunk_0006.xyz: 1426frame [03:19,  6.59frame/s][A
+chunk_0006.xyz: 1428frame [03:19,  7.21frame/s][A
+chunk_0006.xyz: 1429frame [03:20,  6.93frame/s][A
+chunk_0006.xyz: 1431frame [03:20,  7.39frame/s][A
+chunk_0006.xyz: 1432frame [03:20,  7.63frame/s][A
+chunk_0006.xyz: 1433frame [03:20,  7.24frame/s][A
+chunk_0006.xyz: 1435frame [03:20,  8.76frame/s][A
+chunk_0006.xyz: 1437frame [03:21,  8.65frame/s][A
+chunk_0006.xyz: 1438frame [03:21,  7.95frame/s][A
+chunk_0006.xyz: 1439frame [03:21,  7.46frame/s][A
+chunk_0006.xyz: 1440frame [03:21,  7.09frame/s][A
+chunk_0006.xyz: 1441frame [03:21,  7.09frame/s][A
+chunk_0006.xyz: 1442frame [03:21,  6.75frame/s][A
+chunk_0006.xyz: 1443frame [03:21,  7.28frame/s][A
+chunk_0006.xyz: 1444frame [03:22,  7.22frame/s][A
+chunk_0006.xyz: 1445frame [03:22,  7.81frame/s][A
+chunk_0006.xyz: 1446frame [03:22,  7.24frame/s][A
+chunk_0006.xyz: 1447frame [03:22,  7.86frame/s][A
+chunk_0006.xyz: 1449frame [03:22,  7.98frame/s][A
+chunk_0006.xyz: 1450frame [03:22,  7.48frame/s][A
+chunk_0006.xyz: 1452frame [03:23,  8.95frame/s][A
+chunk_0006.xyz: 1453frame [03:23,  8.43frame/s][A
+chunk_0006.xyz: 1454frame [03:23,  7.77frame/s][A
+chunk_0006.xyz: 1456frame [03:23,  7.70frame/s][A
+chunk_0006.xyz: 1457frame [03:23,  7.26frame/s][A
+chunk_0006.xyz: 1458frame [03:23,  6.92frame/s][A
+chunk_0006.xyz: 1459frame [03:24,  6.67frame/s][A
+chunk_0006.xyz: 1460frame [03:24,  6.53frame/s][A
+chunk_0006.xyz: 1462frame [03:24,  7.23frame/s][A
+chunk_0006.xyz: 1464frame [03:24,  7.54frame/s][A
+chunk_0006.xyz: 1465frame [03:24,  7.45frame/s][A
+chunk_0006.xyz: 1466frame [03:25,  7.07frame/s][A
+chunk_0006.xyz: 1467frame [03:25,  6.83frame/s][A
+chunk_0006.xyz: 1468frame [03:25,  6.62frame/s][A
+chunk_0006.xyz: 1469frame [03:25,  6.52frame/s][A
+chunk_0006.xyz: 1470frame [03:25,  6.71frame/s][A
+chunk_0006.xyz: 1471frame [03:25,  6.46frame/s][A
+chunk_0006.xyz: 1472frame [03:26,  6.32frame/s][A
+chunk_0006.xyz: 1473frame [03:26,  6.28frame/s][A
+chunk_0006.xyz: 1474frame [03:26,  6.25frame/s][A
+chunk_0006.xyz: 1475frame [03:26,  6.26frame/s][A
+chunk_0006.xyz: 1476frame [03:26,  6.17frame/s][A
+chunk_0006.xyz: 1477frame [03:26,  6.17frame/s][A
+chunk_0006.xyz: 1479frame [03:27,  7.05frame/s][A
+chunk_0006.xyz: 1480frame [03:27,  6.81frame/s][A
+chunk_0006.xyz: 1482frame [03:27,  7.39frame/s][A
+chunk_0006.xyz: 1483frame [03:27,  7.04frame/s][A
+chunk_0006.xyz: 1484frame [03:27,  7.11frame/s][A
+chunk_0006.xyz: 1485frame [03:27,  6.81frame/s][A
+chunk_0006.xyz: 1486frame [03:28,  6.60frame/s][A
+chunk_0006.xyz: 1487frame [03:28,  6.47frame/s][A
+chunk_0006.xyz: 1488frame [03:28,  6.37frame/s][A
+chunk_0006.xyz: 1490frame [03:28,  6.91frame/s][A
+chunk_0006.xyz: 1492frame [03:28,  7.91frame/s][A
+chunk_0006.xyz: 1493frame [03:29,  7.48frame/s][A
+chunk_0006.xyz: 1494frame [03:29,  7.57frame/s][A
+chunk_0006.xyz: 1495frame [03:29,  7.55frame/s][A
+chunk_0006.xyz: 1497frame [03:29,  7.78frame/s][A
+chunk_0006.xyz: 1498frame [03:29,  7.58frame/s][A
+chunk_0006.xyz: 1499frame [03:29,  7.44frame/s][A
+chunk_0006.xyz: 1501frame [03:30,  8.12frame/s][A
+chunk_0006.xyz: 1502frame [03:30,  7.58frame/s][A
+chunk_0006.xyz: 1503frame [03:30,  7.15frame/s][A
+chunk_0006.xyz: 1504frame [03:30,  6.87frame/s][A
+chunk_0006.xyz: 1505frame [03:30,  6.67frame/s][A
+chunk_0006.xyz: 1507frame [03:30,  7.18frame/s][A
+chunk_0006.xyz: 1508frame [03:31,  7.14frame/s][A
+chunk_0006.xyz: 1509frame [03:31,  6.84frame/s][A
+chunk_0006.xyz: 1510frame [03:31,  6.92frame/s][A
+chunk_0006.xyz: 1511frame [03:31,  6.71frame/s][A
+chunk_0006.xyz: 1512frame [03:31,  6.50frame/s][A
+chunk_0006.xyz: 1513frame [03:31,  6.41frame/s][A
+chunk_0006.xyz: 1514frame [03:32,  6.59frame/s][A
+chunk_0006.xyz: 1515frame [03:32,  6.49frame/s][A
+chunk_0006.xyz: 1517frame [03:32,  7.31frame/s][A
+chunk_0006.xyz: 1518frame [03:32,  7.02frame/s][A
+chunk_0006.xyz: 1520frame [03:32,  8.66frame/s][A
+chunk_0006.xyz: 1521frame [03:32,  7.88frame/s][A
+chunk_0006.xyz: 1523frame [03:33,  8.02frame/s][A
+chunk_0006.xyz: 1524frame [03:33,  7.49frame/s][A
+chunk_0006.xyz: 1525frame [03:33,  7.10frame/s][A
+chunk_0006.xyz: 1526frame [03:33,  7.07frame/s][A
+chunk_0006.xyz: 1527frame [03:33,  7.10frame/s][A
+chunk_0006.xyz: 1528frame [03:33,  7.12frame/s][A
+chunk_0006.xyz: 1529frame [03:34,  6.83frame/s][A
+chunk_0006.xyz: 1530frame [03:34,  6.58frame/s][A
+chunk_0006.xyz: 1531frame [03:34,  6.45frame/s][A
+chunk_0006.xyz: 1533frame [03:34,  8.08frame/s][A
+chunk_0006.xyz: 1535frame [03:34,  8.08frame/s][A
+chunk_0006.xyz: 1536frame [03:34,  7.85frame/s][A
+chunk_0006.xyz: 1537frame [03:35,  7.38frame/s][A
+chunk_0006.xyz: 1539frame [03:35,  8.85frame/s][A
+chunk_0006.xyz: 1540frame [03:35,  8.07frame/s][A
+chunk_0006.xyz: 1541frame [03:35,  7.47frame/s][A
+chunk_0006.xyz: 1542frame [03:35,  7.12frame/s][A
+chunk_0006.xyz: 1543frame [03:35,  6.84frame/s][A
+chunk_0006.xyz: 1544frame [03:36,  6.90frame/s][A
+chunk_0006.xyz: 1545frame [03:36,  6.68frame/s][A
+chunk_0006.xyz: 1546frame [03:36,  6.56frame/s][A
+chunk_0006.xyz: 1547frame [03:36,  6.43frame/s][A
+chunk_0006.xyz: 1548frame [03:36,  6.35frame/s][A
+chunk_0006.xyz: 1550frame [03:36,  8.31frame/s][A
+chunk_0006.xyz: 1552frame [03:37,  8.27frame/s][A
+chunk_0006.xyz: 1554frame [03:37,  8.60frame/s][A
+chunk_0006.xyz: 1556frame [03:37,  8.88frame/s][A
+chunk_0006.xyz: 1557frame [03:37,  8.50frame/s][A
+chunk_0006.xyz: 1558frame [03:37,  7.97frame/s][A
+chunk_0006.xyz: 1559frame [03:37,  7.46frame/s][A
+chunk_0006.xyz: 1560frame [03:38,  7.06frame/s][A
+chunk_0006.xyz: 1561frame [03:38,  6.80frame/s][A
+chunk_0006.xyz: 1562frame [03:38,  6.65frame/s][A
+chunk_0006.xyz: 1563frame [03:38,  6.76frame/s][A
+chunk_0006.xyz: 1564frame [03:38,  6.53frame/s][A
+chunk_0006.xyz: 1565frame [03:38,  6.88frame/s][A
+chunk_0006.xyz: 1567frame [03:39,  7.44frame/s][A
+chunk_0006.xyz: 1568frame [03:39,  7.05frame/s][A
+chunk_0006.xyz: 1569frame [03:39,  6.78frame/s][A
+chunk_0006.xyz: 1571frame [03:39,  7.48frame/s][A
+chunk_0006.xyz: 1573frame [03:39,  8.02frame/s][A
+chunk_0006.xyz: 1574frame [03:40,  7.57frame/s][A
+chunk_0006.xyz: 1575frame [03:40,  7.16frame/s][A
+chunk_0006.xyz: 1576frame [03:40,  6.86frame/s][A
+chunk_0006.xyz: 1577frame [03:40,  6.67frame/s][A
+chunk_0006.xyz: 1578frame [03:40,  6.50frame/s][A
+chunk_0006.xyz: 1579frame [03:40,  6.38frame/s][A
+chunk_0006.xyz: 1580frame [03:41,  6.31frame/s][A
+chunk_0006.xyz: 1581frame [03:41,  6.54frame/s][A
+chunk_0006.xyz: 1583frame [03:41,  8.42frame/s][A
+chunk_0006.xyz: 1584frame [03:41,  7.72frame/s][A
+chunk_0006.xyz: 1585frame [03:41,  7.25frame/s][A
+chunk_0006.xyz: 1586frame [03:41,  7.21frame/s][A
+chunk_0006.xyz: 1587frame [03:41,  6.92frame/s][A
+chunk_0006.xyz: 1589frame [03:42,  8.63frame/s][A
+chunk_0006.xyz: 1590frame [03:42,  7.91frame/s][A
+chunk_0006.xyz: 1592frame [03:42,  7.94frame/s][A
+chunk_0006.xyz: 1593frame [03:42,  7.41frame/s][A
+chunk_0006.xyz: 1594frame [03:42,  7.34frame/s][A
+chunk_0006.xyz: 1595frame [03:42,  6.96frame/s][A
+chunk_0006.xyz: 1596frame [03:43,  6.74frame/s][A
+chunk_0006.xyz: 1597frame [03:43,  6.53frame/s][A
+chunk_0006.xyz: 1599frame [03:43,  8.24frame/s][A
+chunk_0006.xyz: 1600frame [03:43,  7.88frame/s][A
+chunk_0006.xyz: 1601frame [03:43,  7.39frame/s][A
+chunk_0006.xyz: 1603frame [03:44,  7.67frame/s][A
+chunk_0006.xyz: 1605frame [03:44,  8.05frame/s][A
+chunk_0006.xyz: 1606frame [03:44,  7.53frame/s][A
+chunk_0006.xyz: 1607frame [03:44,  7.91frame/s][A
+chunk_0006.xyz: 1608frame [03:44,  7.38frame/s][A
+chunk_0006.xyz: 1609frame [03:44,  7.06frame/s][A
+chunk_0006.xyz: 1610frame [03:45,  6.73frame/s][A
+chunk_0006.xyz: 1611frame [03:45,  6.61frame/s][A
+chunk_0006.xyz: 1612frame [03:45,  6.51frame/s][A
+chunk_0006.xyz: 1613frame [03:45,  6.37frame/s][A
+chunk_0006.xyz: 1614frame [03:45,  6.56frame/s][A
+chunk_0006.xyz: 1615frame [03:45,  6.42frame/s][A
+chunk_0006.xyz: 1616frame [03:45,  6.60frame/s][A
+chunk_0006.xyz: 1617frame [03:46,  6.49frame/s][A
+chunk_0006.xyz: 1618frame [03:46,  6.36frame/s][A
+chunk_0006.xyz: 1619frame [03:46,  6.30frame/s][A
+chunk_0006.xyz: 1620frame [03:46,  6.26frame/s][A
+chunk_0006.xyz: 1622frame [03:46,  7.05frame/s][A
+chunk_0006.xyz: 1623frame [03:47,  6.78frame/s][A
+chunk_0006.xyz: 1624frame [03:47,  6.82frame/s][A
+chunk_0006.xyz: 1626frame [03:47,  7.51frame/s][A
+chunk_0006.xyz: 1627frame [03:47,  7.10frame/s][A
+chunk_0006.xyz: 1628frame [03:47,  6.81frame/s][A
+chunk_0006.xyz: 1629frame [03:47,  6.63frame/s][A
+chunk_0006.xyz: 1630frame [03:48,  6.47frame/s][A
+chunk_0006.xyz: 1631frame [03:48,  6.35frame/s][A
+chunk_0006.xyz: 1632frame [03:48,  6.27frame/s][A
+chunk_0006.xyz: 1633frame [03:48,  6.81frame/s][A
+chunk_0006.xyz: 1634frame [03:48,  6.63frame/s][A
+chunk_0006.xyz: 1636frame [03:48,  7.34frame/s][A
+chunk_0006.xyz: 1637frame [03:49,  7.02frame/s][A
+chunk_0006.xyz: 1639frame [03:49,  7.58frame/s][A
+chunk_0006.xyz: 1640frame [03:49,  7.23frame/s][A
+chunk_0006.xyz: 1641frame [03:49,  6.92frame/s][A
+chunk_0006.xyz: 1642frame [03:49,  7.32frame/s][A
+chunk_0006.xyz: 1644frame [03:49,  8.68frame/s][A
+chunk_0006.xyz: 1646frame [03:50,  9.77frame/s][A
+chunk_0006.xyz: 1647frame [03:50,  8.65frame/s][A
+chunk_0006.xyz: 1648frame [03:50,  7.85frame/s][A
+chunk_0006.xyz: 1650frame [03:50,  8.32frame/s][A
+chunk_0006.xyz: 1651frame [03:50,  7.69frame/s][A
+chunk_0006.xyz: 1652frame [03:50,  7.19frame/s][A
+chunk_0006.xyz: 1653frame [03:51,  6.88frame/s][A
+chunk_0006.xyz: 1654frame [03:51,  6.62frame/s][A
+chunk_0006.xyz: 1655frame [03:51,  6.48frame/s][A
+chunk_0006.xyz: 1656frame [03:51,  6.39frame/s][A
+chunk_0006.xyz: 1658frame [03:51,  7.40frame/s][A
+chunk_0006.xyz: 1659frame [03:51,  7.02frame/s][A
+chunk_0006.xyz: 1660frame [03:52,  6.78frame/s][A
+chunk_0006.xyz: 1661frame [03:52,  6.60frame/s][A
+chunk_0006.xyz: 1663frame [03:52,  7.13frame/s][A
+chunk_0006.xyz: 1664frame [03:52,  7.11frame/s][A
+chunk_0006.xyz: 1665frame [03:52,  6.88frame/s][A
+chunk_0006.xyz: 1666frame [03:53,  6.69frame/s][A
+chunk_0006.xyz: 1667frame [03:53,  6.55frame/s][A
+chunk_0006.xyz: 1668frame [03:53,  6.45frame/s][A
+chunk_0006.xyz: 1670frame [03:53,  8.37frame/s][A
+chunk_0006.xyz: 1671frame [03:53,  7.70frame/s][A
+chunk_0006.xyz: 1672frame [03:53,  7.22frame/s][A
+chunk_0006.xyz: 1673frame [03:53,  6.89frame/s][A
+chunk_0006.xyz: 1675frame [03:54,  7.56frame/s][A
+chunk_0006.xyz: 1676frame [03:54,  7.45frame/s][A
+chunk_0006.xyz: 1677frame [03:54,  7.34frame/s][A
+chunk_0006.xyz: 1678frame [03:54,  7.63frame/s][A
+chunk_0006.xyz: 1679frame [03:54,  7.16frame/s][A
+chunk_0006.xyz: 1680frame [03:54,  6.81frame/s][A
+chunk_0006.xyz: 1681frame [03:55,  6.58frame/s][A
+chunk_0006.xyz: 1682frame [03:55,  6.46frame/s][A
+chunk_0006.xyz: 1683frame [03:55,  6.37frame/s][A
+chunk_0006.xyz: 1684frame [03:55,  6.34frame/s][A
+chunk_0006.xyz: 1685frame [03:55,  6.28frame/s][A
+chunk_0006.xyz: 1686frame [03:55,  6.22frame/s][A
+chunk_0006.xyz: 1687frame [03:56,  6.18frame/s][A
+chunk_0006.xyz: 1689frame [03:56,  7.07frame/s][A
+chunk_0006.xyz: 1690frame [03:56,  6.78frame/s][A
+chunk_0006.xyz: 1691frame [03:56,  6.62frame/s][A
+chunk_0006.xyz: 1693frame [03:56,  7.51frame/s][A
+chunk_0006.xyz: 1694frame [03:57,  7.15frame/s][A
+chunk_0006.xyz: 1695frame [03:57,  6.88frame/s][A
+chunk_0006.xyz: 1696frame [03:57,  6.68frame/s][A
+chunk_0006.xyz: 1697frame [03:57,  6.50frame/s][A
+chunk_0006.xyz: 1698frame [03:57,  6.41frame/s][A
+chunk_0006.xyz: 1699frame [03:57,  6.35frame/s][A
+chunk_0006.xyz: 1700frame [03:57,  6.57frame/s][A
+chunk_0006.xyz: 1701frame [03:58,  6.41frame/s][A
+chunk_0006.xyz: 1702frame [03:58,  6.37frame/s][A
+chunk_0006.xyz: 1703frame [03:58,  6.34frame/s][A
+chunk_0006.xyz: 1705frame [03:58,  7.90frame/s][A
+chunk_0006.xyz: 1706frame [03:58,  7.32frame/s][A
+chunk_0006.xyz: 1707frame [03:58,  6.96frame/s][A
+chunk_0006.xyz: 1708frame [03:59,  6.71frame/s][A
+chunk_0006.xyz: 1709frame [03:59,  6.59frame/s][A
+chunk_0006.xyz: 1711frame [03:59,  8.30frame/s][A
+chunk_0006.xyz: 1712frame [03:59,  7.62frame/s][A
+chunk_0006.xyz: 1713frame [03:59,  7.56frame/s][A
+chunk_0006.xyz: 1714frame [03:59,  7.70frame/s][A
+chunk_0006.xyz: 1716frame [04:00,  9.24frame/s][A
+chunk_0006.xyz: 1717frame [04:00,  8.26frame/s][A
+chunk_0006.xyz: 1718frame [04:00,  7.60frame/s][A
+chunk_0006.xyz: 1720frame [04:00,  8.91frame/s][A
+chunk_0006.xyz: 1721frame [04:00,  8.09frame/s][A
+chunk_0006.xyz: 1722frame [04:00,  7.51frame/s][A
+chunk_0006.xyz: 1723frame [04:01,  7.07frame/s][A
+chunk_0006.xyz: 1724frame [04:01,  7.10frame/s][A
+chunk_0006.xyz: 1725frame [04:01,  6.82frame/s][A
+chunk_0006.xyz: 1727frame [04:01,  7.54frame/s][A
+chunk_0006.xyz: 1729frame [04:01,  8.07frame/s][A
+chunk_0006.xyz: 1730frame [04:01,  7.60frame/s][A
+chunk_0006.xyz: 1731frame [04:02,  7.91frame/s][A
+chunk_0006.xyz: 1732frame [04:02,  7.43frame/s][A
+chunk_0006.xyz: 1733frame [04:02,  7.00frame/s][A
+chunk_0006.xyz: 1735frame [04:02,  8.71frame/s][A
+chunk_0006.xyz: 1736frame [04:02,  7.98frame/s][A
+chunk_0006.xyz: 1737frame [04:02,  7.39frame/s][A
+chunk_0006.xyz: 1738frame [04:02,  7.06frame/s][A
+chunk_0006.xyz: 1739frame [04:03,  7.04frame/s][A
+chunk_0006.xyz: 1740frame [04:03,  6.78frame/s][A
+chunk_0006.xyz: 1741frame [04:03,  6.59frame/s][A
+chunk_0006.xyz: 1742frame [04:03,  6.50frame/s][A
+chunk_0006.xyz: 1743frame [04:03,  6.88frame/s][A
+chunk_0006.xyz: 1744frame [04:03,  6.66frame/s][A
+chunk_0006.xyz: 1745frame [04:04,  6.47frame/s][A
+chunk_0006.xyz: 1746frame [04:04,  6.41frame/s][A
+chunk_0006.xyz: 1747frame [04:04,  6.33frame/s][A
+chunk_0006.xyz: 1748frame [04:04,  6.53frame/s][A
+chunk_0006.xyz: 1749frame [04:04,  6.74frame/s][A
+chunk_0006.xyz: 1750frame [04:04,  6.56frame/s][A
+chunk_0006.xyz: 1751frame [04:05,  6.40frame/s][A
+chunk_0006.xyz: 1752frame [04:05,  6.36frame/s][A
+chunk_0006.xyz: 1753frame [04:05,  6.27frame/s][A
+chunk_0006.xyz: 1754frame [04:05,  6.56frame/s][A
+chunk_0006.xyz: 1755frame [04:05,  6.44frame/s][A
+chunk_0006.xyz: 1756frame [04:05,  7.15frame/s][A
+chunk_0006.xyz: 1757frame [04:05,  6.83frame/s][A
+chunk_0006.xyz: 1758frame [04:06,  6.65frame/s][A
+chunk_0006.xyz: 1759frame [04:06,  6.50frame/s][A
+chunk_0006.xyz: 1760frame [04:06,  6.62frame/s][A
+chunk_0006.xyz: 1761frame [04:06,  6.45frame/s][A
+chunk_0006.xyz: 1762frame [04:06,  6.63frame/s][A
+chunk_0006.xyz: 1763frame [04:06,  6.52frame/s][A
+chunk_0006.xyz: 1764frame [04:06,  6.68frame/s][A
+chunk_0006.xyz: 1765frame [04:07,  6.47frame/s][A
+chunk_0006.xyz: 1766frame [04:07,  6.35frame/s][A
+chunk_0006.xyz: 1767frame [04:07,  6.28frame/s][A
+chunk_0006.xyz: 1768frame [04:07,  6.54frame/s][A
+chunk_0006.xyz: 1769frame [04:07,  6.40frame/s][A
+chunk_0006.xyz: 1770frame [04:07,  6.32frame/s][A
+chunk_0006.xyz: 1771frame [04:08,  6.27frame/s][A
+chunk_0006.xyz: 1772frame [04:08,  6.23frame/s][A
+chunk_0006.xyz: 1774frame [04:08,  6.97frame/s][A
+chunk_0006.xyz: 1775frame [04:08,  6.73frame/s][A
+chunk_0006.xyz: 1776frame [04:08,  6.57frame/s][A
+chunk_0006.xyz: 1778frame [04:09,  7.37frame/s][A
+chunk_0006.xyz: 1779frame [04:09,  7.08frame/s][A
+chunk_0006.xyz: 1780frame [04:09,  6.79frame/s][A
+chunk_0006.xyz: 1782frame [04:09,  7.92frame/s][A
+chunk_0006.xyz: 1783frame [04:09,  7.44frame/s][A
+chunk_0006.xyz: 1784frame [04:09,  7.02frame/s][A
+chunk_0006.xyz: 1785frame [04:10,  6.77frame/s][A
+chunk_0006.xyz: 1786frame [04:10,  6.88frame/s][A
+chunk_0006.xyz: 1787frame [04:10,  6.70frame/s][A
+chunk_0006.xyz: 1788frame [04:10,  6.81frame/s][A
+chunk_0006.xyz: 1789frame [04:10,  6.55frame/s][A
+chunk_0006.xyz: 1790frame [04:10,  6.41frame/s][A
+chunk_0006.xyz: 1791frame [04:10,  6.34frame/s][A
+chunk_0006.xyz: 1792frame [04:11,  6.26frame/s][A
+chunk_0006.xyz: 1793frame [04:11,  6.20frame/s][A
+chunk_0006.xyz: 1794frame [04:11,  6.77frame/s][A
+chunk_0006.xyz: 1795frame [04:11,  6.53frame/s][A
+chunk_0006.xyz: 1796frame [04:11,  6.38frame/s][A
+chunk_0006.xyz: 1797frame [04:11,  6.30frame/s][A
+chunk_0006.xyz: 1798frame [04:12,  6.22frame/s][A
+chunk_0006.xyz: 1799frame [04:12,  6.21frame/s][A
+chunk_0006.xyz: 1800frame [04:12,  6.15frame/s][A
+chunk_0006.xyz: 1801frame [04:12,  6.18frame/s][A
+chunk_0006.xyz: 1802frame [04:12,  6.20frame/s][A
+chunk_0006.xyz: 1804frame [04:12,  7.11frame/s][A
+chunk_0006.xyz: 1805frame [04:13,  6.82frame/s][A
+chunk_0006.xyz: 1806frame [04:13,  6.59frame/s][A
+chunk_0006.xyz: 1808frame [04:13,  7.24frame/s][A
+chunk_0006.xyz: 1809frame [04:13,  6.91frame/s][A
+chunk_0006.xyz: 1810frame [04:13,  6.71frame/s][A
+chunk_0006.xyz: 1811frame [04:14,  6.87frame/s][A
+chunk_0006.xyz: 1812frame [04:14,  6.66frame/s][A
+chunk_0006.xyz: 1814frame [04:14,  7.58frame/s][A
+chunk_0006.xyz: 1815frame [04:14,  7.22frame/s][A
+chunk_0006.xyz: 1816frame [04:14,  6.88frame/s][A
+chunk_0006.xyz: 1817frame [04:14,  6.91frame/s][A
+chunk_0006.xyz: 1818frame [04:15,  6.73frame/s][A
+chunk_0006.xyz: 1819frame [04:15,  6.52frame/s][A
+chunk_0006.xyz: 1820frame [04:15,  6.45frame/s][A
+chunk_0006.xyz: 1822frame [04:15,  7.10frame/s][A
+chunk_0006.xyz: 1823frame [04:15,  6.81frame/s][A
+chunk_0006.xyz: 1825frame [04:15,  8.52frame/s][A
+chunk_0006.xyz: 1826frame [04:16,  7.88frame/s][A
+chunk_0006.xyz: 1827frame [04:16,  7.67frame/s][A
+chunk_0006.xyz: 1828frame [04:16,  7.20frame/s][A
+chunk_0006.xyz: 1829frame [04:16,  6.92frame/s][A
+chunk_0006.xyz: 1830frame [04:16,  6.69frame/s][A
+chunk_0006.xyz: 1831frame [04:16,  6.53frame/s][A
+chunk_0006.xyz: 1833frame [04:17,  7.12frame/s][A
+chunk_0006.xyz: 1834frame [04:17,  6.86frame/s][A
+chunk_0006.xyz: 1835frame [04:17,  6.64frame/s][A
+chunk_0006.xyz: 1836frame [04:17,  6.48frame/s][A
+chunk_0006.xyz: 1837frame [04:17,  6.61frame/s][A
+chunk_0006.xyz: 1838frame [04:17,  6.72frame/s][A
+chunk_0006.xyz: 1839frame [04:18,  6.78frame/s][A
+chunk_0006.xyz: 1840frame [04:18,  6.55frame/s][A
+chunk_0006.xyz: 1842frame [04:18,  8.69frame/s][A
+chunk_0006.xyz: 1844frame [04:18,  8.42frame/s][A
+chunk_0006.xyz: 1845frame [04:18,  7.80frame/s][A
+chunk_0006.xyz: 1846frame [04:18,  7.37frame/s][A
+chunk_0006.xyz: 1847frame [04:19,  6.99frame/s][A
+chunk_0006.xyz: 1849frame [04:19,  8.30frame/s][A
+chunk_0006.xyz: 1850frame [04:19,  7.68frame/s][A
+chunk_0006.xyz: 1851frame [04:19,  7.28frame/s][A
+chunk_0006.xyz: 1852frame [04:19,  6.94frame/s][A
+chunk_0006.xyz: 1853frame [04:19,  6.71frame/s][A
+chunk_0006.xyz: 1854frame [04:20,  6.52frame/s][A
+chunk_0006.xyz: 1855frame [04:20,  6.41frame/s][A
+chunk_0006.xyz: 1857frame [04:20,  7.19frame/s][A
+chunk_0006.xyz: 1858frame [04:20,  6.91frame/s][A
+chunk_0006.xyz: 1859frame [04:20,  6.70frame/s][A
+chunk_0006.xyz: 1860frame [04:20,  6.53frame/s][A
+chunk_0006.xyz: 1861frame [04:21,  6.46frame/s][A
+chunk_0006.xyz: 1862frame [04:21,  6.64frame/s][A
+chunk_0006.xyz: 1864frame [04:21,  7.47frame/s][A
+chunk_0006.xyz: 1866frame [04:21,  9.49frame/s][A
+chunk_0006.xyz: 1868frame [04:21,  9.07frame/s][A
+chunk_0006.xyz: 1870frame [04:22,  8.98frame/s][A
+chunk_0006.xyz: 1871frame [04:22,  8.53frame/s][A
+chunk_0006.xyz: 1873frame [04:22,  8.50frame/s][A
+chunk_0006.xyz: 1874frame [04:22,  7.89frame/s][A
+chunk_0006.xyz: 1876frame [04:22,  9.29frame/s][A
+chunk_0006.xyz: 1877frame [04:22,  8.37frame/s][A
+chunk_0006.xyz: 1878frame [04:23,  7.72frame/s][A
+chunk_0006.xyz: 1879frame [04:23,  7.23frame/s][A
+chunk_0006.xyz: 1880frame [04:23,  6.89frame/s][A
+chunk_0006.xyz: 1881frame [04:23,  6.67frame/s][A
+chunk_0006.xyz: 1882frame [04:23,  6.52frame/s][A
+chunk_0006.xyz: 1883frame [04:23,  6.41frame/s][A
+chunk_0006.xyz: 1884frame [04:24,  6.32frame/s][A
+chunk_0006.xyz: 1885frame [04:24,  6.25frame/s][A
+chunk_0006.xyz: 1886frame [04:24,  6.23frame/s][A
+chunk_0006.xyz: 1887frame [04:24,  6.46frame/s][A
+chunk_0006.xyz: 1888frame [04:24,  6.35frame/s][A
+chunk_0006.xyz: 1889frame [04:24,  6.28frame/s][A
+chunk_0006.xyz: 1890frame [04:25,  6.23frame/s][A
+chunk_0006.xyz: 1891frame [04:25,  6.48frame/s][A
+chunk_0006.xyz: 1892frame [04:25,  6.41frame/s][A
+chunk_0006.xyz: 1893frame [04:25,  6.31frame/s][A
+chunk_0006.xyz: 1894frame [04:25,  6.55frame/s][A
+chunk_0006.xyz: 1895frame [04:25,  6.43frame/s][A
+chunk_0006.xyz: 1896frame [04:25,  6.32frame/s][A
+chunk_0006.xyz: 1897frame [04:26,  6.30frame/s][A
+chunk_0006.xyz: 1898frame [04:26,  7.08frame/s][A
+chunk_0006.xyz: 1899frame [04:26,  6.76frame/s][A
+chunk_0006.xyz: 1901frame [04:26,  7.52frame/s][A
+chunk_0006.xyz: 1902frame [04:26,  7.86frame/s][A
+chunk_0006.xyz: 1904frame [04:26,  8.26frame/s][A
+chunk_0006.xyz: 1905frame [04:27,  7.62frame/s][A
+chunk_0006.xyz: 1907frame [04:27,  8.80frame/s][A
+chunk_0006.xyz: 1908frame [04:27,  8.01frame/s][A
+chunk_0006.xyz: 1909frame [04:27,  7.48frame/s][A
+chunk_0006.xyz: 1910frame [04:27,  7.12frame/s][A
+chunk_0006.xyz: 1912frame [04:27,  7.91frame/s][A
+chunk_0006.xyz: 1913frame [04:28,  7.41frame/s][A
+chunk_0006.xyz: 1914frame [04:28,  7.09frame/s][A
+chunk_0006.xyz: 1916frame [04:28,  8.78frame/s][A
+chunk_0006.xyz: 1917frame [04:28,  8.05frame/s][A
+chunk_0006.xyz: 1918frame [04:28,  7.42frame/s][A
+chunk_0006.xyz: 1919frame [04:28,  7.36frame/s][A
+chunk_0006.xyz: 1920frame [04:29,  6.97frame/s][A
+chunk_0006.xyz: 1921frame [04:29,  6.68frame/s][A
+chunk_0006.xyz: 1922frame [04:29,  6.53frame/s][A
+chunk_0006.xyz: 1923frame [04:29,  6.42frame/s][A
+chunk_0006.xyz: 1925frame [04:29,  8.06frame/s][A
+chunk_0006.xyz: 1927frame [04:29,  8.17frame/s][A
+chunk_0006.xyz: 1928frame [04:30,  7.62frame/s][A
+chunk_0006.xyz: 1929frame [04:30,  7.20frame/s][A
+chunk_0006.xyz: 1930frame [04:30,  7.29frame/s][A
+chunk_0006.xyz: 1931frame [04:30,  6.94frame/s][A
+chunk_0006.xyz: 1932frame [04:30,  6.64frame/s][A
+chunk_0006.xyz: 1934frame [04:30,  7.33frame/s][A
+chunk_0006.xyz: 1936frame [04:31,  7.70frame/s][A
+chunk_0006.xyz: 1938frame [04:31,  7.92frame/s][A
+chunk_0006.xyz: 1940frame [04:31,  9.06frame/s][A
+chunk_0006.xyz: 1941frame [04:31,  8.59frame/s][A
+chunk_0006.xyz: 1942frame [04:31,  7.95frame/s][A
+chunk_0006.xyz: 1944frame [04:32,  8.20frame/s][A
+chunk_0006.xyz: 1945frame [04:32,  7.97frame/s][A
+chunk_0006.xyz: 1946frame [04:32,  7.46frame/s][A
+chunk_0006.xyz: 1947frame [04:32,  7.39frame/s][A
+chunk_0006.xyz: 1949frame [04:32,  7.76frame/s][A
+chunk_0006.xyz: 1951frame [04:33,  7.74frame/s][A
+chunk_0006.xyz: 1952frame [04:33,  7.66frame/s][A
+chunk_0006.xyz: 1953frame [04:33,  7.29frame/s][A
+chunk_0006.xyz: 1955frame [04:33,  7.65frame/s][A
+chunk_0006.xyz: 1957frame [04:33,  7.82frame/s][A
+chunk_0006.xyz: 1958frame [04:34,  7.41frame/s][A
+chunk_0006.xyz: 1959frame [04:34,  7.09frame/s][A
+chunk_0006.xyz: 1961frame [04:34,  8.79frame/s][A
+chunk_0006.xyz: 1963frame [04:34,  9.24frame/s][A
+chunk_0006.xyz: 1965frame [04:34,  9.15frame/s][A
+chunk_0006.xyz: 1967frame [04:34,  9.65frame/s][A
+chunk_0006.xyz: 1968frame [04:35,  8.69frame/s][A
+chunk_0006.xyz: 1969frame [04:35,  8.04frame/s][A
+chunk_0006.xyz: 1970frame [04:35,  7.47frame/s][A
+chunk_0006.xyz: 1971frame [04:35,  7.34frame/s][A
+chunk_0006.xyz: 1973frame [04:35,  8.02frame/s][A
+chunk_0006.xyz: 1975frame [04:36,  8.54frame/s][A
+chunk_0006.xyz: 1976frame [04:36,  8.16frame/s][A
+chunk_0006.xyz: 1977frame [04:36,  7.55frame/s][A
+chunk_0006.xyz: 1978frame [04:36,  7.16frame/s][A
+chunk_0006.xyz: 1980frame [04:36,  7.79frame/s][A
+chunk_0006.xyz: 1982frame [04:36,  8.25frame/s][A
+chunk_0006.xyz: 1983frame [04:37,  8.00frame/s][A
+chunk_0006.xyz: 1984frame [04:37,  7.49frame/s][A
+chunk_0006.xyz: 1985frame [04:37,  7.15frame/s][A
+chunk_0006.xyz: 1986frame [04:37,  6.87frame/s][A
+chunk_0006.xyz: 1987frame [04:37,  6.69frame/s][A
+chunk_0006.xyz: 1988frame [04:37,  6.54frame/s][A
+chunk_0006.xyz: 1990frame [04:38,  7.60frame/s][A
+chunk_0006.xyz: 1991frame [04:38,  7.23frame/s][A
+chunk_0006.xyz: 1992frame [04:38,  6.94frame/s][A
+chunk_0006.xyz: 1993frame [04:38,  6.72frame/s][A
+chunk_0006.xyz: 1995frame [04:38,  7.23frame/s][A
+chunk_0006.xyz: 1996frame [04:38,  7.21frame/s][A
+chunk_0006.xyz: 1997frame [04:39,  6.92frame/s][A
+chunk_0006.xyz: 1999frame [04:39,  7.34frame/s][A
+chunk_0006.xyz: 2000frame [04:39,  7.00frame/s][A
+chunk_0006.xyz: 2001frame [04:39,  6.88frame/s][A
+chunk_0006.xyz: 2003frame [04:39,  7.63frame/s][A
+chunk_0006.xyz: 2004frame [04:40,  7.23frame/s][A
+chunk_0006.xyz: 2005frame [04:40,  7.20frame/s][A
+chunk_0006.xyz: 2006frame [04:40,  6.93frame/s][A
+chunk_0006.xyz: 2008frame [04:40,  7.31frame/s][A
+chunk_0006.xyz: 2009frame [04:40,  7.02frame/s][A
+chunk_0006.xyz: 2010frame [04:40,  6.78frame/s][A
+chunk_0006.xyz: 2011frame [04:41,  6.60frame/s][A
+chunk_0006.xyz: 2012frame [04:41,  6.50frame/s][A
+chunk_0006.xyz: 2013frame [04:41,  6.37frame/s][A
+chunk_0006.xyz: 2014frame [04:41,  6.79frame/s][A
+chunk_0006.xyz: 2016frame [04:41,  7.36frame/s][A
+chunk_0006.xyz: 2017frame [04:41,  7.02frame/s][A
+chunk_0006.xyz: 2018frame [04:42,  6.78frame/s][A
+chunk_0006.xyz: 2019frame [04:42,  6.65frame/s][A
+chunk_0006.xyz: 2020frame [04:42,  6.48frame/s][A
+chunk_0006.xyz: 2021frame [04:42,  6.36frame/s][A
+chunk_0006.xyz: 2022frame [04:42,  6.31frame/s][A
+chunk_0006.xyz: 2024frame [04:42,  8.21frame/s][A
+chunk_0006.xyz: 2025frame [04:43,  7.60frame/s][A
+chunk_0006.xyz: 2026frame [04:43,  7.17frame/s][A
+chunk_0006.xyz: 2027frame [04:43,  6.82frame/s][A
+chunk_0006.xyz: 2028frame [04:43,  6.58frame/s][A
+chunk_0006.xyz: 2029frame [04:43,  6.46frame/s][A
+chunk_0006.xyz: 2030frame [04:43,  6.62frame/s][A
+chunk_0006.xyz: 2031frame [04:44,  6.41frame/s][A
+chunk_0006.xyz: 2032frame [04:44,  6.63frame/s][A
+chunk_0006.xyz: 2033frame [04:44,  6.46frame/s][A
+chunk_0006.xyz: 2034frame [04:44,  6.37frame/s][A
+chunk_0006.xyz: 2036frame [04:44,  7.04frame/s][A
+chunk_0006.xyz: 2037frame [04:44,  7.05frame/s][A
+chunk_0006.xyz: 2038frame [04:45,  6.80frame/s][A
+chunk_0006.xyz: 2040frame [04:45,  8.78frame/s][A
+chunk_0006.xyz: 2041frame [04:45,  8.00frame/s][A
+chunk_0006.xyz: 2043frame [04:45,  9.37frame/s][A
+chunk_0006.xyz: 2044frame [04:45,  8.35frame/s][A
+chunk_0006.xyz: 2046frame [04:45,  8.25frame/s][A
+chunk_0006.xyz: 2047frame [04:46,  7.99frame/s][A
+chunk_0006.xyz: 2048frame [04:46,  7.74frame/s][A
+chunk_0006.xyz: 2049frame [04:46,  8.20frame/s][A
+chunk_0006.xyz: 2050frame [04:46,  7.90frame/s][A
+chunk_0006.xyz: 2052frame [04:46,  9.88frame/s][A
+chunk_0006.xyz: 2054frame [04:46,  9.40frame/s][A
+chunk_0006.xyz: 2055frame [04:46,  8.48frame/s][A
+chunk_0006.xyz: 2056frame [04:47,  7.80frame/s][A
+chunk_0006.xyz: 2057frame [04:47,  7.68frame/s][A
+chunk_0006.xyz: 2058frame [04:47,  7.22frame/s][A
+chunk_0006.xyz: 2059frame [04:47,  7.16frame/s][A
+chunk_0006.xyz: 2060frame [04:47,  6.89frame/s][A
+chunk_0006.xyz: 2061frame [04:47,  6.94frame/s][A
+chunk_0006.xyz: 2063frame [04:48,  8.83frame/s][A
+chunk_0006.xyz: 2064frame [04:48,  8.03frame/s][A
+chunk_0006.xyz: 2066frame [04:48,  8.23frame/s][A
+chunk_0006.xyz: 2068frame [04:48,  8.59frame/s][A
+chunk_0006.xyz: 2069frame [04:48,  8.23frame/s][A
+chunk_0006.xyz: 2071frame [04:49,  8.58frame/s][A
+chunk_0006.xyz: 2073frame [04:49,  8.90frame/s][A
+chunk_0006.xyz: 2075frame [04:49,  9.10frame/s][A
+chunk_0006.xyz: 2076frame [04:49,  8.37frame/s][A
+chunk_0006.xyz: 2077frame [04:49,  7.77frame/s][A
+chunk_0006.xyz: 2078frame [04:49,  7.33frame/s][A
+chunk_0006.xyz: 2079frame [04:50,  7.03frame/s][A
+chunk_0006.xyz: 2080frame [04:50,  7.03frame/s][A
+chunk_0006.xyz: 2081frame [04:50,  6.73frame/s][A
+chunk_0006.xyz: 2082frame [04:50,  6.56frame/s][A
+chunk_0006.xyz: 2083frame [04:50,  7.01frame/s][A
+chunk_0006.xyz: 2084frame [04:50,  6.74frame/s][A
+chunk_0006.xyz: 2085frame [04:50,  6.53frame/s][A
+chunk_0006.xyz: 2086frame [04:51,  6.70frame/s][A
+chunk_0006.xyz: 2087frame [04:51,  6.80frame/s][A
+chunk_0006.xyz: 2088frame [04:51,  6.63frame/s][A
+chunk_0006.xyz: 2089frame [04:51,  6.51frame/s][A
+chunk_0006.xyz: 2090frame [04:51,  6.41frame/s][A
+chunk_0006.xyz: 2091frame [04:51,  6.32frame/s][A
+chunk_0006.xyz: 2092frame [04:52,  6.31frame/s][A
+chunk_0006.xyz: 2093frame [04:52,  6.30frame/s][A
+chunk_0006.xyz: 2094frame [04:52,  6.26frame/s][A
+chunk_0006.xyz: 2095frame [04:52,  6.24frame/s][A
+chunk_0006.xyz: 2096frame [04:52,  6.19frame/s][A
+chunk_0006.xyz: 2097frame [04:52,  6.15frame/s][A
+chunk_0006.xyz: 2098frame [04:53,  6.16frame/s][A
+chunk_0006.xyz: 2099frame [04:53,  6.19frame/s][A
+chunk_0006.xyz: 2101frame [04:53,  7.39frame/s][A
+chunk_0006.xyz: 2102frame [04:53,  7.01frame/s][A
+chunk_0006.xyz: 2103frame [04:53,  6.77frame/s][A
+chunk_0006.xyz: 2104frame [04:53,  6.60frame/s][A
+chunk_0006.xyz: 2105frame [04:54,  6.51frame/s][A
+chunk_0006.xyz: 2107frame [04:54,  7.10frame/s][A
+chunk_0006.xyz: 2108frame [04:54,  6.87frame/s][A
+chunk_0006.xyz: 2109frame [04:54,  6.62frame/s][A
+chunk_0006.xyz: 2110frame [04:54,  6.52frame/s][A
+chunk_0006.xyz: 2111frame [04:54,  6.42frame/s][A
+chunk_0006.xyz: 2112frame [04:55,  6.37frame/s][A
+chunk_0006.xyz: 2113frame [04:55,  6.32frame/s][A
+chunk_0006.xyz: 2115frame [04:55,  7.27frame/s][A
+chunk_0006.xyz: 2116frame [04:55,  6.93frame/s][A
+chunk_0006.xyz: 2117frame [04:55,  6.96frame/s][A
+chunk_0006.xyz: 2119frame [04:56,  7.76frame/s][A
+chunk_0006.xyz: 2121frame [04:56,  7.93frame/s][A
+chunk_0006.xyz: 2122frame [04:56,  7.73frame/s][A
+chunk_0006.xyz: 2124frame [04:56,  7.84frame/s][A
+chunk_0006.xyz: 2125frame [04:56,  7.45frame/s][A
+chunk_0006.xyz: 2127frame [04:57,  8.31frame/s][A
+chunk_0006.xyz: 2128frame [04:57,  7.74frame/s][A
+chunk_0006.xyz: 2130frame [04:57,  7.91frame/s][A
+chunk_0006.xyz: 2132frame [04:57,  8.62frame/s][A
+chunk_0006.xyz: 2133frame [04:57,  7.98frame/s][A
+chunk_0006.xyz: 2134frame [04:57,  7.76frame/s][A
+chunk_0006.xyz: 2136frame [04:58,  8.56frame/s][A
+chunk_0006.xyz: 2137frame [04:58,  7.86frame/s][A
+chunk_0006.xyz: 2138frame [04:58,  7.38frame/s][A
+chunk_0006.xyz: 2140frame [04:58,  7.65frame/s][A
+chunk_0006.xyz: 2142frame [04:58,  8.60frame/s][A
+chunk_0006.xyz: 2144frame [04:59,  9.79frame/s][A
+chunk_0006.xyz: 2145frame [04:59,  8.74frame/s][A
+chunk_0006.xyz: 2147frame [04:59,  8.52frame/s][A
+chunk_0006.xyz: 2148frame [04:59,  7.90frame/s][A
+chunk_0006.xyz: 2149frame [04:59,  7.38frame/s][A
+chunk_0006.xyz: 2150frame [04:59,  7.01frame/s][A
+chunk_0006.xyz: 2151frame [05:00,  6.80frame/s][A
+chunk_0006.xyz: 2152frame [05:00,  6.62frame/s][A
+chunk_0006.xyz: 2153frame [05:00,  6.45frame/s][A
+chunk_0006.xyz: 2154frame [05:00,  6.37frame/s][A
+chunk_0006.xyz: 2155frame [05:00,  6.32frame/s][A
+chunk_0006.xyz: 2156frame [05:00,  6.30frame/s][A
+chunk_0006.xyz: 2157frame [05:01,  6.22frame/s][A
+chunk_0006.xyz: 2159frame [05:01,  7.13frame/s][A
+chunk_0006.xyz: 2161frame [05:01,  8.60frame/s][A
+chunk_0006.xyz: 2163frame [05:01,  9.77frame/s][A
+chunk_0006.xyz: 2165frame [05:01,  9.34frame/s][A
+chunk_0006.xyz: 2166frame [05:02,  8.50frame/s][A
+chunk_0006.xyz: 2167frame [05:02,  7.97frame/s][A
+chunk_0006.xyz: 2168frame [05:02,  7.49frame/s][A
+chunk_0006.xyz: 2169frame [05:02,  7.10frame/s][A
+chunk_0006.xyz: 2170frame [05:02,  6.80frame/s][A
+chunk_0006.xyz: 2171frame [05:02,  7.11frame/s][A
+chunk_0006.xyz: 2173frame [05:03,  7.47frame/s][A
+chunk_0006.xyz: 2175frame [05:03,  8.17frame/s][A
+chunk_0006.xyz: 2177frame [05:03,  9.58frame/s][A
+chunk_0006.xyz: 2179frame [05:03,  9.16frame/s][A
+chunk_0006.xyz: 2181frame [05:03, 10.50frame/s][A
+chunk_0006.xyz: 2183frame [05:04,  8.61frame/s][A
+chunk_0006.xyz: 2184frame [05:04,  8.00frame/s][A
+chunk_0006.xyz: 2185frame [05:04,  7.52frame/s][A
+chunk_0006.xyz: 2187frame [05:04,  7.86frame/s][A
+chunk_0006.xyz: 2188frame [05:04,  7.42frame/s][A
+chunk_0006.xyz: 2190frame [05:05,  7.88frame/s][A
+chunk_0006.xyz: 2191frame [05:05,  7.45frame/s][A
+chunk_0006.xyz: 2192frame [05:05,  7.08frame/s][A
+chunk_0006.xyz: 2193frame [05:05,  6.83frame/s][A
+chunk_0006.xyz: 2194frame [05:05,  6.63frame/s][A
+chunk_0006.xyz: 2195frame [05:05,  7.07frame/s][A
+chunk_0006.xyz: 2197frame [05:06,  7.70frame/s][A
+chunk_0006.xyz: 2198frame [05:06,  7.30frame/s][A
+chunk_0006.xyz: 2200frame [05:06,  7.77frame/s][A
+chunk_0006.xyz: 2201frame [05:06,  7.34frame/s][A
+chunk_0006.xyz: 2202frame [05:06,  6.99frame/s][A
+chunk_0006.xyz: 2204frame [05:06,  7.45frame/s][A
+chunk_0006.xyz: 2205frame [05:07,  7.09frame/s][A
+chunk_0006.xyz: 2207frame [05:07,  7.41frame/s][A
+chunk_0006.xyz: 2208frame [05:07,  7.12frame/s][A
+chunk_0006.xyz: 2210frame [05:07,  7.45frame/s][A
+chunk_0006.xyz: 2212frame [05:07,  8.80frame/s][A
+chunk_0006.xyz: 2213frame [05:08,  8.11frame/s][A
+chunk_0006.xyz: 2214frame [05:08,  7.54frame/s][A
+chunk_0006.xyz: 2215frame [05:08,  7.10frame/s][A
+chunk_0006.xyz: 2217frame [05:08,  7.41frame/s][A
+chunk_0006.xyz: 2218frame [05:08,  7.08frame/s][A
+chunk_0006.xyz: 2219frame [05:09,  6.83frame/s][A
+chunk_0006.xyz: 2220frame [05:09,  6.67frame/s][A
+chunk_0006.xyz: 2221frame [05:09,  6.50frame/s][A
+chunk_0006.xyz: 2222frame [05:09,  6.66frame/s][A
+chunk_0006.xyz: 2223frame [05:09,  6.52frame/s][A
+chunk_0006.xyz: 2224frame [05:09,  6.43frame/s][A
+chunk_0006.xyz: 2225frame [05:09,  6.35frame/s][A
+chunk_0006.xyz: 2226frame [05:10,  6.26frame/s][A
+chunk_0006.xyz: 2227frame [05:10,  6.21frame/s][A
+chunk_0006.xyz: 2228frame [05:10,  6.18frame/s][A
+chunk_0006.xyz: 2229frame [05:10,  6.82frame/s][A
+chunk_0006.xyz: 2230frame [05:10,  6.59frame/s][A
+chunk_0006.xyz: 2231frame [05:10,  6.48frame/s][A
+chunk_0006.xyz: 2232frame [05:11,  6.36frame/s][A
+chunk_0006.xyz: 2233frame [05:11,  6.44frame/s][A
+chunk_0006.xyz: 2234frame [05:11,  6.30frame/s][A
+chunk_0006.xyz: 2235frame [05:11,  6.50frame/s][A
+chunk_0006.xyz: 2236frame [05:11,  6.39frame/s][A
+chunk_0006.xyz: 2237frame [05:11,  6.27frame/s][A
+chunk_0006.xyz: 2238frame [05:12,  6.24frame/s][A
+chunk_0006.xyz: 2239frame [05:12,  6.19frame/s][A
+chunk_0006.xyz: 2240frame [05:12,  6.42frame/s][A
+chunk_0006.xyz: 2241frame [05:12,  6.34frame/s][A
+chunk_0006.xyz: 2242frame [05:12,  6.54frame/s][A
+chunk_0006.xyz: 2243frame [05:12,  6.43frame/s][A
+chunk_0006.xyz: 2244frame [05:12,  6.38frame/s][A
+chunk_0006.xyz: 2245frame [05:13,  6.59frame/s][A
+chunk_0006.xyz: 2246frame [05:13,  6.46frame/s][A
+chunk_0006.xyz: 2247frame [05:13,  6.41frame/s][A
+chunk_0006.xyz: 2249frame [05:13,  7.09frame/s][A
+chunk_0006.xyz: 2250frame [05:13,  7.07frame/s][A
+chunk_0006.xyz: 2252frame [05:13,  8.97frame/s][A
+chunk_0006.xyz: 2254frame [05:14,  8.43frame/s][A
+chunk_0006.xyz: 2255frame [05:14,  7.86frame/s][A
+chunk_0006.xyz: 2257frame [05:14,  9.73frame/s][A
+chunk_0006.xyz: 2259frame [05:14,  8.09frame/s][A
+chunk_0006.xyz: 2261frame [05:15,  8.20frame/s][A
+chunk_0006.xyz: 2262frame [05:15,  7.69frame/s][A
+chunk_0006.xyz: 2263frame [05:15,  7.27frame/s][A
+chunk_0006.xyz: 2264frame [05:15,  6.95frame/s][A
+chunk_0006.xyz: 2265frame [05:15,  6.96frame/s][A
+chunk_0006.xyz: 2267frame [05:15,  8.45frame/s][A
+chunk_0006.xyz: 2268frame [05:16,  7.75frame/s][A
+chunk_0006.xyz: 2270frame [05:16,  7.96frame/s][A
+chunk_0006.xyz: 2272frame [05:16,  8.11frame/s][A
+chunk_0006.xyz: 2273frame [05:16,  7.59frame/s][A
+chunk_0006.xyz: 2274frame [05:16,  7.46frame/s][A
+chunk_0006.xyz: 2275frame [05:16,  7.07frame/s][A
+chunk_0006.xyz: 2277frame [05:17,  7.76frame/s][A
+chunk_0006.xyz: 2279frame [05:17,  9.11frame/s][A
+chunk_0006.xyz: 2280frame [05:17,  8.32frame/s][A
+chunk_0006.xyz: 2282frame [05:17,  9.47frame/s][A
+chunk_0006.xyz: 2283frame [05:17,  8.47frame/s][A
+chunk_0006.xyz: 2284frame [05:17,  7.73frame/s][A
+chunk_0006.xyz: 2286frame [05:18,  8.01frame/s][A
+chunk_0006.xyz: 2287frame [05:18,  7.52frame/s][A
+chunk_0006.xyz: 2288frame [05:18,  7.44frame/s][A
+chunk_0006.xyz: 2289frame [05:18,  7.33frame/s][A
+chunk_0006.xyz: 2290frame [05:18,  6.95frame/s][A
+chunk_0006.xyz: 2291frame [05:19,  6.71frame/s][A
+chunk_0006.xyz: 2292frame [05:19,  6.55frame/s][A
+chunk_0006.xyz: 2293frame [05:19,  6.42frame/s][A
+chunk_0006.xyz: 2294frame [05:19,  6.63frame/s][A
+chunk_0006.xyz: 2296frame [05:19,  7.47frame/s][A
+chunk_0006.xyz: 2297frame [05:19,  7.38frame/s][A
+chunk_0006.xyz: 2298frame [05:20,  6.93frame/s][A
+chunk_0006.xyz: 2299frame [05:20,  6.74frame/s][A
+chunk_0006.xyz: 2300frame [05:20,  7.38frame/s][A
+chunk_0006.xyz: 2301frame [05:20,  6.96frame/s][A
+chunk_0006.xyz: 2303frame [05:20,  7.54frame/s][A
+chunk_0006.xyz: 2305frame [05:20,  7.85frame/s][A
+chunk_0006.xyz: 2306frame [05:21,  7.41frame/s][A
+chunk_0006.xyz: 2308frame [05:21,  7.65frame/s][A
+chunk_0006.xyz: 2309frame [05:21,  7.30frame/s][A
+chunk_0006.xyz: 2310frame [05:21,  6.96frame/s][A
+chunk_0006.xyz: 2311frame [05:21,  6.72frame/s][A
+chunk_0006.xyz: 2312frame [05:21,  6.56frame/s][A
+chunk_0006.xyz: 2314frame [05:22,  7.14frame/s][A
+chunk_0006.xyz: 2315frame [05:22,  6.89frame/s][A
+chunk_0006.xyz: 2316frame [05:22,  6.69frame/s][A
+chunk_0006.xyz: 2317frame [05:22,  6.53frame/s][A
+chunk_0006.xyz: 2318frame [05:22,  6.42frame/s][A
+chunk_0006.xyz: 2320frame [05:23,  7.07frame/s][A
+chunk_0006.xyz: 2321frame [05:23,  6.81frame/s][A
+chunk_0006.xyz: 2322frame [05:23,  6.67frame/s][A
+chunk_0006.xyz: 2323frame [05:23,  6.56frame/s][A
+chunk_0006.xyz: 2324frame [05:23,  6.48frame/s][A
+chunk_0006.xyz: 2325frame [05:23,  6.66frame/s][A
+chunk_0006.xyz: 2326frame [05:24,  6.48frame/s][A
+chunk_0006.xyz: 2327frame [05:24,  6.38frame/s][A
+chunk_0006.xyz: 2328frame [05:24,  6.31frame/s][A
+chunk_0006.xyz: 2329frame [05:24,  6.52frame/s][A
+chunk_0006.xyz: 2331frame [05:24,  6.96frame/s][A
+chunk_0006.xyz: 2332frame [05:24,  6.75frame/s][A
+chunk_0006.xyz: 2333frame [05:25,  6.59frame/s][A
+chunk_0006.xyz: 2334frame [05:25,  6.44frame/s][A
+chunk_0006.xyz: 2335frame [05:25,  6.40frame/s][A
+chunk_0006.xyz: 2337frame [05:25,  8.11frame/s][A
+chunk_0006.xyz: 2339frame [05:25,  8.17frame/s][A
+chunk_0006.xyz: 2341frame [05:26,  8.25frame/s][A
+chunk_0006.xyz: 2342frame [05:26,  8.14frame/s][A
+chunk_0006.xyz: 2343frame [05:26,  7.56frame/s][A
+chunk_0006.xyz: 2344frame [05:26,  7.15frame/s][A
+chunk_0006.xyz: 2345frame [05:26,  6.87frame/s][A
+chunk_0006.xyz: 2346frame [05:26,  6.64frame/s][A
+chunk_0006.xyz: 2347frame [05:27,  6.50frame/s][A
+chunk_0006.xyz: 2348frame [05:27,  6.43frame/s][A
+chunk_0006.xyz: 2349frame [05:27,  6.32frame/s][A
+chunk_0006.xyz: 2350frame [05:27,  6.28frame/s][A
+chunk_0006.xyz: 2351frame [05:27,  6.19frame/s][A
+chunk_0006.xyz: 2353frame [05:27,  7.81frame/s][A
+chunk_0006.xyz: 2354frame [05:28,  7.33frame/s][A
+chunk_0006.xyz: 2356frame [05:28,  7.60frame/s][A
+chunk_0006.xyz: 2357frame [05:28,  7.19frame/s][A
+chunk_0006.xyz: 2358frame [05:28,  6.91frame/s][A
+chunk_0006.xyz: 2360frame [05:28,  7.82frame/s][A
+chunk_0006.xyz: 2362frame [05:29,  7.87frame/s][A
+chunk_0006.xyz: 2363frame [05:29,  7.40frame/s][A
+chunk_0006.xyz: 2364frame [05:29,  7.08frame/s][A
+chunk_0006.xyz: 2365frame [05:29,  6.82frame/s][A
+chunk_0006.xyz: 2366frame [05:29,  6.61frame/s][A
+                                               [AXYZ files: 100%|██████████| 1/1 [05:29<00:00, 329.71s/file]XYZ files: 100%|██████████| 1/1 [05:29<00:00, 329.71s/file]
+Writing CSV:   0%|          | 0/2366 [00:00<?, ?frame/s]Writing CSV: 100%|██████████| 2366/2366 [00:00<00:00, 56257.89frame/s]
+INFO:computed_ensemble_stats:Wrote CSV summary: /home/myless/Packages/forge/scratch/data/ensemble_stats_runs/run_20250812_101647/chunk_outputs/ensemble_stats_chunk_6.csv
+INFO:computed_ensemble_stats:Wrote JSONL details: /home/myless/Packages/forge/scratch/data/ensemble_stats_runs/run_20250812_101647/chunk_outputs/ensemble_stats_chunk_6.jsonl

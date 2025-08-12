@@ -1,0 +1,278 @@
+BAD STRUCTURE ANALYSIS
+==================================================
+
+Total bad structures: 631
+Structures with ASE atoms: 631
+
+[GENERATION] Breakdown (631 structures):
+  - Generation 0: 4 / 9657 (0.0%)
+  - Generation 1: 1 / 1361 (0.1%)
+  - Generation 2: 20 / 2982 (0.7%)
+  - Generation 3: 7 / 1536 (0.5%)
+  - Generation 4: 29 / 2948 (1.0%)
+  - Generation 6: 114 / 1995 (5.7%)
+  - Generation 7: 18 / 4426 (0.4%)
+  - Generation 8: 251 / 1244 (20.2%)
+  - Generation 9: 179 / 1265 (14.2%)
+  - Generation 10: 8 / 1268 (0.6%)
+
+[PER-GENERATION BREAKDOWNS]
+------------------------------
+
+Generation 0 (4 structures):
+  Compositions:
+    - Cr14Ti18V74W7Zr11: 2 / 120 (1.7%)
+    - Cr5Ti15V93W3Zr8: 1 / 791 (0.1%)
+    - Cr5Ti9V91W9Zr10: 1 / 1242 (0.1%)
+  Config Types:
+    - neb: 4 / 8017 (0.0%)
+
+Generation 1 (1 structures):
+  Compositions:
+    - Cr5V108Zr11: 1 / 19 (5.3%)
+  Config Types:
+    - comp-explore: 1 / 3609 (0.0%)
+
+Generation 2 (20 structures):
+  Compositions:
+    - Cr16Ti15V74W16Zr3: 10 / 2622 (0.4%)
+    - Cr12Ti2V82W15Zr13: 7 / 1115 (0.6%)
+    - Cr4Ti9V92W9Zr10: 2 / 184 (1.1%)
+    - Cr9Ti9V49W27Zr30: 1 / 970 (0.1%)
+  Config Types:
+    - vac_aa-mc: 11 / 2565 (0.4%)
+    - neb_aa-mc: 9 / 3592 (0.3%)
+
+Generation 3 (7 structures):
+  Compositions:
+    - V79Zr45: 6 / 22 (27.3%)
+    - V89Zr35: 1 / 18 (5.6%)
+  Config Types:
+    - comp-explore: 7 / 3609 (0.2%)
+
+Generation 4 (29 structures):
+  Compositions:
+    - Cr12Ti2V82W15Zr13: 26 / 1115 (2.3%)
+    - Cr5Ti9V91W9Zr10: 3 / 1242 (0.2%)
+  Config Types:
+    - vac_aa-mc: 27 / 2565 (1.1%)
+    - neb_aa-mc: 2 / 3592 (0.1%)
+
+Generation 6 (114 structures):
+  Compositions:
+    - W53: 47 / 230 (20.4%)
+    - W8: 25 / 97 (25.8%)
+    - W2: 20 / 240 (8.3%)
+    - W128: 10 / 97 (10.3%)
+    - W6: 6 / 96 (6.2%)
+    - W12: 4 / 184 (2.2%)
+    - W121: 1 / 32 (3.1%)
+    - W54: 1 / 120 (0.8%)
+  Config Types:
+    - vacancy-alloy: 47 / 2234 (2.1%)
+    - A15: 25 / 494 (5.1%)
+    - hcp: 20 / 413 (4.8%)
+    - liquid: 10 / 220 (4.5%)
+    - C15: 6 / 493 (1.2%)
+    - surface_111: 4 / 215 (1.9%)
+    - sia: 1 / 160 (0.6%)
+    - short_range: 1 / 470 (0.2%)
+
+Generation 7 (18 structures):
+  Compositions:
+    - Zr128: 9 / 100 (9.0%)
+    - Zr54: 3 / 159 (1.9%)
+    - Zr55: 2 / 20 (10.0%)
+    - Cr54: 1 / 157 (0.6%)
+    - Zr2: 1 / 515 (0.2%)
+    - Ti2: 1 / 515 (0.2%)
+    - Ti54: 1 / 148 (0.7%)
+  Config Types:
+    - short_range: 7 / 470 (1.5%)
+    - liquid: 7 / 220 (3.2%)
+    - surf_liquid: 2 / 96 (2.1%)
+    - bcc_distorted: 1 / 667 (0.1%)
+    - dimer: 1 / 70 (1.4%)
+
+Generation 8 (251 structures):
+  Compositions:
+    - Zr54: 48 / 159 (30.2%)
+    - W2: 40 / 240 (16.7%)
+    - Zr2: 39 / 515 (7.6%)
+    - W54: 38 / 120 (31.7%)
+    - Zr128: 17 / 100 (17.0%)
+    - Ti128: 16 / 78 (20.5%)
+    - W128: 13 / 97 (13.4%)
+    - Cr128: 6 / 63 (9.5%)
+    - V128: 5 / 108 (4.6%)
+    - Cr54: 4 / 157 (2.5%)
+    - TiW: 4 / 35 (11.4%)
+    - CrZr: 4 / 35 (11.4%)
+    - V2: 3 / 286 (1.0%)
+    - Ti2: 3 / 515 (0.6%)
+    - Ti54: 2 / 148 (1.4%)
+    - W55: 1 / 24 (4.2%)
+    - VZr: 1 / 35 (2.9%)
+    - CrW: 1 / 32 (3.1%)
+    - WZr: 1 / 35 (2.9%)
+    - Cr2: 1 / 510 (0.2%)
+    - TiV: 1 / 35 (2.9%)
+    - CrTi: 1 / 35 (2.9%)
+    - CrV: 1 / 33 (3.0%)
+    - VW: 1 / 35 (2.9%)
+  Config Types:
+    - elasticity: 151 / 504 (30.0%)
+    - liquid_aa: 57 / 249 (22.9%)
+    - short_range_dimer: 25 / 510 (4.9%)
+    - short_range_aa: 14 / 37 (37.8%)
+    - phonon_aa: 4 / 15 (26.7%)
+
+Generation 9 (179 structures):
+  Compositions:
+    - Cr16Ti15V74W16Zr3: 37 / 2622 (1.4%)
+    - Cr5Ti15V93W3Zr8: 19 / 791 (2.4%)
+    - Cr12Ti2V82W15Zr13: 16 / 1115 (1.4%)
+    - Cr10Ti14V87W2Zr11: 14 / 1025 (1.4%)
+    - Cr2Ti17V88W8Zr9: 14 / 158 (8.9%)
+    - Cr9Ti9V50W27Zr29: 11 / 222 (5.0%)
+    - Cr15Ti15V75W16Zr3: 9 / 154 (5.8%)
+    - CrTi2V101W19Zr: 8 / 62 (12.9%)
+    - Cr13Ti18V74W8Zr11: 8 / 798 (1.0%)
+    - V79Zr45: 7 / 22 (31.8%)
+    - Cr2Ti14V93W12Zr3: 6 / 709 (0.8%)
+    - Cr9Ti9V49W27Zr30: 6 / 970 (0.6%)
+    - Cr2Ti17V87W9Zr9: 6 / 844 (0.7%)
+    - Cr2Ti17V88W9Zr8: 5 / 538 (0.9%)
+    - Cr3Ti3V103W4Zr11: 4 / 53 (7.5%)
+    - Cr25Ti25V24W25Zr25: 4 / 96 (4.2%)
+    - Cr5Ti9V91W9Zr10: 3 / 1242 (0.2%)
+    - Ti2V106W14Zr2: 1 / 81 (1.2%)
+    - W128: 1 / 97 (1.0%)
+  Config Types:
+    - neb_aa-mc: 70 / 3592 (1.9%)
+    - vac_aa-mc: 66 / 2565 (2.6%)
+    - comp-explore_aa: 24 / 259 (9.3%)
+    - neb_aa: 18 / 674 (2.7%)
+    - liquid_aa: 1 / 249 (0.4%)
+
+Generation 10 (8 structures):
+  Compositions:
+    - CrTiV9W: 4 / 49 (8.2%)
+    - Cr2TiV9: 2 / 100 (2.0%)
+    - CrV11: 1 / 100 (1.0%)
+    - CrTi2V9: 1 / 100 (1.0%)
+  Config Types:
+    - surface_100_aa: 5 / 109 (4.6%)
+    - surface_111_aa: 2 / 116 (1.7%)
+    - surface_112_aa: 1 / 110 (0.9%)
+
+[OVERALL CONFIG_TYPE] Breakdown (631 structures):
+  - elasticity: 151 / 504 (30.0%)
+  - vac_aa-mc: 104 / 2565 (4.1%)
+  - neb_aa-mc: 81 / 3592 (2.3%)
+  - liquid_aa: 58 / 249 (23.3%)
+  - vacancy-alloy: 47 / 2234 (2.1%)
+  - A15: 25 / 494 (5.1%)
+  - short_range_dimer: 25 / 510 (4.9%)
+  - comp-explore_aa: 24 / 259 (9.3%)
+  - hcp: 20 / 413 (4.8%)
+  - neb_aa: 18 / 674 (2.7%)
+  - liquid: 17 / 220 (7.7%)
+  - short_range_aa: 14 / 37 (37.8%)
+  - comp-explore: 8 / 3609 (0.2%)
+  - short_range: 8 / 470 (1.7%)
+  - C15: 6 / 493 (1.2%)
+  - surface_100_aa: 5 / 109 (4.6%)
+  - neb: 4 / 8017 (0.0%)
+  - surface_111: 4 / 215 (1.9%)
+  - phonon_aa: 4 / 15 (26.7%)
+  - surf_liquid: 2 / 96 (2.1%)
+  - surface_111_aa: 2 / 116 (1.7%)
+  - sia: 1 / 160 (0.6%)
+  - bcc_distorted: 1 / 667 (0.1%)
+  - dimer: 1 / 70 (1.4%)
+  - surface_112_aa: 1 / 110 (0.9%)
+
+[OVERALL COMPOSITION] Breakdown (631 structures):
+  - W2: 60 / 240 (25.0%)
+  - Zr54: 51 / 159 (32.1%)
+  - Cr12Ti2V82W15Zr13: 49 / 1115 (4.4%)
+  - Cr16Ti15V74W16Zr3: 47 / 2622 (1.8%)
+  - W53: 47 / 230 (20.4%)
+  - Zr2: 40 / 515 (7.8%)
+  - W54: 39 / 120 (32.5%)
+  - Zr128: 26 / 100 (26.0%)
+  - W8: 25 / 97 (25.8%)
+  - W128: 24 / 97 (24.7%)
+  - Cr5Ti15V93W3Zr8: 20 / 791 (2.5%)
+  - Ti128: 16 / 78 (20.5%)
+  - Cr10Ti14V87W2Zr11: 14 / 1025 (1.4%)
+  - Cr2Ti17V88W8Zr9: 14 / 158 (8.9%)
+  - V79Zr45: 13 / 22 (59.1%)
+  - Cr9Ti9V50W27Zr29: 11 / 222 (5.0%)
+  - Cr15Ti15V75W16Zr3: 9 / 154 (5.8%)
+  - CrTi2V101W19Zr: 8 / 62 (12.9%)
+  - Cr13Ti18V74W8Zr11: 8 / 798 (1.0%)
+  - Cr5Ti9V91W9Zr10: 7 / 1242 (0.6%)
+  - Cr9Ti9V49W27Zr30: 7 / 970 (0.7%)
+  - W6: 6 / 96 (6.2%)
+  - Cr128: 6 / 63 (9.5%)
+  - Cr2Ti14V93W12Zr3: 6 / 709 (0.8%)
+  - Cr2Ti17V87W9Zr9: 6 / 844 (0.7%)
+  - Cr54: 5 / 157 (3.2%)
+  - V128: 5 / 108 (4.6%)
+  - Cr2Ti17V88W9Zr8: 5 / 538 (0.9%)
+  - W12: 4 / 184 (2.2%)
+  - Ti2: 4 / 515 (0.8%)
+  - TiW: 4 / 35 (11.4%)
+  - CrZr: 4 / 35 (11.4%)
+  - Cr3Ti3V103W4Zr11: 4 / 53 (7.5%)
+  - Cr25Ti25V24W25Zr25: 4 / 96 (4.2%)
+  - CrTiV9W: 4 / 49 (8.2%)
+  - Ti54: 3 / 148 (2.0%)
+  - V2: 3 / 286 (1.0%)
+  - Cr14Ti18V74W7Zr11: 2 / 120 (1.7%)
+  - Cr4Ti9V92W9Zr10: 2 / 184 (1.1%)
+  - Zr55: 2 / 20 (10.0%)
+  - Cr2TiV9: 2 / 100 (2.0%)
+  - Cr5V108Zr11: 1 / 19 (5.3%)
+  - W121: 1 / 32 (3.1%)
+  - W55: 1 / 24 (4.2%)
+  - VZr: 1 / 35 (2.9%)
+  - CrW: 1 / 32 (3.1%)
+  - WZr: 1 / 35 (2.9%)
+  - Cr2: 1 / 510 (0.2%)
+  - TiV: 1 / 35 (2.9%)
+  - CrTi: 1 / 35 (2.9%)
+  - CrV: 1 / 33 (3.0%)
+  - VW: 1 / 35 (2.9%)
+  - Ti2V106W14Zr2: 1 / 81 (1.2%)
+  - CrV11: 1 / 100 (1.0%)
+  - CrTi2V9: 1 / 100 (1.0%)
+  - V89Zr35: 1 / 18 (5.6%)
+
+[DATASET_SPLIT] Breakdown (631 structures):
+  - train: 514 / 22461 (2.3%)
+  - unknown: 63 / 4125 (1.5%)
+  - val: 54 / 2807 (1.9%)
+
+[REASONS] Breakdown (631 structures):
+  - high_ensemble_force_var: 284
+  - high_force_rmse: 253
+  - high_energy_rmse_per_atom: 253
+
+[NUM_ATOMS] Summary (631 structures):
+  - Min: 2
+  - Max: 128
+  - Mean: 76.4
+  - Most common:
+    124 atoms: 239 / 20435 (1.2%)
+    2 atoms: 123 / 2411 (5.1%)
+    54 atoms: 98 / 739 (13.3%)
+    128 atoms: 77 / 655 (11.8%)
+    53 atoms: 47 / 1249 (3.8%)
+    8 atoms: 25 / 574 (4.4%)
+    12 atoms: 12 / 1957 (0.6%)
+    6 atoms: 6 / 573 (1.0%)
+    55 atoms: 3 / 105 (2.9%)
+    121 atoms: 1 / 160 (0.6%)

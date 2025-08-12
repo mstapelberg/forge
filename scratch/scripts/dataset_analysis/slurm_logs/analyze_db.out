@@ -1,0 +1,13 @@
+[INFO] Loading packaged model: exploit_rmax5.50_lmax2_layers2_mlp256_seed42.nequip.zip
+[INFO] Cached model: exploit_rmax5.50_lmax2_layers2_mlp256_seed42.nequip.zip
+[INFO] Loading packaged model: exploit_rmax5.50_lmax2_layers2_mlp384_seed42.nequip.zip
+[INFO] Cached model: exploit_rmax5.50_lmax2_layers2_mlp384_seed42.nequip.zip
+[INFO] Loading packaged model: exploit_rmax5.75_lmax2_layers2_mlp256_seed42.nequip.zip
+[INFO] Cached model: exploit_rmax5.75_lmax2_layers2_mlp256_seed42.nequip.zip
+[INFO] Loading packaged model: exploit_rmax6.00_lmax2_layers2_mlp256_seed42.nequip.zip
+[INFO] Cached model: exploit_rmax6.00_lmax2_layers2_mlp256_seed42.nequip.zip
+[INFO] Loading packaged model: exploit_rmax6.00_lmax2_layers2_mlp384_seed42.nequip.zip
+[INFO] Cached model: exploit_rmax6.00_lmax2_layers2_mlp384_seed42.nequip.zip
+Successfully initialized AllegroBackend with 5 model(s)
+[INFO] Saved analysis CSVs and exclude lists to /home/myless/Packages/forge/scratch/data/dataset_analysis_output_gen_10
+[INFO] bad=0, rare=64

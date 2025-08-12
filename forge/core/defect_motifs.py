@@ -197,6 +197,9 @@ def _load_motif_template(motif_type, motif_path):
         if os.path.exists(filepath):
             try:
                 atoms = ase_read(filepath)
+                # Remove virial info from the atoms object
+                if 'virial' in atoms.info:
+                    del atoms.info['virial']
                 return atoms, len(atoms)
             except Exception as e:
                 print(f"Warning: Error reading template file {filepath} for {motif_type}: {e}")

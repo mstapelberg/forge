@@ -163,6 +163,7 @@ def ingest_new_static(
     db_config: Optional[str],
     do_skip_duplicates: bool,
     output_dir: Path,
+    keep_missing_parents: bool = False,
 ) -> None:
     """Pre-filter static jobs by geometry + duplicates, then add structures and calculations."""
     db = DatabaseManager(config_path=db_config) if db_config else DatabaseManager()
@@ -210,13 +211,72 @@ def ingest_new_static(
         print("[INFO] Nothing to add after filters.")
         return
 
+    # Validate parent IDs (drop invalid unless user explicitly keeps them)
+    removed_parent_map: Dict[str, int] = {}
+    if not keep_missing_parents:
+        # Collect candidate parent IDs
+        candidate_parent_ids = []
+        for it in kept_items:
+            pid = it["metadata"].get("parent_id")
+            try:
+                if pid is not None:
+                    candidate_parent_ids.append(int(pid))
+            except (TypeError, ValueError):
+                pass
+
+        valid_parent_ids: set[int] = set()
+        if candidate_parent_ids:
+            try:
+                with db.conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT structure_id FROM structures
+                        WHERE structure_id = ANY(%s)
+                        """,
+                        (candidate_parent_ids,),
+                    )
+                    valid_parent_ids = {row[0] for row in cur.fetchall()}
+            except Exception as e:
+                print(f"[WARN] Could not validate parent IDs due to DB error: {e}. Proceeding without validation.")
+                valid_parent_ids = set(candidate_parent_ids)  # Assume valid to avoid accidental drops
+
+        removed_count = 0
+        for it in kept_items:
+            original_parent = it["metadata"].get("parent_id")
+            if original_parent is None:
+                continue
+            try:
+                original_parent_int = int(original_parent)
+            except (TypeError, ValueError):
+                # Non-integer parent IDs are dropped
+                removed_parent_map[it.get("job_dir", "unknown")] = original_parent
+                it["metadata"]["original_parent_id"] = original_parent
+                it["metadata"].pop("parent_id", None)
+                removed_count += 1
+                continue
+
+            if original_parent_int not in valid_parent_ids:
+                removed_parent_map[it.get("job_dir", "unknown")] = original_parent_int
+                it["metadata"]["original_parent_id"] = original_parent_int
+                it["metadata"].pop("parent_id", None)
+                removed_count += 1
+
+        if removed_count > 0:
+            print(f"[INFO] Dropped {removed_count} invalid parent_id references (not found in DB).")
+
     # Prepare batch payloads
     for it in kept_items:
         it["metadata"]["generation"] = generation
         it["metadata"]["date_added_to_db"] = Path(".").resolve().as_posix()  # simple provenance; adjust if desired
 
     structures_to_add = [
-        {"atoms": it["atoms"], "source_type": "vasp-from-metadata", "parent_id": it["metadata"].get("parent_id"), "metadata": it["metadata"]}
+        {
+            "atoms": it["atoms"],
+            "source_type": "vasp-from-metadata",
+            # parent_id only if still present after validation
+            "parent_id": it["metadata"].get("parent_id"),
+            "metadata": it["metadata"],
+        }
         for it in kept_items
     ]
 
@@ -245,6 +305,13 @@ def ingest_new_static(
         print(f"[ERROR] Failed batch_add_calculations: {e}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    # If we removed any parent IDs, save a small audit file
+    if removed_parent_map:
+        try:
+            with open(output_dir / "removed_parent_ids.json", "w") as f:
+                json.dump(removed_parent_map, f, indent=2)
+        except Exception as e:
+            print(f"[WARN] Failed to write removed_parent_ids.json: {e}")
     with open(output_dir / "added_structure_ids.json", "w") as f:
         json.dump(new_structure_ids, f, indent=2)
     print(f"[INFO] Added {len(new_structure_ids)} structures. IDs saved to {output_dir/'added_structure_ids.json'}")
@@ -256,7 +323,16 @@ def main() -> None:
 
     ap_an = sub.add_parser("analyze-db", help="Analyze existing DB with an ensemble and export bad/rare IDs.")
     ap_an.add_argument("--generation", type=int, default=None, help="Filter by generation (omit to analyze all).")
-    ap_an.add_argument("--model", action="append", required=True, help="Path to Allegro/MACE model. Repeatable.")
+    ap_an.add_argument(
+        "--model",
+        action="append",
+        nargs="+",
+        required=True,
+        help=(
+            "Path(s) to Allegro/MACE model(s). Accepts multiple paths per flag (supports shell globs), "
+            "and the flag can be repeated."
+        ),
+    )
     ap_an.add_argument("--backend", type=str, default="allegro", help="Backend: allegro|mace|auto.")
     ap_an.add_argument("--device", type=str, default="cpu", help="Device: cpu|cuda.")
     ap_an.add_argument("--db-config", type=str, default=None, help="DB YAML (defaults to forge/config/database.yaml).")
@@ -271,12 +347,28 @@ def main() -> None:
     ap_in.add_argument("--db-config", type=str, default=None, help="DB YAML (defaults to forge/config/database.yaml).")
     ap_in.add_argument("--skip-duplicates", action="store_true", help="Skip duplicates vs existing DB.")
     ap_in.add_argument("--output-dir", type=str, default="ingest_output", help="Output directory.")
+    ap_in.add_argument(
+        "--keep-missing-parents",
+        action="store_true",
+        help=(
+            "If set, retain parent_id values that do not exist in the DB."
+            " By default, invalid parent_id entries are removed to avoid FK violations."
+        ),
+    )
 
     args = ap.parse_args()
     if args.cmd == "analyze-db":
+        # Flatten models list to support --model with multiple paths and repeated flags
+        flat_model_paths = []
+        for m in args.model:
+            if isinstance(m, (list, tuple)):
+                flat_model_paths.extend(m)
+            else:
+                flat_model_paths.append(m)
+
         analyze_db(
             generation=args.generation,
-            model_paths=args.model,
+            model_paths=flat_model_paths,
             backend=args.backend,
             device=args.device,
             db_config=args.db_config,
@@ -292,6 +384,7 @@ def main() -> None:
             db_config=args.db_config,
             do_skip_duplicates=args.skip_duplicates,
             output_dir=Path(args.output_dir).resolve(),
+            keep_missing_parents=args.keep_missing_parents,
         )
 
 

@@ -226,7 +226,7 @@ def main() -> None:
             if removed > 0:
                 logger.info(f"Removed {removed} high-loss IDs from the fixed test set.")
 
-    experiment_name = "allegro-exploit-gen-10-qfilter"
+    experiment_name = "allegro-exploit-gen-10-production"
     base_dir = Path(f"../data/allegro_experiments/{experiment_name}")
 
     # Define base loss configurations
@@ -241,9 +241,9 @@ def main() -> None:
         {
             "phase": "exploit",
             "r_max": 5.50,
-            "l_max": 1, # [1,2],
-            "num_layers": 1, # [2,3],
-            "mlp_width": 256,
+            "l_max": [1,2], # [1,2],
+            "num_layers": [1,2], # [2,3],
+            "mlp_width": 256, # [256,512],
             "loss_coeffs": tail_huber_delta1_loss,
         }
     ]
@@ -265,7 +265,8 @@ def main() -> None:
             seed = 42
 
             # Vary q-folder filtering while keeping seed and test set fixed
-            q_folders: List[str] = ["q-95", "q-97.5", "q-99", "q-99.5"]
+            #q_folders: List[str] = ["q-95", "q-97.5", "q-99", "q-99.5"]
+            q_folders: List[str] = ["q-97.5"]
             q_base_dir = Path("/home/myless/Packages/forge/scratch/data/ensemble_stats_runs/run_20250812_101647_merged_results")
 
             for q_label in q_folders:
@@ -322,7 +323,6 @@ def main() -> None:
                 # Persist per-job excluded IDs with reasons next to the job folder
                 try:
                     job_excluded_ids = sorted(list(unified_exclude))
-                    # Build reason map
                     reason_map = defaultdict(set)
                     for sid in bad_ids_set:
                         reason_map[int(sid)].add('global_bad')
@@ -335,7 +335,6 @@ def main() -> None:
                     for sid in q_bad_ids:
                         reason_map[int(sid)].add(f'q_filter_{q_label}')
 
-                    # JSON with reasons and sources
                     detailed = {
                         "reason_sources": {
                             "global_bad": [str(p) for p in bad_id_files],
@@ -354,7 +353,6 @@ def main() -> None:
                         json.dump(job_excluded_ids, f, indent=2)
                     with (job_dir / 'filtered_out_ids_with_reasons.json').open('w') as f:
                         json.dump(detailed, f, indent=2)
-                    # Also write a compact CSV
                     try:
                         import csv as _csv
                         with (job_dir / 'filtered_out_ids_with_reasons.csv').open('w', newline='') as fcsv:
@@ -369,6 +367,40 @@ def main() -> None:
                     logger.warning(f"Failed to save per-job filtered IDs for {job_name}: {e_save}")
 
                 run_and_summarize(job_dir, **params)
+
+    # Also save the global union list and reasons at the experiment root
+    try:
+        union_excluded = sorted(list(set(bad_ids_set) | extra_excluded_ids))
+        filtered_out_ids_path = base_dir / 'filtered_out_ids.json'
+        with filtered_out_ids_path.open('w') as f:
+            json.dump(union_excluded, f, indent=2)
+
+        # Build a compact reasons map without q_filter since q is per-job
+        global_reason_map = defaultdict(set)
+        for sid in bad_ids_set:
+            global_reason_map[int(sid)].add('global_bad')
+        for sid in csv_val_ids:
+            global_reason_map[int(sid)].add('csv_val_gt20')
+        for sid in csv_test_ids:
+            global_reason_map[int(sid)].add('csv_test_gt100')
+        for sid in csv_train_ids:
+            global_reason_map[int(sid)].add('csv_train_gt20')
+
+        with (base_dir / 'filtered_out_ids_with_reasons.json').open('w') as f:
+            json.dump({
+                "reason_sources": {
+                    "global_bad": [str(p) for p in bad_id_files],
+                    "csv_val_gt20": str(val_csv),
+                    "csv_test_gt100": str(test_csv),
+                    "csv_train_gt20": str(train_csv),
+                },
+                "excluded": [
+                    {"structure_id": int(sid), "reasons": sorted(list(global_reason_map.get(int(sid), set())))}
+                    for sid in union_excluded
+                ],
+            }, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save global filtered_out_ids with reasons: {e}")
 
 if __name__ == "__main__":
     main() 

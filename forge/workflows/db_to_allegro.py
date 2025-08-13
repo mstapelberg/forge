@@ -244,6 +244,10 @@ def _prepare_data_for_allegro(
             logger.info(f"Using {len(test_structure_ids)} explicitly provided structures for Test set.")
             # Save the fixed test set and remove from pool
             _save_structures_to_xyz(db_manager, test_structure_ids, job_data_dir / f"{job_name}_test.xyz")
+            try:
+                _replace_properties(job_data_dir / f"{job_name}_test.xyz")
+            except Exception as e:
+                logger.warning(f"Failed to convert test properties to REF_* for {job_name}: {e}")
             final_ids = [sid for sid in final_ids if sid not in set(test_structure_ids)]
             logger.info(
                 "Fixed test IDs provided: overriding automatic test split to 0. "
@@ -273,6 +277,10 @@ def _prepare_data_for_allegro(
         if test_structure_ids:
             # Ensure fixed test file contents are preserved even if the splitter wrote a small test set
             _save_structures_to_xyz(db_manager, test_structure_ids, job_data_dir / f"{job_name}_test.xyz")
+            try:
+                _replace_properties(job_data_dir / f"{job_name}_test.xyz")
+            except Exception as e:
+                logger.warning(f"Failed to convert test properties to REF_* for {job_name}: {e}")
             structure_splits["test"] = list(test_structure_ids)
             logger.info(
                 f"Finalized fixed test set with {len(test_structure_ids)} structures and overwrote any auto-written test file."

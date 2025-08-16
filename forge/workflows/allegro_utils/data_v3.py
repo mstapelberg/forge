@@ -1,11 +1,14 @@
 """V3 implementation that creates indices before dataset distribution."""
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Sequence
 import logging
 import torch
 from torch.utils.data import DataLoader, Sampler
 from hydra.utils import instantiate
 from nequip.data.datamodule import ASEDataModule
+from nequip.data import register_fields
+
+from .config_aware_stress import normalize_config_type, section_of, section_to_id
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,10 @@ class CustomSamplingASEDataModuleV3(ASEDataModule):
         # Store config
         self._sampler_config = sampler_config
         self._precomputed_indices = None
+        # Capture file paths for wrapper use
+        self._train_file_path = kwargs.get("train_file_path")
+        self._val_file_paths = kwargs.get("val_file_path")
+        self._test_file_path = kwargs.get("test_file_path")
         
         # If sampler config is provided, precompute indices
         if sampler_config is not None:
@@ -42,6 +49,12 @@ class CustomSamplingASEDataModuleV3(ASEDataModule):
         
         # Call parent
         super().__init__(**kwargs)
+        # Ensure our custom long graph field is registered
+        try:
+            register_fields(graph_fields=["section_id"], long_fields=["section_id"])
+        except Exception:
+            # Safe if already registered
+            pass
     
     def _precompute_indices(self, train_file_path: str, sampler_config: Dict[str, Any]):
         """Precompute sampling indices based on the training file."""
@@ -87,74 +100,140 @@ class CustomSamplingASEDataModuleV3(ASEDataModule):
             self._precomputed_indices = None
     
     def train_dataloader(self) -> DataLoader:
-        """Create training dataloader with precomputed indices."""
+        """Create training dataloader and inject section_id at collate time."""
         # Get base dataloader
-        dataloader = super().train_dataloader()
-        
-        # If we have precomputed indices, replace the sampler
-        if self._precomputed_indices is not None:
-            logger.info(f"Creating dataloader with precomputed {len(self._precomputed_indices)} indices")
-            
-            # Check if distributed
-            is_distributed = hasattr(dataloader.sampler, '__class__') and \
-                           'DistributedSampler' in dataloader.sampler.__class__.__name__
-            
-            if is_distributed:
-                # Use PyTorch's DistributedSampler on our indices
-                from torch.utils.data.distributed import DistributedSampler
-                
-                # Create a dummy dataset with our indices length
-                class IndicesDataset:
-                    def __init__(self, indices):
-                        self.indices = indices
-                    def __len__(self):
-                        return len(self.indices)
-                    def __getitem__(self, idx):
-                        return self.indices[idx]
-                
-                indices_dataset = IndicesDataset(self._precomputed_indices)
-                
-                # Get distributed params from original sampler
-                orig = dataloader.sampler
-                dist_sampler = DistributedSampler(
-                    indices_dataset,
-                    num_replicas=getattr(orig, 'num_replicas', None),
-                    rank=getattr(orig, 'rank', None),
-                    shuffle=False,  # We already shuffled
-                    seed=getattr(orig, 'seed', 0)
-                )
-                
-                # Create a sampler that maps distributed indices back to dataset indices
-                class MappedDistributedSampler(Sampler):
-                    def __init__(self, dist_sampler, indices_dataset):
-                        self.dist_sampler = dist_sampler
-                        self.indices_dataset = indices_dataset
-                    
-                    def __iter__(self):
-                        for idx in self.dist_sampler:
-                            yield self.indices_dataset[idx]
-                    
-                    def __len__(self):
-                        return len(self.dist_sampler)
-                
-                final_sampler = MappedDistributedSampler(dist_sampler, indices_dataset)
-                logger.info(f"Created distributed sampler with {len(final_sampler)} samples per rank")
-            else:
-                # Use simple sampler with our precomputed indices
-                final_sampler = PrecomputedIndicesSampler(self._precomputed_indices)
-            
-            # Recreate dataloader
+        base_dl = super().train_dataloader()
+
+        # Prepare index-returning dataset
+        index_ds = _IndexDatasetWrapper(base_dl.dataset)
+
+        # Collate wrapper that adds section_id based on precomputed ids
+        section_ids = getattr(self, "_section_ids_train", None)
+        collate_fn = _CollateWithSection(base_dl.collate_fn, section_ids)
+
+        # Recreate dataloader with same params
+        dl_params = {
+            'dataset': index_ds,
+            'batch_size': base_dl.batch_size,
+            'sampler': base_dl.sampler,
+            'num_workers': base_dl.num_workers,
+            'collate_fn': collate_fn,
+            'pin_memory': base_dl.pin_memory,
+            'drop_last': base_dl.drop_last,
+            'shuffle': False,
+        }
+        return DataLoader(**dl_params)
+
+    def val_dataloader(self) -> DataLoader:
+        """Create validation dataloader and inject section_id at collate time."""
+        base_dl = super().val_dataloader()
+        section_ids = getattr(self, "_section_ids_val", None)
+        def _wrap(dl: DataLoader) -> DataLoader:
+            index_ds = _IndexDatasetWrapper(dl.dataset)
+            collate_fn = _CollateWithSection(dl.collate_fn, section_ids)
             dl_params = {
-                'dataset': dataloader.dataset,
-                'batch_size': dataloader.batch_size,
-                'sampler': final_sampler,
-                'num_workers': dataloader.num_workers,
-                'collate_fn': dataloader.collate_fn,
-                'pin_memory': dataloader.pin_memory,
-                'drop_last': dataloader.drop_last,
+                'dataset': index_ds,
+                'batch_size': dl.batch_size,
+                'sampler': dl.sampler,
+                'num_workers': dl.num_workers,
+                'collate_fn': collate_fn,
+                'pin_memory': dl.pin_memory,
+                'drop_last': dl.drop_last,
                 'shuffle': False,
             }
-            dataloader = DataLoader(**dl_params)
-            logger.info(f"Created dataloader with {len(dataloader)} batches")
-        
-        return dataloader 
+            return DataLoader(**dl_params)
+        if isinstance(base_dl, (list, tuple)):
+            return type(base_dl)(_wrap(d) for d in base_dl)
+        return _wrap(base_dl)
+
+    def test_dataloader(self) -> DataLoader:
+        """Create test dataloader and inject section_id at collate time."""
+        base_dl = super().test_dataloader()
+        section_ids = getattr(self, "_section_ids_test", None)
+        def _wrap(dl: DataLoader) -> DataLoader:
+            index_ds = _IndexDatasetWrapper(dl.dataset)
+            collate_fn = _CollateWithSection(dl.collate_fn, section_ids)
+            dl_params = {
+                'dataset': index_ds,
+                'batch_size': dl.batch_size,
+                'sampler': dl.sampler,
+                'num_workers': dl.num_workers,
+                'collate_fn': collate_fn,
+                'pin_memory': dl.pin_memory,
+                'drop_last': dl.drop_last,
+                'shuffle': False,
+            }
+            return DataLoader(**dl_params)
+        if isinstance(base_dl, (list, tuple)):
+            return type(base_dl)(_wrap(d) for d in base_dl)
+        return _wrap(base_dl)
+
+    # === Hook into dataset creation to inject section ids ===
+    def setup(self, stage: Optional[str] = None) -> None:
+        super().setup(stage=stage)
+        # Precompute section ids per split from extxyz
+        try:
+            self._section_ids_train = _compute_section_ids_from_file(self._train_file_path)
+        except Exception:
+            self._section_ids_train = None
+        try:
+            # val may be a list; use first file's mapping length as heuristic
+            if isinstance(self._val_file_paths, (list, tuple)) and len(self._val_file_paths) > 0:
+                self._section_ids_val = _compute_section_ids_from_file(self._val_file_paths[0])
+            else:
+                self._section_ids_val = _compute_section_ids_from_file(self._val_file_paths)
+        except Exception:
+            self._section_ids_val = None
+        try:
+            self._section_ids_test = _compute_section_ids_from_file(self._test_file_path)
+        except Exception:
+            self._section_ids_test = None
+
+
+class _IndexDatasetWrapper:
+    """Wrap dataset to also return the index along with the item."""
+    def __init__(self, base_dataset):
+        self.base = base_dataset
+    def __len__(self):
+        return len(self.base)
+    def __getitem__(self, idx):
+        item = self.base[idx]
+        return item, int(idx)
+
+
+class _CollateWithSection:
+    """Collate wrapper that adds `section_id` based on provided id list.
+
+    If `section_ids` is None or too short, falls back to zeros.
+    """
+    def __init__(self, base_collate, section_ids: Optional[List[int]]):
+        self.base_collate = base_collate
+        self.section_ids = section_ids
+
+    def __call__(self, samples):
+        # samples is a list of (item, idx)
+        items, indices = zip(*samples)
+        batch = self.base_collate(items)
+        if self.section_ids is not None:
+            sid_list = [self.section_ids[i] if i < len(self.section_ids) else 8 for i in indices]
+        else:
+            sid_list = [8 for _ in indices]  # map to "Other"
+        batch["section_id"] = torch.tensor(sid_list, dtype=torch.long)
+        return batch
+
+
+def _compute_section_ids_from_file(file_path: Optional[str]) -> Optional[List[int]]:
+    if not file_path:
+        return None
+    try:
+        import ase.io
+        atoms_list = ase.io.read(file_path, index=":")
+        ids: List[int] = []
+        for atoms in atoms_list:
+            raw = atoms.info.get("config_type")
+            ct = normalize_config_type(raw)
+            sec = section_of(ct)
+            ids.append(section_to_id(sec))
+        return ids
+    except Exception:
+        return None

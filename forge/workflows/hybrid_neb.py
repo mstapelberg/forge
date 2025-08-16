@@ -63,7 +63,7 @@ class HybridNEBWorkflow:
         seed: int = 42,
         output_dir: str = "hybrid_neb_results",
         backend: Optional[str] = None,
-        species_to_type_name: Optional[Dict[str, int]] = None
+        chemical_symbols: Optional[Dict[str, str]] = None
     ):
         """
         Initialize the hybrid NEB workflow.
@@ -74,7 +74,7 @@ class HybridNEBWorkflow:
             seed: Random seed for reproducibility
             output_dir: Directory to save results
             backend: Calculator backend ('mace', 'allegro', or None for auto-detect)
-            species_to_type_name: Species mapping for Allegro calculators
+            chemical_symbols: Species mapping for Allegro calculators
         """
         self.model_path = model_path
         self.device = device
@@ -82,7 +82,7 @@ class HybridNEBWorkflow:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.backend = backend
-        self.species_to_type_name = species_to_type_name or {}
+        self.chemical_symbols = chemical_symbols or {}
         
         # Set random seeds for reproducibility
         random.seed(seed)
@@ -117,7 +117,7 @@ class HybridNEBWorkflow:
                 model_paths=self.model_path,
                 backend=self.backend,
                 device=self.device,
-                species_to_type_name=self.species_to_type_name
+                chemical_symbols=self.chemical_symbols
             )
             print(f"Successfully initialized {type(self.ensemble_calculator).__name__} calculator")
         except Exception as e:
@@ -125,11 +125,11 @@ class HybridNEBWorkflow:
             print(f"Model path: {self.model_path}")
             print(f"Backend: {self.backend}")
             print(f"Device: {self.device}")
-            print(f"Species mapping: {self.species_to_type_name}")
+            print(f"Species mapping: {self.chemical_symbols}")
             print("\nTroubleshooting tips:")
             print("1. Check if the model file exists and is accessible")
             print("2. Verify the model file format (.zip, .nequip.zip, or .pt2)")
-            print("3. Ensure the species_to_type_name mapping is correct")
+            print("3. Ensure the chemical_symbols mapping is correct")
             print("4. Check if the required packages (nequip, mace) are installed")
             self.ensemble_calculator = None
     
@@ -531,7 +531,7 @@ class HybridNEBWorkflow:
                 nnn_cutoff=3.2,
                 seed=self.seed + i,
                 backend=self.backend,
-                species_to_type_name=self.species_to_type_name
+                chemical_symbols=self.chemical_symbols
             )
             
             # Run multiple NEB calculations
@@ -806,7 +806,7 @@ def main():
         seed=seed,
         output_dir=output_dir,
         backend=None,  # Auto-detect based on model file
-        species_to_type_name={'V': 0, 'Cr': 1, 'Ti': 2, 'W': 3, 'Zr': 4}
+        chemical_symbols={'V': 'V', 'Cr': 'Cr', 'Ti': 'Ti', 'W': 'W', 'Zr': 'Zr'}
     )
     
     # Run full workflow

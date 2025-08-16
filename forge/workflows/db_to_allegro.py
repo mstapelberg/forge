@@ -49,6 +49,10 @@ METRIC_MAP = {
     "stress_angle": "forge.workflows.allegro_utils.custom_metrics.StressAngleLoss",
     "virial_mse": "forge.workflows.allegro_utils.custom_metrics.VirialMSE",
     "auto_stratified_huber": "forge.workflows.allegro_utils.custom_metrics.AutoStratifiedHuberLoss",
+    # Config-aware stress metrics
+    "cfgaware_stress_huber": "forge.workflows.allegro_utils.config_aware_metrics.ConfigAwareStressHuber",
+    "pressure_mae": "forge.workflows.allegro_utils.config_aware_metrics.PressureMAE",
+    "von_mises_mae": "forge.workflows.allegro_utils.config_aware_metrics.VonMisesMAE",
 }
 
 def _extract_chemical_symbols(
@@ -360,6 +364,10 @@ def _build_loss_metrics(loss_coeffs: Dict[str, Any]) -> List[Dict[str, Any]]:
             "metric": {"_target_": metric_target, **metric_params},
             "coeff": coeff,
         }
+        # Pass through optional extra_inputs (for metrics that require aux data like config_type)
+        extra_inputs = config.get("extra_inputs")
+        if extra_inputs is not None:
+            metric_spec["extra_inputs"] = extra_inputs
         metrics.append(metric_spec)
         
     return metrics
@@ -544,7 +552,8 @@ def _build_allegro_config(
     config['data']['transforms'][1]['chemical_symbols'] = chemical_symbols
     config['training_module']['model']['pair_potential']['chemical_species'] = chemical_symbols
     
-    # Update data paths
+    # Update data paths and ensure we use the V3 datamodule for section-aware routing
+    config['data']['_target_'] = "forge.workflows.allegro_utils.data_v3.CustomSamplingASEDataModuleV3"
     config['data']['train_file_path'] = data_paths["train_path"]
     config['data']['val_file_path'] = data_paths["val_path"]
     config['data']['test_file_path'] = data_paths["test_path"]
@@ -573,13 +582,18 @@ def _build_allegro_config(
         config['trainer']['logger']['name'] = job_name
 
     loss_metrics = _build_loss_metrics(kwargs['loss_coeffs'])
-    config['training_module']['loss'] = {"_target_": "nequip.train.MetricsManager", "metrics": loss_metrics}
+    # Use config-aware manager automatically if any metric requests extra_inputs
+    use_cfgaware_loss_mgr = any((isinstance(m, dict) and bool(m.get("extra_inputs"))) for m in loss_metrics)
+    loss_mgr_target = "forge.workflows.allegro_utils.config_aware_manager.ConfigAwareMetricsManager" if use_cfgaware_loss_mgr else "nequip.train.MetricsManager"
+    config['training_module']['loss'] = {"_target_": loss_mgr_target, "metrics": loss_metrics}
 
     val_metrics = _build_validation_metrics(
         kwargs.get('include_default_val_metrics', True),
         kwargs.get('extra_val_metrics')
     )
-    config['training_module']['val_metrics'] = {"_target_": "nequip.train.MetricsManager", "metrics": val_metrics}
+    use_cfgaware_val_mgr = any((isinstance(m, dict) and bool(m.get("extra_inputs"))) for m in val_metrics)
+    val_mgr_target = "forge.workflows.allegro_utils.config_aware_manager.ConfigAwareMetricsManager" if use_cfgaware_val_mgr else "nequip.train.MetricsManager"
+    config['training_module']['val_metrics'] = {"_target_": val_mgr_target, "metrics": val_metrics}
     
     config['data']['train_dataloader'] = {
         "_target_": "torch.utils.data.DataLoader",
@@ -598,6 +612,9 @@ def _build_allegro_config(
             "_target_": sampler_target,
             **(kwargs.get('sampler_params') or {})
         }
+    else:
+        # Ensure section_id routing even without a sampler
+        config['data']['_target_'] = "forge.workflows.allegro_utils.data_v3.CustomSamplingASEDataModuleV3"
     
     _update_trainer_callbacks(
         config, job_name, kwargs['checkpoint_monitor_key'], 

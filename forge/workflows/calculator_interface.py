@@ -60,7 +60,7 @@ class UnifiedCalculator:
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         default_dtype: str = "float32",
         use_cueq: bool = False,
-        species_to_type_name: Optional[Dict[str, int]] = None,
+        chemical_symbols: Optional[Dict[str, str]] = None,
         **kwargs
     ):
         """
@@ -74,7 +74,7 @@ class UnifiedCalculator:
             device: Device to run calculations on
             default_dtype: Default data type for calculations
             use_cueq: Whether to use CUEQ (MACE only)
-            species_to_type_name: Species mapping for Allegro
+            chemical_symbols: Species mapping for Allegro
             **kwargs: Additional arguments passed to the underlying calculator
         """
         warnings.warn(
@@ -87,7 +87,7 @@ class UnifiedCalculator:
         self.device = device
         self.default_dtype = default_dtype
         self.use_cueq = use_cueq
-        self.species_to_type_name = species_to_type_name or {}
+        self.chemical_symbols = chemical_symbols or {}
         self.kwargs = kwargs
         
         # Auto-detect calculator type if not specified
@@ -145,7 +145,7 @@ class UnifiedCalculator:
                 # Packaged model format
                 return NequIPCalculator._from_packaged_model(
                     package_path=model_path,
-                    chemical_symbols=self.species_to_type_name,  # Use chemical_symbols for NequIP
+                    chemical_symbols=self.chemical_symbols,
                     device=self.device,
                     **self.kwargs
                 )
@@ -153,7 +153,7 @@ class UnifiedCalculator:
                 # Compiled model format
                 return NequIPCalculator.from_compiled_model(
                     compile_path=model_path,
-                    chemical_symbols=self.species_to_type_name,  # Use chemical_symbols for NequIP
+                    chemical_symbols=self.chemical_symbols,
                     device=self.device,
                     **self.kwargs
                 )

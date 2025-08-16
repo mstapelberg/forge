@@ -54,7 +54,7 @@ class NEBCalculation:
         use_cueq: bool = False,
         logfile: Optional[str] = '-',  # Add logfile parameter
         calculator_type: Optional[str] = None,
-        species_to_type_name: Optional[Dict[str, int]] = None
+        chemical_symbols: Optional[Dict[str, str]] = None
     ):
         """
         Initialize NEB calculation.
@@ -75,7 +75,7 @@ class NEBCalculation:
             use_cueq: Whether to use CUEQ (MACE only)
             logfile: File for logging output (None=no output, '-'=stdout)
             calculator_type: Type of calculator ('mace', 'allegro', or None for auto-detect)
-            species_to_type_name: Species mapping for Allegro
+            chemical_symbols: Species mapping for Allegro
         """
         self.start_atoms = start_atoms
         self.end_atoms = end_atoms
@@ -92,7 +92,7 @@ class NEBCalculation:
         self.use_cueq = use_cueq
         self.logfile = logfile
         self.calculator_type = calculator_type
-        self.species_to_type_name = species_to_type_name or {}
+        self.chemical_symbols = chemical_symbols or {}
         np.random.seed(self.seed)  # Set seed for reproducibility
 
     def _create_calculator(self):
@@ -101,7 +101,7 @@ class NEBCalculation:
             model_paths=self.model_path,
             backend=self.calculator_type,
             device=self.device,
-            species_to_type_name=self.species_to_type_name
+            chemical_symbols=self.chemical_symbols
         )
 
     def run(self) -> NEBResult:
@@ -602,7 +602,7 @@ class VacancyDiffusion:
         nnn_cutoff: float = 3.2,
         seed: int = 42,
         backend: Optional[str] = None,
-        species_to_type_name: Optional[Dict[str, int]] = None,
+        chemical_symbols: Optional[Dict[str, int]] = None,
     ):
         """
         Initialize vacancy diffusion workflow.
@@ -614,7 +614,7 @@ class VacancyDiffusion:
             nnn_cutoff: Cutoff radius for next-nearest neighbors
             seed: Random seed for reproducibility
             backend: Calculator backend ('mace', 'allegro', or None for auto-detect)
-            species_to_type_name: Species mapping for Allegro
+            chemical_symbols: Species mapping for Allegro
         """
         self.atoms = atoms.copy()
         self.model_path = model_path
@@ -622,7 +622,7 @@ class VacancyDiffusion:
         self.nnn_cutoff = nnn_cutoff
         self.seed = seed
         self.backend = backend
-        self.species_to_type_name = species_to_type_name or {}
+        self.chemical_symbols = chemical_symbols or {}
         self.analyzer = NEBAnalyzer()
         
         # Set random seed
@@ -755,14 +755,14 @@ class VacancyDiffusion:
             model_paths=self.model_path, 
             backend=self.backend,
             device=device, 
-            species_to_type_name=self.species_to_type_name
+            chemical_symbols=self.chemical_symbols
         )
 
         end_calculator = create_ensemble_calculator(
             model_paths=self.model_path, 
             backend=self.backend,
             device=device, 
-            species_to_type_name=self.species_to_type_name
+            chemical_symbols=self.chemical_symbols
         )
 
         rel_start_atoms = relax(
@@ -982,7 +982,7 @@ class VacancyDiffusion:
                 device=device,
                 logfile=logfile,  # Pass logfile parameter
                 calculator_type=self.backend,  # Pass backend type
-                species_to_type_name=self.species_to_type_name  # Pass species mapping
+                chemical_symbols=self.chemical_symbols  # Pass species mapping
             )
             result = neb_calc.run()
             

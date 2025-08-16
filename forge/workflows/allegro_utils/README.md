@@ -11,6 +11,19 @@ The module includes:
 - **Metrics**: Additional validation metrics like tail MSE
 - **Callbacks**: Training callbacks for curriculum learning and gradient monitoring
 
+## Units policy for stress metrics/losses
+
+Many datasets store virial stress in eV/Å^3, while physics-based thresholds and reporting are often in GPa. To ensure numerical stability and fair comparisons to legacy baselines:
+
+- Internally, config-aware stress metrics compute in the GPa domain.
+- By default, the returned per-sample loss values are converted back to match the input units (eV/Å^3 if inputs are eV/Å^3). This keeps your existing stress loss coefficients meaningful.
+- You can control this behavior via `loss_return_units` in `ConfigAwareStressHuber`:
+  - `match_inputs` (default): return loss in the same units as inputs
+  - `eVa3`: force return in eV/Å^3
+  - `GPa`: force return in GPa
+
+Additionally, `PressureMAE` and `VonMisesMAE` expose differentiable per-batch values (`last_batch_value`) so they can optionally be included in the optimized loss by setting a non-zero `coeff` in the metrics manager.
+
 ## Key Components
 
 ### 1. Data Module (`data_v3.py`)

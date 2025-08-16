@@ -127,6 +127,8 @@ class TailHuberLoss(_MeanX):
 
         if self.auto_delta:
             self.add_state("last_delta", default=torch.tensor(self.delta), dist_reduce_fx="mean")
+        # Expose per-batch differentiable values for training loss assembly
+        self.last_batch_value: Optional[torch.Tensor] = None
 
     def update(self, pred: torch.Tensor, target: torch.Tensor) -> None:
         """Update state with predictions and targets for a single batch.
@@ -139,18 +141,26 @@ class TailHuberLoss(_MeanX):
             target (torch.Tensor): The ground truth tensor.
         """
         if pred.numel() == 0:
-            return # Do not update if the batch is empty
+            # Differentiable zero tied to pred so grads can flow (as zero)
+            self.last_batch_value = (pred - pred).sum(dim=-1)
+            super().update(self.last_batch_value)
+            return
             
         err = pred - target
         err_norm = torch.linalg.norm(err, dim=-1)
 
         if err_norm.numel() == 0:
+            self.last_batch_value = (pred - pred).sum(dim=-1)
+            super().update(self.last_batch_value)
             return
 
         threshold = torch.quantile(err_norm.to(torch.float32), self.quantile).to(err_norm.device)
         tail_mask = err_norm >= threshold
 
         if not torch.any(tail_mask):
+            # No tail selected; expose differentiable zero tied to pred
+            self.last_batch_value = (pred - pred).sum(dim=-1)
+            super().update(self.last_batch_value)
             return
 
         tail_preds = pred[tail_mask]
@@ -165,6 +175,8 @@ class TailHuberLoss(_MeanX):
             current_delta = self.last_delta.item()
 
         huber_losses = F.huber_loss(tail_preds, tail_targets, delta=current_delta, reduction='none')
+        # Cache differentiable batch values for loss assembly
+        self.last_batch_value = huber_losses
         super().update(huber_losses)
 
 class FocalMSELoss(_MeanX):

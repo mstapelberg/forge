@@ -51,6 +51,15 @@ class AllegroBackend(BaseEnsembleCalculator):
         self._device = device
         # Control whether to enable autograd during model forward (default: False for speed)
         self._enable_gradients = bool(kwargs.pop('enable_gradients', False))
+        # Normalize species mapping: support legacy 'species_to_type_name'
+        if 'chemical_symbols' not in kwargs and 'species_to_type_name' in kwargs:
+            legacy = kwargs.pop('species_to_type_name')
+            # Convert legacy mapping to dict[symbol -> symbol]
+            if isinstance(legacy, dict):
+                kwargs['chemical_symbols'] = {str(sym): str(sym) for sym in legacy.keys()}
+            else:
+                # Accept list[str] already provided
+                kwargs['chemical_symbols'] = legacy
         self._kwargs = kwargs  # Store remaining kwargs for passing to calculators
         self._atoms = None  # Store attached atoms for ASE interface
         
@@ -94,7 +103,7 @@ class AllegroBackend(BaseEnsembleCalculator):
                         calc = NequIPCalculator.from_compiled_model(
                             model_path, 
                             device=device,
-                            chemical_symbols=kwargs.get('species_to_type_name', None),
+                            chemical_symbols=kwargs.get('chemical_symbols', None),
                             **kwargs  # Pass kwargs like default_dtype
                         )
                         
@@ -120,7 +129,7 @@ class AllegroBackend(BaseEnsembleCalculator):
                         calc = NequIPCalculator._from_packaged_model(
                             model_path,
                             device=device,
-                            chemical_symbols=kwargs.get('species_to_type_name', None),
+                            chemical_symbols=kwargs.get('chemical_symbols', None),
                             **kwargs  # Pass kwargs like default_dtype
                         )
                         

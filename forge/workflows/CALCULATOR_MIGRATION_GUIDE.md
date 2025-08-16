@@ -32,7 +32,7 @@ calc = create_calculator(
     model_path='path/to/model.nequip.zip',
     calculator_type='allegro',
     device='cuda',
-    species_to_type_name={'Ti': 'Ti', 'V': 'V'}
+    chemical_symbols={'Ti': 'Ti', 'V': 'V'}
 )
 ```
 
@@ -52,7 +52,7 @@ calc = create_ensemble_calculator(
     model_paths='path/to/model.nequip.zip',
     backend='allegro',
     device='cuda',
-    species_to_type_name={'Ti': 'Ti', 'V': 'V'}
+    chemical_symbols={'Ti': 'Ti', 'V': 'V'}
 )
 ```
 

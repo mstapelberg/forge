@@ -135,13 +135,14 @@ def _create_native_nequip_calculator(model_path: str, device: str, **kwargs) -> 
     """
     from nequip.ase import NequIPCalculator
     
-    # Handle species_to_type_name: convert dict {'V':0, 'Cr':1, ...} to sorted list ['V', 'Cr', ...]
-    species_to_type_name = kwargs.pop('species_to_type_name', None)
-    if isinstance(species_to_type_name, dict):
-        # Sort by type index (value) to get correct order
-        chemical_symbols = [elem for elem, idx in sorted(species_to_type_name.items(), key=lambda x: x[1])]
-    else:
-        chemical_symbols = species_to_type_name  # Could be None or list
+    # Normalize chemical symbols: support legacy 'species_to_type_name'
+    chemical_symbols = kwargs.pop('chemical_symbols', None)
+    if chemical_symbols is None and 'species_to_type_name' in kwargs:
+        legacy = kwargs.pop('species_to_type_name')
+        if isinstance(legacy, dict):
+            chemical_symbols = {str(sym): str(sym) for sym in legacy.keys()}
+        else:
+            chemical_symbols = legacy
     
     model_path_obj = Path(model_path)
     file_extension = model_path_obj.suffix.lower()

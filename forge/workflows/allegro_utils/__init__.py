@@ -11,6 +11,7 @@ from .data_v3 import CustomSamplingASEDataModuleV3
 from .samplers import RareWeightedSampler
 from .callbacks import CurriculumCallback, GradNormCallback
 from .custom_metrics import TailMSE, FocalMSELoss, TailHuberLoss, ForceAngleLoss, StressShearMAE, StressAngleLoss
+from .config_aware_metrics import ConfigAwareStressHuber, PressureMAE, VonMisesMAE
 from .weighted_loss import WeightedMSELoss, RareWeightedMetricsManager
 from .pair_potential import NLH
 from .custom_stats import ExtendedDataStatisticsManager
@@ -32,6 +33,9 @@ __all__ = [
     'ForceAngleLoss',
     'StressShearMAE',
     'StressAngleLoss',
+    'ConfigAwareStressHuber',
+    'PressureMAE',
+    'VonMisesMAE',
     
     # Callbacks
     'CurriculumCallback',

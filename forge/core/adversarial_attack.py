@@ -103,7 +103,7 @@ class GradientAdversarialOptimizer:
             energy_list: List of energies (total or per atom) for normalization constant calculation
             use_energy_per_atom: If True, treat energy_list as energy/atom and use energy/atom for probability calc.
             backend: Calculator backend to use ('mace', 'allegro', or 'auto' for auto-detection)
-            **kwargs: Additional arguments passed to the calculator factory (e.g., species_to_type_name for Allegro)
+            **kwargs: Additional arguments passed to the calculator factory (e.g., chemical_symbols for Allegro)
         """
         self.model_paths = model_paths
         self.device = device
@@ -734,7 +734,7 @@ class AdversarialCalculator:
             device (str): Device to use ('cpu' or 'cuda')
             default_dtype (str): Default data type for calculations
             backend (str): Calculator backend ('mace', 'allegro', or 'auto')
-            **kwargs: Additional arguments passed to the calculator (e.g., species_to_type_name for Allegro)
+            **kwargs: Additional arguments passed to the calculator (e.g., chemical_symbols for Allegro)
         """
         self.device = device
         self.default_dtype = default_dtype

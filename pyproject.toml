@@ -36,6 +36,9 @@ dependencies = [
 [project.scripts]
 forge-aa = "forge.cli:main"
 
+[project.entry-points."nequip.extension"]
+forge = "forge"
+
 [tool.setuptools]
 packages = ["forge"]
 

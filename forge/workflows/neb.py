@@ -111,6 +111,8 @@ class NEBCalculation:
         Returns:
             NEBResult containing calculation results
         """
+        import gc
+        
         # Create images (excluding endpoints which we already have energies for)
         images = [self.start_atoms]
         images += [self.start_atoms.copy() for _ in range(self.n_images)]
@@ -126,8 +128,10 @@ class NEBCalculation:
         neb.interpolate()
         
         # Attach calculators only to intermediate images
+        calculators = []  # Keep track for cleanup
         for image in images[1:-1]:
             calculator = self._create_calculator()
+            calculators.append(calculator)
             # Handle both old UnifiedCalculator and new ensemble calculators
             if hasattr(calculator, 'calculator'):
                 # Old UnifiedCalculator interface
@@ -146,6 +150,24 @@ class NEBCalculation:
         # Combine with endpoint energies
         energies = [self.start_energy] + intermediate_energies + [self.end_energy]
         barrier = max(energies) - energies[0]
+        
+        # Clean up calculators and images to free file descriptors
+        for image in images[1:-1]:
+            image.calc = None
+        
+        for calc in calculators:
+            try:
+                # Try to explicitly close if the calculator has a close method
+                if hasattr(calc, 'close'):
+                    calc.close()
+                if hasattr(calc, 'calculator') and hasattr(calc.calculator, 'close'):
+                    calc.calculator.close()
+            except:
+                pass
+        
+        del calculators
+        del images
+        gc.collect()  # Force garbage collection to release file handles
         
         return NEBResult(
             barrier=barrier,
@@ -758,13 +780,6 @@ class VacancyDiffusion:
             chemical_symbols=self.chemical_symbols
         )
 
-        end_calculator = create_ensemble_calculator(
-            model_paths=self.model_path, 
-            backend=self.backend,
-            device=device, 
-            chemical_symbols=self.chemical_symbols
-        )
-
         rel_start_atoms = relax(
             atoms=start_atoms,
             calculator=start_calculator,
@@ -774,6 +789,21 @@ class VacancyDiffusion:
             optimizer="FIRE",
             logfile=logfile,
             verbose=verbose
+        )
+        
+        # Clean up start calculator
+        try:
+            if hasattr(start_calculator, 'close'):
+                start_calculator.close()
+        except:
+            pass
+        del start_calculator
+
+        end_calculator = create_ensemble_calculator(
+            model_paths=self.model_path, 
+            backend=self.backend,
+            device=device, 
+            chemical_symbols=self.chemical_symbols
         )
 
         rel_end_atoms = relax(
@@ -786,6 +816,17 @@ class VacancyDiffusion:
             logfile=logfile,
             verbose=verbose
         )
+        
+        # Clean up end calculator
+        try:
+            if hasattr(end_calculator, 'close'):
+                end_calculator.close()
+        except:
+            pass
+        del end_calculator
+        
+        import gc
+        gc.collect()  # Force garbage collection to free file handles
             
         metadata = {
             "vacancy_element": vacancy_element,
@@ -1080,6 +1121,7 @@ class VacancyDiffusion:
         total_calcs = sum(len(sample['nn']) + len(sample['nnn']) for sample in neighbor_samples)
         results = []
         progress_step = max(1, total_calcs // 10)  # Report every 10%
+        gc_step = max(1, min(100, total_calcs // 20))  # Force GC every ~100 calcs or 5%
         
         print(f"Starting {total_calcs} NEB calculations...")
         calc_count = 0
@@ -1115,6 +1157,11 @@ class VacancyDiffusion:
                 if calc_count % progress_step == 0:
                     print(f"Progress: {calc_count}/{total_calcs} calculations completed")
                 
+                # Force garbage collection periodically for large runs
+                if calc_count % gc_step == 0:
+                    import gc
+                    gc.collect()
+                
                 # Add to analyzer if successful
                 if result["success"]:
                     self.analyzer.add_calculation(result)
@@ -1147,6 +1194,11 @@ class VacancyDiffusion:
                 # Report progress every 10%
                 if calc_count % progress_step == 0:
                     print(f"Progress: {calc_count}/{total_calcs} calculations completed")
+                
+                # Force garbage collection periodically for large runs
+                if calc_count % gc_step == 0:
+                    import gc
+                    gc.collect()
                 
                 # Add to analyzer if successful
                 if result["success"]:
